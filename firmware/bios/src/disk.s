@@ -25,10 +25,11 @@ int13_handler:
     stc
     jmp .i13_ret
 .i13_params:
-    mov ax, 0x0000
-    mov bx, 0x0004
-    mov cx, 0x4F12
-    mov dx, 0x0101
+    /* 720 KB: 80 cyl × 2 heads × 9 spt (matches k8086 geometryFor + bt_disk). */
+    xor ax, ax
+    mov bx, 0x0003              /* BL = 03h 720K drive type */
+    mov cx, 0x4F09              /* CH=79 max cyl, CL=9 SPT */
+    mov dx, 0x0101              /* DH=1 max head, DL=1 drive */
 .i13_ok:
     xor ah, ah
     clc
