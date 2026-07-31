@@ -237,6 +237,10 @@ show_prompt:
     push ax
     push dx
     push si
+    mov ah, 0x19
+    int 0x21
+    add al, 'A'
+    mov [prompt_drv], al
     mov ah, 0x09
     lea dx, [prompt_a]
     int 0x21
@@ -341,35 +345,315 @@ show_prompt:
     ret
 
 .do_dir:
+    call skip_token
+    call skip_spaces
+    call dir_build_pattern
+    mov word ptr [dir_count], 0
+    mov word ptr [dir_bytes], 0
+    mov word ptr [dir_bytes + 2], 0
+
     mov ah, 0x1A
     lea dx, [dta]
     int 0x21
+
+    call dir_print_header
+
     mov ah, 0x4E
-    lea dx, [pat_all]
+    lea dx, [dirpat]
     mov cx, 0x10                 /* include directories */
     int 0x21
-    jc .dir_done
+    jc .dir_none
 .dir_loop:
-    lea si, [dta + 0x1E]
-.dir_ch:
-    lodsb
-    test al, al
-    jz .dir_nl
-    mov dl, al
-    mov ah, 0x02
-    int 0x21
-    jmp .dir_ch
-.dir_nl:
-    mov dl, 0x0D
-    mov ah, 0x02
-    int 0x21
-    mov dl, 0x0A
-    mov ah, 0x02
-    int 0x21
+    call dir_print_entry
     mov ah, 0x4F
     int 0x21
     jnc .dir_loop
-.dir_done:
+    call dir_print_footer
+    ret
+.dir_none:
+    mov ah, 0x09
+    lea dx, [msg_dir_nf]
+    int 0x21
+    ret
+
+/*
+ * Build CS:dirpat from command arg at SI.
+ * empty → *.* ; wildcards or '.' → as-is ; else append \*.*
+ */
+dir_build_pattern:
+    push ax
+    push di
+    lea di, [dirpat]
+    cmp byte ptr [si], 0
+    je .dbp_all
+.dbp_copy:
+    mov al, [si]
+    test al, al
+    jz .dbp_copied
+    cmp al, ' '
+    je .dbp_copied
+    call up_al
+    stosb
+    inc si
+    jmp .dbp_copy
+.dbp_copied:
+    mov byte ptr [di], 0
+    lea di, [dirpat]
+.dbp_scan:
+    mov al, [di]
+    test al, al
+    jz .dbp_isdir
+    cmp al, '*'
+    je .dbp_done
+    cmp al, '?'
+    je .dbp_done
+    cmp al, '.'
+    je .dbp_done
+    inc di
+    jmp .dbp_scan
+.dbp_isdir:
+    mov byte ptr [di], '\\'
+    inc di
+    mov byte ptr [di], '*'
+    inc di
+    mov byte ptr [di], '.'
+    inc di
+    mov byte ptr [di], '*'
+    inc di
+    mov byte ptr [di], 0
+    jmp .dbp_done
+.dbp_all:
+    mov byte ptr [di], '*'
+    inc di
+    mov byte ptr [di], '.'
+    inc di
+    mov byte ptr [di], '*'
+    inc di
+    mov byte ptr [di], 0
+.dbp_done:
+    pop di
+    pop ax
+    ret
+
+/* Print " Directory of A:\" + cwd or parent of pattern */
+dir_print_header:
+    push ax
+    push dx
+    push si
+    push di
+    mov ah, 0x09
+    lea dx, [msg_dir_hdr]
+    int 0x21
+    /* find last '\' in dirpat */
+    lea si, [dirpat]
+    xor di, di                   /* DI = offset of last '\', 0 if none */
+.dph_scan:
+    mov al, [si]
+    test al, al
+    jz .dph_scanned
+    cmp al, '\\'
+    jne .dph_n
+    mov di, si
+.dph_n:
+    inc si
+    jmp .dph_scan
+.dph_scanned:
+    test di, di
+    jz .dph_cwd
+    /* print chars from dirpat up to (not including) last '\' */
+    lea si, [dirpat]
+.dph_comp:
+    cmp si, di
+    jae .dph_nl
+    mov dl, [si]
+    mov ah, 0x02
+    int 0x21
+    inc si
+    jmp .dph_comp
+.dph_cwd:
+    lea si, [cwd_tmp]
+    mov ah, 0x47
+    mov dl, 0
+    int 0x21
+    lea si, [cwd_tmp]
+    cmp byte ptr [si], 0
+    je .dph_nl
+.dph_c:
+    lodsb
+    test al, al
+    jz .dph_nl
+    mov dl, al
+    mov ah, 0x02
+    int 0x21
+    jmp .dph_c
+.dph_nl:
+    mov ah, 0x09
+    lea dx, [msg_crlf]
+    int 0x21
+    pop di
+    pop si
+    pop dx
+    pop ax
+    ret
+
+dir_print_entry:
+    push ax
+    push bx
+    push cx
+    push dx
+    push si
+    /* name padded to 12 columns */
+    lea si, [dta + 0x1E]
+    xor cx, cx
+.dpe_name:
+    lodsb
+    test al, al
+    jz .dpe_pad
+    mov dl, al
+    mov ah, 0x02
+    int 0x21
+    inc cx
+    jmp .dpe_name
+.dpe_pad:
+    cmp cx, 13
+    jae .dpe_attr
+    mov dl, ' '
+    mov ah, 0x02
+    int 0x21
+    inc cx
+    jmp .dpe_pad
+.dpe_attr:
+    test byte ptr [dta + 0x15], 0x10
+    jz .dpe_file
+    mov ah, 0x09
+    lea dx, [msg_dir_tag]
+    int 0x21
+    jmp .dpe_nl
+.dpe_file:
+    mov ax, [dta + 0x1A]
+    mov dx, [dta + 0x1C]
+    call print_u32
+.dpe_nl:
+    mov ah, 0x09
+    lea dx, [msg_crlf]
+    int 0x21
+    /* count / bytes: skip . and .. */
+    lea si, [dta + 0x1E]
+    cmp byte ptr [si], '.'
+    jne .dpe_count
+    cmp byte ptr [si + 1], 0
+    je .dpe_done
+    cmp byte ptr [si + 1], '.'
+    jne .dpe_count
+    cmp byte ptr [si + 2], 0
+    je .dpe_done
+.dpe_count:
+    inc word ptr [dir_count]
+    test byte ptr [dta + 0x15], 0x10
+    jnz .dpe_done
+    mov ax, [dta + 0x1A]
+    add [dir_bytes], ax
+    mov ax, [dta + 0x1C]
+    adc [dir_bytes + 2], ax
+.dpe_done:
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+dir_print_footer:
+    push ax
+    push bx
+    push cx
+    push dx
+    mov ah, 0x09
+    lea dx, [msg_dir_fs1]
+    int 0x21
+    mov ax, [dir_count]
+    xor dx, dx
+    call print_u32
+    mov ah, 0x09
+    lea dx, [msg_dir_fs2]
+    int 0x21
+    mov ax, [dir_bytes]
+    mov dx, [dir_bytes + 2]
+    call print_u32
+    mov ah, 0x09
+    lea dx, [msg_dir_fs3]
+    int 0x21
+    /* free_bytes = free_clusters * sectors_per_cluster * bytes_per_sector */
+    mov ah, 0x36
+    mov dl, 0
+    int 0x21
+    /* AX=spc, CX=bps, DX=free clusters */
+    push dx                      /* free clusters */
+    mul cx                       /* DX:AX = spc * bps (= bytes/cluster) */
+    mov bx, ax                   /* BX = bpc low */
+    mov cx, dx                   /* CX = bpc high (0 when spc=1,bps=512) */
+    pop ax                       /* free clusters */
+    /* DX:AX = clusters * bpc; bpc fits in BX when CX=0 (our image) */
+    mul bx                       /* DX:AX = free * bpc_lo */
+    call print_u32
+    mov ah, 0x09
+    lea dx, [msg_dir_fs4]
+    int 0x21
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+/*
+ * Print DX:AX as unsigned decimal (no leading zeros except 0).
+ */
+print_u32:
+    push ax
+    push bx
+    push cx
+    push dx
+    push si
+    push di
+    lea di, [numbuf + 10]
+    mov byte ptr [di], 0
+    mov bx, 10
+    mov si, ax
+    mov cx, dx                   /* CX:SI = value */
+.pu_loop:
+    /* divide CX:SI by 10 → quot in CX:SI, rem in DX */
+    xor dx, dx
+    mov ax, cx
+    div bx
+    mov cx, ax
+    mov ax, si
+    div bx
+    mov si, ax
+    add dl, '0'
+    dec di
+    mov [di], dl
+    mov ax, cx
+    or ax, si
+    jnz .pu_loop
+.pu_out:
+    mov ah, 0x09
+    /* convert ASCIZ at DI to $-string temporarily — print char by char */
+.pu_ch:
+    mov al, [di]
+    test al, al
+    jz .pu_done
+    mov dl, al
+    mov ah, 0x02
+    int 0x21
+    inc di
+    jmp .pu_ch
+.pu_done:
+    pop di
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
     ret
 
 .do_type:
@@ -952,7 +1236,9 @@ ensure_exe_suffix:
     ret
 
 prompt_a:
-    .ascii "A:$"
+prompt_drv:
+    .byte 'A'
+    .ascii ":$"
 prompt_gt:
     .ascii "> $"
 msg_a_colon:
@@ -989,8 +1275,20 @@ kw_errorlevel:
     .asciz "ERRORLEVEL"
 path_auto:
     .asciz "AUTOEXEC.BAT"
-pat_all:
-    .asciz "*.*"
+msg_dir_hdr:
+    .ascii " Directory of A:\\$"
+msg_dir_tag:
+    .ascii "<DIR>$"
+msg_dir_fs1:
+    .ascii "        $"
+msg_dir_fs2:
+    .ascii " File(s)     $"
+msg_dir_fs3:
+    .ascii " bytes\r\n                    $"
+msg_dir_fs4:
+    .ascii " bytes free\r\n$"
+msg_dir_nf:
+    .ascii "File not found\r\n$"
 msg_type_u:
     .ascii "TYPE file\r\n$"
 msg_type_e:
@@ -1025,6 +1323,14 @@ dstbuf:
     .space 64, 0
 cwd_tmp:
     .space 64, 0
+dirpat:
+    .space 64, 0
+numbuf:
+    .space 12, 0
+dir_count:
+    .word 0
+dir_bytes:
+    .word 0, 0
 exec_tail:
     .space 128, 0
 exec_pb:
