@@ -4,83 +4,111 @@
 .global _start
 
 /*
- * rmDOS FAT12 bootstrap (adapted from WispOS boot_fat12.s).
+ * rmDOS FAT12 bootstrap.
  *
- * BIOS loads us at 0000:7C00. Bytes 3..61 are overwritten with a FAT12 BPB by
- * mkfs_fat12. Sector 1 is an RFAT1 loader info block with KERNEL.SYS LBA + count.
- * We load KERNEL.SYS into 0070:0000 and far-jump there.
- *
- * Short conditional jumps only (GAS 386 long Jcc is POP CS on 8088).
- * No INT 10h in the boot path.
+ * BIOS loads us at 0000:7C00. We relocate to 0000:0600, then load KERNEL at
+ * 0070:0000 (phys 0x0700), which clobbers 0x0700-0x07FF. All code used after
+ * relocate therefore lives in the first 256 bytes (phys 0x0600-0x06FF). The
+ * cold entry (relocate stub) sits above 0x100 and is only run from 7C00.
+ * CHS uses BPB SPT/heads at DS:0x18 / DS:0x1A with DS=0060 after relocate.
+ * Drive number is kept in BPB BS_DrvNum (offset 0x24).
  */
 
 .equ KERNEL_SEGMENT, 0x0070
-.equ FLOPPY_SECTORS_PER_TRACK, 9
-.equ FLOPPY_HEADS, 2
-.equ LOADER_BUFFER, 0x0500
-.equ LOADER_BOOT_KERNEL_START, 0x1c
-.equ LOADER_BOOT_KERNEL_SECTORS, 0x1e
+.equ BOOT_ORIGIN, 0x7C00
+.equ BOOT_RELOC_SEG, 0x0060
 
 _start:
     jmp boot_start
     nop
     .space 59, 0
 
-boot_start:
-    cli
-    xor ax, ax
+/* ---- hot path: must remain below offset 0x100 ---- */
+
+/* AX=LBA, ES:BX=buf; DS=0060. Preserves AX/BX. */
+read_lba:
+    push ax
+    push bx
+    push cx
+    push dx
+    push si
+
+    mov si, bx
+    xor dx, dx
+    mov cx, [0x18]
+    test cx, cx
+    jnz .spt
+    mov cx, 9
+.spt:
+    div cx
+    mov cl, dl
+    inc cl
+    xor dx, dx
+    mov bx, [0x1A]
+    test bx, bx
+    jnz .hd
+    mov bx, 2
+.hd:
+    div bx
+    mov dh, dl
+    mov ch, al
+    mov al, ah
+    mov ah, cl
+    mov cl, 6
+    shl al, cl
+    or al, ah
+    mov cl, al
+    mov dl, [0x24]
+    mov bx, si
+    mov ax, 0x0201
+    int 0x13
+
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+after_reloc:
+    mov ax, BOOT_RELOC_SEG
     mov ds, ax
-    mov es, ax
-    mov ss, ax
-    mov sp, 0x7c00
-
-    mov [boot_drive], dl
-
     xor ax, ax
+    mov ss, ax
+    mov sp, 0x0600
+
     mov es, ax
-    mov bx, LOADER_BUFFER
+    mov bx, BOOT_ORIGIN
     mov ax, 1
-    call read_lba_sector
-    jnc .loader_ok
-    jmp hang
-.loader_ok:
+    call read_lba
+    jc hang
 
-    cmp byte ptr [LOADER_BUFFER], 'R'
+    cmp word ptr es:[BOOT_ORIGIN], 0x4652
     jne hang
-    cmp byte ptr [LOADER_BUFFER + 1], 'F'
+    cmp word ptr es:[BOOT_ORIGIN + 2], 0x5441
     jne hang
-    cmp byte ptr [LOADER_BUFFER + 2], 'A'
-    jne hang
-    cmp byte ptr [LOADER_BUFFER + 3], 'T'
-    jne hang
-    cmp byte ptr [LOADER_BUFFER + 4], '1'
+    cmp byte ptr es:[BOOT_ORIGIN + 4], '1'
     jne hang
 
-    mov ax, [LOADER_BUFFER + LOADER_BOOT_KERNEL_START]
-    mov [kernel_lba], ax
-    mov cx, [LOADER_BUFFER + LOADER_BOOT_KERNEL_SECTORS]
-    mov [kernel_sectors], cx
+    mov si, es:[BOOT_ORIGIN + 0x1C]   /* kernel LBA */
+    mov cx, es:[BOOT_ORIGIN + 0x1E]   /* sector count */
 
     mov ax, KERNEL_SEGMENT
     mov es, ax
     xor bx, bx
-    mov ax, [kernel_lba]
-    mov cx, [kernel_sectors]
 
-.load_kernel_loop:
-    test cx, cx
-    jz .jump_to_kernel
-    call read_lba_sector
-    jnc .kernel_sector_ok
-    jmp hang
-.kernel_sector_ok:
-    inc ax
+.load_loop:
+    jcxz .go_kernel
+    mov ax, si
+    call read_lba
+    jc hang
+    inc si
     add bx, 512
     dec cx
-    jmp .load_kernel_loop
+    jmp .load_loop
 
-.jump_to_kernel:
-    mov dl, [boot_drive]
+.go_kernel:
+    mov dl, [0x24]
     sti
     jmp KERNEL_SEGMENT, 0x0000
 
@@ -88,46 +116,20 @@ hang:
     hlt
     jmp hang
 
-/*
- * Read one 512-byte sector.
- * IN:  AX = LBA, ES:BX = buffer, DS:boot_drive = BIOS drive
- * OUT: CF clear on success. AX/BX preserved.
- */
-read_lba_sector:
-    push ax
-    push bx
-    push cx
-    push dx
-    push di
+/* ---- cold path: runs only at 7C00 before relocate ---- */
 
-    mov di, bx
-    xor dx, dx
-    mov cx, FLOPPY_SECTORS_PER_TRACK
-    div cx
-    mov cl, dl
-    inc cl
-    xor dx, dx
-    mov bx, FLOPPY_HEADS
-    div bx
-    mov ch, al
-    mov dh, dl
-    mov dl, [boot_drive]
-    mov bx, di
-    mov ah, 0x02
-    mov al, 0x01
-    int 0x13
+boot_start:
+    cli
+    xor ax, ax
+    mov ds, ax
+    mov es, ax
+    mov ss, ax
+    mov sp, BOOT_ORIGIN
+    mov [BOOT_ORIGIN + 0x24], dl
 
-    pop di
-    pop dx
-    pop cx
-    pop bx
-    pop ax
-    ret
-
-.section .data
-boot_drive:
-    .byte 0x00
-kernel_lba:
-    .word 0x0000
-kernel_sectors:
-    .word 0x0000
+    mov si, BOOT_ORIGIN
+    mov di, 0x0600
+    mov cx, 256
+    cld
+    rep movsw
+    jmp BOOT_RELOC_SEG, (after_reloc - _start)
