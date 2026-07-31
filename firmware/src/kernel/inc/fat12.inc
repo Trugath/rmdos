@@ -1,23 +1,135 @@
 /*
- * Fixed-layout FAT12 I/O for the rmDOS 720 KB boot floppy
- * (matches scripts/fat12.py).
+ * BPB-driven FAT12/FAT16 I/O for the current volume (CS:boot_drive).
+ * Call fat12_init_bpb once at mount before fat12_load_fat.
  */
 
-.equ FAT12_SPT, 9
-.equ FAT12_HEADS, 2
-.equ FAT12_FAT1_LBA, 2
-.equ FAT12_FAT2_LBA, 5
-.equ FAT12_FAT_SECS, 3
-.equ FAT12_ROOT_LBA, 8
-.equ FAT12_ROOT_SECS, 7
-.equ FAT12_DATA_LBA, 15
 .equ FAT12_EOC, 0x0FF8
-.equ FAT12_MAX_CLUST, 0x592
+.equ FAT16_EOC, 0xFFF8
+.equ FAT_WIN_SECS, 2             /* 1KB window (covers FAT12 span) */
+
+/*
+ * Read boot sector via CHS (C0/H0/S1), fill CS:bpb_* and derived LBAs.
+ * OUT: CF set on failure.
+ */
+fat12_init_bpb:
+    push ax
+    push bx
+    push cx
+    push dx
+    push si
+    push di
+    push es
+    push ds
+
+    push cs
+    pop es
+    push cs
+    pop ds
+    lea bx, [sector_buf]
+    mov ax, 0x0201
+    mov cx, 0x0001
+    xor dh, dh
+    mov dl, cs:[boot_drive]
+    int 0x13
+    jc .fib_fail
+
+    /* Require 512 BPS */
+    cmp word ptr [sector_buf + 11], 512
+    jne .fib_fail
+
+    mov al, [sector_buf + 13]
+    mov [bpb_spc], al
+    mov ax, [sector_buf + 14]
+    mov [bpb_reserved], ax
+    mov al, [sector_buf + 16]
+    mov [bpb_fats], al
+    mov ax, [sector_buf + 17]
+    mov [bpb_root_ents], ax
+    mov ax, [sector_buf + 19]
+    mov [bpb_totsec], ax
+    mov word ptr [bpb_totsec_hi], 0
+    test ax, ax
+    jnz .fib_tot_ok
+    mov ax, [sector_buf + 32]
+    mov [bpb_totsec], ax
+    mov ax, [sector_buf + 34]
+    mov [bpb_totsec_hi], ax
+.fib_tot_ok:
+    mov al, [sector_buf + 21]
+    mov [bpb_media], al
+    mov ax, [sector_buf + 22]
+    mov [bpb_spf], ax
+    mov ax, [sector_buf + 24]
+    mov [bpb_spt], ax
+    mov ax, [sector_buf + 26]
+    mov [bpb_heads], ax
+
+    /* fat1_lba = reserved */
+    mov ax, [bpb_reserved]
+    mov [bpb_fat1_lba], ax
+    /* fat2_lba = reserved + spf */
+    mov bx, [bpb_spf]
+    add ax, bx
+    mov [bpb_fat2_lba], ax
+    /* root_lba = reserved + fats*spf */
+    mov ax, [bpb_reserved]
+    mov cl, [bpb_fats]
+    xor ch, ch
+.fib_fats:
+    add ax, bx
+    loop .fib_fats
+    mov [bpb_root_lba], ax
+    /* root_secs = root_ents / 16 */
+    mov ax, [bpb_root_ents]
+    mov cl, 4
+    shr ax, cl
+    mov [bpb_root_secs], ax
+    /* data_lba = root_lba + root_secs */
+    mov bx, [bpb_root_lba]
+    add bx, ax
+    mov [bpb_data_lba], bx
+    /* max_clust = 2 + (totsec - data_lba) / spc  (totsec may be 32-bit) */
+    mov ax, [bpb_totsec]
+    mov dx, [bpb_totsec_hi]
+    sub ax, bx
+    sbb dx, 0
+    mov bl, [bpb_spc]
+    xor bh, bh
+    div bx                       /* assume quot fits in AX for era sizes */
+    add ax, 2
+    mov [bpb_max_clust], ax
+
+    /* FAT12 if clusters <= 4085, else FAT16 */
+    mov byte ptr [bpb_fat_type], 12
+    mov word ptr [fat_eoc], FAT12_EOC
+    mov bx, [bpb_max_clust]
+    cmp bx, 4085
+    jbe .fib_type_ok
+    mov byte ptr [bpb_fat_type], 16
+    mov word ptr [fat_eoc], FAT16_EOC
+.fib_type_ok:
+    mov word ptr [fat_win_sec], 0xFFFF
+    mov byte ptr [fat_dirty], 0
+
+    clc
+    jmp .fib_done
+.fib_fail:
+    stc
+.fib_done:
+    pop ds
+    pop es
+    pop di
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
 
 /*
  * Read one sector.
- * IN:  AX = LBA, ES:BX = buffer; CS:boot_drive = BIOS drive
- * OUT: CF set on error. AX/BX preserved.
+ * IN:  DX:AX = LBA (DX high), ES:BX = buffer; CS:boot_drive = BIOS drive
+ * OUT: CF set on error. DX:AX/BX preserved.
  */
 fat12_read_lba:
     push ax
@@ -25,18 +137,23 @@ fat12_read_lba:
     push cx
     push dx
     push di
+    push si
 
     mov di, bx
+    mov cx, cs:[bpb_spt]
+    div cx                       /* DX:AX / spt → AX=temp, DX=sec rem */
+    mov si, dx
+    inc si                       /* 1-based sector */
     xor dx, dx
-    mov cx, FAT12_SPT
-    div cx
-    mov cl, dl
-    inc cl
-    xor dx, dx
-    mov bx, FAT12_HEADS
-    div bx
-    mov ch, al
+    mov bx, cs:[bpb_heads]
+    div bx                       /* AX=cyl, DX=head */
     mov dh, dl
+    mov ch, al
+    mov cl, 6
+    shl ah, cl
+    mov bx, si
+    or ah, bl
+    mov cl, ah
     mov dl, cs:[boot_drive]
     mov bx, di
     mov ah, 0x02
@@ -47,7 +164,6 @@ fat12_read_lba:
     xor bh, bh                   /* read */
     call invoke_int24_disk
     pop bx
-    /* AL=1 ignore → pretend success; else fail */
     cmp al, 1
     je .frl_ok
     stc
@@ -55,6 +171,7 @@ fat12_read_lba:
 .frl_ok:
     clc
 .frl_done:
+    pop si
     pop di
     pop dx
     pop cx
@@ -64,8 +181,8 @@ fat12_read_lba:
 
 /*
  * Write one sector.
- * IN:  AX = LBA, ES:BX = buffer; CS:boot_drive = BIOS drive
- * OUT: CF set on error. AX/BX preserved.
+ * IN:  DX:AX = LBA (DX high), ES:BX = buffer; CS:boot_drive = BIOS drive
+ * OUT: CF set on error. DX:AX/BX preserved.
  */
 fat12_write_lba:
     push ax
@@ -73,18 +190,23 @@ fat12_write_lba:
     push cx
     push dx
     push di
+    push si
 
     mov di, bx
-    xor dx, dx
-    mov cx, FAT12_SPT
+    mov cx, cs:[bpb_spt]
     div cx
-    mov cl, dl
-    inc cl
+    mov si, dx
+    inc si
     xor dx, dx
-    mov bx, FAT12_HEADS
+    mov bx, cs:[bpb_heads]
     div bx
-    mov ch, al
     mov dh, dl
+    mov ch, al
+    mov cl, 6
+    shl ah, cl
+    mov bx, si
+    or ah, bl
+    mov cl, ah
     mov dl, cs:[boot_drive]
     mov bx, di
     mov ah, 0x03
@@ -102,7 +224,7 @@ fat12_write_lba:
 .fwl_ok:
     clc
 .fwl_done:
-
+    pop si
     pop di
     pop dx
     pop cx
@@ -110,16 +232,22 @@ fat12_write_lba:
     pop ax
     ret
 
-/* AX = cluster → AX = LBA */
+/* AX = cluster → DX:AX = LBA */
 fat12_cluster_to_lba:
+    push bx
     dec ax
     dec ax
-    add ax, FAT12_DATA_LBA
+    mov bl, cs:[bpb_spc]
+    xor bh, bh
+    mul bx                       /* DX:AX = (clust-2)*spc */
+    add ax, cs:[bpb_data_lba]
+    adc dx, 0
+    pop bx
     ret
 
 /*
- * AX = cluster → AX = next (12-bit). CF on error.
- * Uses CS:fat_buf (must be loaded).
+ * AX = cluster → AX = next. CF on error.
+ * Uses windowed FAT cache.
  */
 fat12_next_cluster:
     push bx
@@ -217,59 +345,19 @@ fat12_find_root:
     ret
 
 /*
- * Load both FAT copies' source (FAT1) into CS:fat_buf (1536 bytes).
- * Uses sector_buf as bounce buffer for INT 13h.
+ * Invalidate FAT window (call after mount). Window loads on demand.
  */
 fat12_load_fat:
     push ax
-    push bx
-    push cx
-    push si
-    push di
-    push es
-    push ds
-    push cs
-    pop es
-    push cs
-    pop ds
-    mov ax, FAT12_FAT1_LBA
-    lea di, [fat_buf]
-    mov cx, FAT12_FAT_SECS
-.flf:
-    push cx
-    push ax
-    lea bx, [sector_buf]
-    call fat12_read_lba
-    jc .flf_err
-    lea si, [sector_buf]
-    mov cx, 512
-    rep movsb
-    pop ax
-    pop cx
-    inc ax
-    loop .flf
+    call fat12_flush_fat
+    mov word ptr cs:[fat_win_sec], 0xFFFF
     mov byte ptr cs:[fat_dirty], 0
     clc
-    jmp .flf_done
-.flf_err:
-    pop ax
-    pop cx
-    stc
-.flf_done:
-    pop ds
-    pop es
-    pop di
-    pop si
-    pop cx
-    pop bx
     pop ax
     ret
 
 /*
- * Write fat_buf to FAT1 and FAT2 via sector_buf bounce.
- */
-/*
- * Write fat_buf to FAT1 and FAT2 via sector_buf bounce.
+ * Flush dirty FAT window to FAT1 and FAT2.
  */
 fat12_flush_fat:
     push ax
@@ -282,60 +370,60 @@ fat12_flush_fat:
     push ds
     cmp byte ptr cs:[fat_dirty], 0
     je .fff_ok
-    /* refuse to flush a wiped FAT cache */
-    cmp byte ptr cs:[fat_buf], 0xF9
-    je .fff_media_ok
-    cmp byte ptr cs:[fat_buf], 0xF0
-    jb .fff_ok
-.fff_media_ok:
+    cmp word ptr cs:[fat_win_sec], 0xFFFF
+    je .fff_ok
     push cs
     pop es
     push cs
     pop ds
-    mov ax, FAT12_FAT1_LBA
-    lea si, [fat_buf]
-    mov cx, FAT12_FAT_SECS
-.fff1:
-    push cx
-    push ax
-    push si
+    xor si, si                   /* offset in fat_buf */
+    xor cx, cx                   /* window index */
+.fff_sec:
+    cmp cx, FAT_WIN_SECS
+    jae .fff_fin
+    mov ax, cs:[fat_win_sec]
+    add ax, cx
+    cmp ax, cs:[bpb_spf]
+    jae .fff_fin
     lea di, [sector_buf]
-    mov cx, 512
-    rep movsb
-    lea bx, [sector_buf]
-    pop si
-    add si, 512
-    pop ax
-    call fat12_write_lba
-    jc .fff_err1
-    inc ax
-    pop cx
-    loop .fff1
-    mov ax, FAT12_FAT2_LBA
-    lea si, [fat_buf]
-    mov cx, FAT12_FAT_SECS
-.fff2:
-    push cx
-    push ax
+    lea ax, [fat_buf]
+    add ax, si
     push si
-    lea di, [sector_buf]
-    mov cx, 512
-    rep movsb
-    lea bx, [sector_buf]
-    pop si
-    add si, 512
-    pop ax
-    call fat12_write_lba
-    jc .fff_err1
-    inc ax
+    push cx
+    mov si, ax
+    mov cx, 256
+    rep movsw
     pop cx
-    loop .fff2
+    pop si
+    /* FAT1 */
+    mov ax, cs:[bpb_fat1_lba]
+    add ax, cs:[fat_win_sec]
+    add ax, cx
+    xor dx, dx
+    lea bx, [sector_buf]
+    push cx
+    call fat12_write_lba
+    pop cx
+    jc .fff_err
+    /* FAT2 */
+    mov ax, cs:[bpb_fat2_lba]
+    add ax, cs:[fat_win_sec]
+    add ax, cx
+    xor dx, dx
+    lea bx, [sector_buf]
+    push cx
+    call fat12_write_lba
+    pop cx
+    jc .fff_err
+    add si, 512
+    inc cx
+    jmp .fff_sec
+.fff_fin:
     mov byte ptr cs:[fat_dirty], 0
 .fff_ok:
     clc
     jmp .fff_done
-.fff_err1:
-    add sp, 2
+.fff_err:
     stc
 .fff_done:
     pop ds
@@ -349,20 +437,118 @@ fat12_flush_fat:
     ret
 
 /*
- * AX = cluster → AX = 12-bit FAT value from fat_buf (no disk I/O).
+ * Ensure fat_buf covers FAT sectors starting at BX (2 sectors).
+ * CF on I/O error.
+ */
+fat_ensure_window:
+    push ax
+    push bx
+    push cx
+    push dx
+    push si
+    push di
+    push es
+    push ds
+    mov ax, bx                   /* desired start */
+    mov dx, cs:[bpb_spf]
+    cmp dx, 2
+    jae .few_clamp
+    xor ax, ax
+    jmp .few_have_start
+.few_clamp:
+    mov cx, dx
+    dec cx
+    dec cx                       /* spf-2 */
+    cmp ax, cx
+    jbe .few_have_start
+    mov ax, cx
+.few_have_start:
+    cmp ax, cs:[fat_win_sec]
+    je .few_ok
+    call fat12_flush_fat
+    jc .few_fail
+    mov cs:[fat_win_sec], ax
+    push cs
+    pop es
+    push cs
+    pop ds
+    lea di, [fat_buf]
+    mov cx, FAT_WIN_SECS
+    mov dx, cs:[bpb_spf]
+    sub dx, ax
+    cmp cx, dx
+    jbe .few_rd
+    mov cx, dx
+.few_rd:
+    push cx
+    push ax
+    mov bx, ax
+    mov ax, cs:[bpb_fat1_lba]
+    add ax, bx
+    xor dx, dx
+    lea bx, [sector_buf]
+    call fat12_read_lba
+    jc .few_rd_err
+    lea si, [sector_buf]
+    mov cx, 512
+    rep movsb
+    pop ax
+    inc ax
+    pop cx
+    loop .few_rd
+    mov byte ptr cs:[fat_dirty], 0
+.few_ok:
+    clc
+    jmp .few_done
+.few_rd_err:
+    pop ax
+    pop cx
+.few_fail:
+    mov word ptr cs:[fat_win_sec], 0xFFFF
+    stc
+.few_done:
+    pop ds
+    pop es
+    pop di
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+/*
+ * AX = cluster → AX = FAT value (12 or 16-bit).
  */
 fat12_get_fat:
     push bx
     push cx
+    push dx
     push si
+    cmp byte ptr cs:[bpb_fat_type], 16
+    je .gf16
+    /* FAT12: offset = clust + clust/2 */
     mov bx, ax
     push ax
     shr bx, 1
-    add bx, ax
+    add bx, ax                   /* byte offset */
+    mov ax, bx
+    mov cl, 9
+    shr ax, cl                   /* sector index */
+    push bx
+    mov bx, ax
+    call fat_ensure_window
+    pop bx
+    jc .gf_err
+    /* offset within window */
+    mov ax, cs:[fat_win_sec]
+    mov cl, 9
+    shl ax, cl
+    sub bx, ax
     lea si, [fat_buf]
     add si, bx
     mov ax, cs:[si]
-    pop bx
+    pop bx                       /* cluster */
     test bx, 1
     jnz .gf_odd
     and ax, 0x0FFF
@@ -371,44 +557,122 @@ fat12_get_fat:
     mov cl, 4
     shr ax, cl
     and ax, 0x0FFF
+    jmp .gf_ok
+.gf16:
+    mov bx, ax
+    shl bx, 1                    /* byte offset */
+    mov ax, bx
+    mov cl, 9
+    shr ax, cl
+    push bx
+    mov bx, ax
+    call fat_ensure_window
+    pop bx
+    jc .gf_err16
+    mov ax, cs:[fat_win_sec]
+    mov cl, 9
+    shl ax, cl
+    sub bx, ax
+    lea si, [fat_buf]
+    add si, bx
+    mov ax, cs:[si]
+    jmp .gf_ok
+.gf_err:
+    pop bx
+.gf_err16:
+    xor ax, ax
 .gf_ok:
     pop si
+    pop dx
     pop cx
     pop bx
     ret
 
 /*
- * AX = cluster, DX = value (12-bit). Updates fat_buf + dirty.
+ * AX = cluster, DX = value. Updates window + dirty.
  */
 fat12_set_fat:
     push ax
     push bx
     push cx
+    push dx
     push si
+    mov cx, dx                   /* value */
+    cmp byte ptr cs:[bpb_fat_type], 16
+    je .sf16
     mov bx, ax
     push ax
     shr bx, 1
     add bx, ax
+    mov ax, bx
+    push cx
+    mov cl, 9
+    shr ax, cl
+    push bx
+    mov bx, ax
+    call fat_ensure_window
+    pop bx
+    pop cx
+    jc .sf_fail
+    mov ax, cs:[fat_win_sec]
+    push cx
+    mov cl, 9
+    shl ax, cl
+    pop cx
+    sub bx, ax
     lea si, [fat_buf]
     add si, bx
     mov ax, cs:[si]
-    pop bx
+    pop bx                       /* cluster */
     test bx, 1
     jnz .sf_odd
     and ax, 0xF000
-    and dx, 0x0FFF
-    or ax, dx
+    and cx, 0x0FFF
+    or ax, cx
     jmp .sf_store
 .sf_odd:
     and ax, 0x000F
-    and dx, 0x0FFF
+    and cx, 0x0FFF
+    push cx
     mov cl, 4
+    pop dx
     shl dx, cl
     or ax, dx
+    jmp .sf_store
+.sf16:
+    mov bx, ax
+    shl bx, 1
+    mov ax, bx
+    push cx
+    mov cl, 9
+    shr ax, cl
+    push bx
+    mov bx, ax
+    call fat_ensure_window
+    pop bx
+    pop cx
+    jc .sf_fail16
+    mov ax, cs:[fat_win_sec]
+    push cx
+    mov cl, 9
+    shl ax, cl
+    pop cx
+    sub bx, ax
+    lea si, [fat_buf]
+    add si, bx
+    mov ax, cx
 .sf_store:
     mov cs:[si], ax
     mov byte ptr cs:[fat_dirty], 1
+    clc
+    jmp .sf_done
+.sf_fail:
+    pop bx
+.sf_fail16:
+    stc
+.sf_done:
     pop si
+    pop dx
     pop cx
     pop bx
     pop ax
@@ -424,7 +688,7 @@ fat12_alloc_cluster:
     push dx
     mov bx, 2
 .fac:
-    cmp bx, FAT12_MAX_CLUST
+    cmp bx, cs:[bpb_max_clust]
     jae .fac_fail
     mov ax, bx
     call fat12_get_fat
@@ -434,7 +698,7 @@ fat12_alloc_cluster:
     jmp .fac
 .fac_got:
     mov ax, bx
-    mov dx, 0x0FFF
+    mov dx, cs:[fat_eoc]
     call fat12_set_fat
     mov ax, bx
     clc
@@ -459,7 +723,7 @@ fat12_free_chain:
 .ffc:
     cmp ax, 2
     jb .ffc_ok
-    cmp ax, FAT12_EOC
+    cmp ax, cs:[fat_eoc]
     jae .ffc_ok
     mov bx, ax
     call fat12_get_fat
@@ -498,14 +762,17 @@ fat12_find_free_dirent:
     push di
     push cs
     pop es
-    mov bp, FAT12_ROOT_LBA
-    mov dx, FAT12_ROOT_SECS
+    mov bp, cs:[bpb_root_lba]
+    mov dx, cs:[bpb_root_secs]
 .ffd_sec:
     test dx, dx
     jz .ffd_fail
     lea bx, [sector_buf]
     mov ax, bp
+    push dx
+    xor dx, dx
     call fat12_read_lba
+    pop dx
     jc .ffd_fail
     xor si, si
 .ffd_ent:
@@ -584,6 +851,7 @@ fat12_create_dirent:
     mov word ptr es:[di + 30], 0
     mov ax, word ptr [last_dir_lba]
     lea bx, [sector_buf]
+    xor dx, dx
     call fat12_write_lba
     pop ds
     pop es
@@ -608,11 +876,14 @@ fat12_update_dirent:
     push di
     push es
     push bp
+    push si
     mov bp, ax                   /* cluster */
+    mov si, dx                   /* size lo */
     push cs
     pop es
     mov ax, word ptr cs:[last_dir_lba]
     lea bx, [sector_buf]
+    xor dx, dx
     call fat12_read_lba
     jc .fud_err
     mov bx, word ptr cs:[last_dir_idx]
@@ -621,11 +892,12 @@ fat12_update_dirent:
     lea di, [sector_buf]
     add di, bx
     mov es:[di + 26], bp
-    mov es:[di + 28], dx
+    mov es:[di + 28], si
     mov ax, word ptr cs:[last_size_hi]
     mov word ptr es:[di + 30], ax
     mov ax, word ptr cs:[last_dir_lba]
     lea bx, [sector_buf]
+    xor dx, dx
     call fat12_write_lba
     jc .fud_err
     clc
@@ -633,6 +905,7 @@ fat12_update_dirent:
 .fud_err:
     stc
 .fud_done:
+    pop si
     pop bp
     pop es
     pop di
@@ -655,6 +928,7 @@ fat12_delete_dirent:
     pop es
     mov ax, word ptr cs:[last_dir_lba]
     lea bx, [sector_buf]
+    xor dx, dx
     call fat12_read_lba
     jc .fdd_err
     mov bx, word ptr cs:[last_dir_idx]
@@ -665,6 +939,7 @@ fat12_delete_dirent:
     mov byte ptr es:[di], 0xE5
     mov ax, word ptr cs:[last_dir_lba]
     lea bx, [sector_buf]
+    xor dx, dx
     call fat12_write_lba
     jc .fdd_err
     clc
@@ -690,9 +965,9 @@ fat12_dir_sector:
     push dx
     test dx, dx
     jnz .fds_sub
-    cmp bx, FAT12_ROOT_SECS
+    cmp bx, cs:[bpb_root_secs]
     jae .fds_err
-    mov ax, FAT12_ROOT_LBA
+    mov ax, cs:[bpb_root_lba]
     add ax, bx
     clc
     jmp .fds_done
@@ -702,7 +977,7 @@ fat12_dir_sector:
 .fds_walk:
     jcxz .fds_got
     call fat12_next_cluster
-    cmp ax, FAT12_EOC
+    cmp ax, cs:[fat_eoc]
     jae .fds_err
     cmp ax, 2
     jb .fds_err
@@ -746,10 +1021,12 @@ fat12_find_in_dir:
     pop dx
     jc .fid_nf
 
-    push ax
+    push dx                      /* sector index */
+    xor dx, dx                   /* LBA high */
     lea bx, [sector_buf]
     call fat12_read_lba
-    pop bx                       /* BX = LBA */
+    pop dx                       /* restore sector index */
+    mov bx, ax                   /* LBA (read preserves AX) */
     jc .fid_nf
 
     xor si, si
@@ -843,6 +1120,7 @@ fat12_find_free_in_dir:
 
     push ax
     lea bx, [sector_buf]
+    xor dx, dx
     call fat12_read_lba
     pop bx                       /* LBA */
     jc .ffid_fail
@@ -885,7 +1163,7 @@ fat12_find_free_in_dir:
 .ffid_last:
     mov bx, ax
     call fat12_next_cluster
-    cmp ax, FAT12_EOC
+    cmp ax, cs:[fat_eoc]
     jae .ffid_got_last
     cmp ax, 2
     jb .ffid_fail
@@ -904,12 +1182,14 @@ fat12_find_free_in_dir:
     mov word ptr cs:[last_dir_lba], ax
     mov word ptr cs:[last_dir_idx], 0
     /* zero sector_buf and write */
+    push dx
     push ax
     lea di, [sector_buf]
     xor ax, ax
     mov cx, 256
     rep stosw
     pop ax
+    pop dx
     lea bx, [sector_buf]
     call fat12_write_lba
     pop ax                       /* new cluster (discard) */
@@ -970,6 +1250,7 @@ fat12_create_dirent_attr:
     mov word ptr es:[di + 30], 0
     mov ax, word ptr [last_dir_lba]
     lea bx, [sector_buf]
+    xor dx, dx
     call fat12_write_lba
     pop ds
     pop es

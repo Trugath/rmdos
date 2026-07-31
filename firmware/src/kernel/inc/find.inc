@@ -299,6 +299,7 @@ find_search:
     push cs
     pop es
     lea bx, [sector_buf]
+    xor dx, dx
     call fat12_read_lba
     jc .fs_fail
 

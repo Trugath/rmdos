@@ -648,7 +648,7 @@ file_cluster_at_pos:
     jae .fcp_ok
     mov dx, ax
     call fat12_next_cluster
-    cmp ax, FAT12_EOC
+    cmp ax, cs:[fat_eoc]
     jb .fcp_next
     push bx
     push cx
@@ -706,6 +706,7 @@ dos_ah41:
     push cs
     pop es
     lea bx, [sector_buf]
+    xor dx, dx
     call fat12_read_lba
     mov bx, word ptr cs:[last_dir_idx]
     mov cl, 5
@@ -750,12 +751,14 @@ dos_ah42:
     push si
     push di
     push es
+    push ax                     /* save AL = seek mode */
     push cs
     pop es
     call handle_index
-    jc .a42_err
+    jc .a42_err_pop
     cmp byte ptr es:[di], H_FILE
-    jne .a42_err
+    jne .a42_err_pop
+    pop ax                      /* restore seek mode in AL */
     mov bx, dx
     mov si, cx
     cmp al, 0
@@ -783,6 +786,8 @@ dos_ah42:
     pop bx
     clc
     jmp int21_iret
+.a42_err_pop:
+    pop ax
 .a42_err:
     pop es
     pop di

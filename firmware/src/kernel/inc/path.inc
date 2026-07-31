@@ -223,14 +223,34 @@ path_resolve:
 
     mov al, [si]
     cmp al, 'A'
-    je .pr_drv
+    jb .pr_no_drv
+    cmp al, 'Z'
+    jbe .pr_drv_chk
     cmp al, 'a'
-    je .pr_drv
-    jmp .pr_no_drv
-.pr_drv:
+    jb .pr_no_drv
+    cmp al, 'z'
+    ja .pr_no_drv
+.pr_drv_chk:
     cmp byte ptr [si + 1], ':'
     jne .pr_no_drv
+    mov al, [si]
+    cmp al, 'a'
+    jb .pr_drv_up
+    cmp al, 'z'
+    ja .pr_drv_up
+    sub al, 0x20
+.pr_drv_up:
+    sub al, 'A'
+    push si
+    mov dl, al
+    call dos_select_drive
+    pop si
+    jc .pr_err
     add si, 2
+    jmp .pr_no_drv
+/* legacy label kept for fallthrough */
+.pr_drv:
+    jmp .pr_drv_chk
 .pr_no_drv:
 
     mov al, [si]
@@ -392,6 +412,7 @@ path_read_attr:
     pop es
     mov ax, word ptr cs:[last_dir_lba]
     lea bx, [sector_buf]
+    xor dx, dx
     call fat12_read_lba
     jc .pra_err
     mov bx, word ptr cs:[last_dir_idx]
@@ -427,6 +448,7 @@ path_write_attr:
     mov es:[di + 11], al
     mov ax, word ptr cs:[last_dir_lba]
     lea bx, [sector_buf]
+    xor dx, dx
     call fat12_write_lba
     pop es
     pop di
@@ -457,6 +479,7 @@ path_dir_is_empty:
     jc .pde_ok
     push ax
     lea bx, [sector_buf]
+    xor dx, dx
     call fat12_read_lba
     pop bx
     jc .pde_bad
@@ -1080,6 +1103,7 @@ dos_ah56:
     pop es
     mov ax, word ptr cs:[last_dir_lba]
     lea bx, [sector_buf]
+    xor dx, dx
     call fat12_read_lba
     jc .a56_err
     mov bx, word ptr cs:[last_dir_idx]
@@ -1098,6 +1122,7 @@ dos_ah56:
     pop di
     mov ax, word ptr cs:[last_dir_lba]
     lea bx, [sector_buf]
+    xor dx, dx
     call fat12_write_lba
     jc .a56_err
 

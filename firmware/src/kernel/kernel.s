@@ -15,6 +15,25 @@ _start:
     mov ss, ax
     mov sp, 0xFFFE
     mov [boot_drive], dl
+    mov byte ptr [cur_drive], 0
+    mov byte ptr [num_drives], 1
+    /* Probe hard disk presence via INT 13h AH=08 */
+    push ax
+    push bx
+    push cx
+    push dx
+    push es
+    mov ah, 0x08
+    mov dl, 0x80
+    int 0x13
+    jc .no_hd
+    mov byte ptr [num_drives], 3 /* A: B: C: */
+.no_hd:
+    pop es
+    pop dx
+    pop cx
+    pop bx
+    pop ax
     mov byte ptr [com_active], 0
     mov byte ptr [com_depth], 0
     mov word ptr [current_psp], cs
@@ -25,6 +44,8 @@ _start:
     mov word ptr [dta_off], ax
     sti
 
+    call fat12_init_bpb
+    jc .fat_fail
     call fat12_load_fat
     jc .fat_fail
     call init_std_handles
@@ -150,6 +171,46 @@ boot_drive:
     .byte 0
 cur_drive:
     .byte 0
+num_drives:
+    .byte 1
+bpb_spc:
+    .byte 1
+bpb_fats:
+    .byte 2
+bpb_media:
+    .byte 0xF9
+bpb_fat_type:
+    .byte 12
+bpb_reserved:
+    .word 2
+bpb_root_ents:
+    .word 112
+bpb_totsec:
+    .word 1440
+bpb_totsec_hi:
+    .word 0
+bpb_spf:
+    .word 3
+bpb_spt:
+    .word 9
+bpb_heads:
+    .word 2
+bpb_fat1_lba:
+    .word 2
+bpb_fat2_lba:
+    .word 5
+bpb_root_lba:
+    .word 8
+bpb_root_secs:
+    .word 7
+bpb_data_lba:
+    .word 15
+bpb_max_clust:
+    .word 0x592
+fat_win_sec:
+    .word 0xFFFF
+fat_eoc:
+    .word 0x0FF8
 com_active:
     .byte 0
 com_depth:
@@ -310,6 +371,6 @@ com_buf:
     .space 16384, 0
 
 fat_buf:
-    .space 1536, 0
+    .space 1024, 0
 
 kernel_end:

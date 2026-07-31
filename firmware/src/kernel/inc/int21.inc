@@ -263,15 +263,51 @@ dos_ah19:
     clc
     jmp int21_iret
 
-/* AH=0Eh — select drive DL; AL = number of drives */
+/* AH=0Eh — select drive DL; AL = number of logical drives */
 dos_ah0e:
-    cmp dl, 0
-    ja .a0e_ok                   /* only A: exists; ignore others */
-    mov byte ptr cs:[cur_drive], dl
-.a0e_ok:
-    mov al, 1                    /* one logical drive */
+    push dx
+    call dos_select_drive
+    pop dx
+    mov al, byte ptr cs:[num_drives]
     clc
     jmp int21_iret
+
+/*
+ * Select logical drive DL (0=A). Remounts volume. CF if unavailable.
+ */
+dos_select_drive:
+    push ax
+    push bx
+    cmp dl, byte ptr cs:[num_drives]
+    jae .dsd_bad
+    cmp dl, byte ptr cs:[cur_drive]
+    je .dsd_ok
+    call fat12_flush_fat
+    /* map logical → BIOS DL */
+    mov bl, dl
+    cmp bl, 2
+    jb .dsd_bios
+    mov bl, 0x80
+    add bl, dl
+    sub bl, 2                    /* C:→80h D:→81h */
+.dsd_bios:
+    mov byte ptr cs:[boot_drive], bl
+    mov byte ptr cs:[cur_drive], dl
+    call fat12_init_bpb
+    jc .dsd_bad
+    call fat12_load_fat
+    jc .dsd_bad
+    mov word ptr cs:[cwd_cluster], 0
+    mov byte ptr cs:[cwd_path], 0
+.dsd_ok:
+    clc
+    jmp .dsd_done
+.dsd_bad:
+    stc
+.dsd_done:
+    pop bx
+    pop ax
+    ret
 
 /* AH=2Ah — get date → CX=year DH=month DL=day AL=dow */
 dos_ah2a:
@@ -356,7 +392,7 @@ dos_ah36:
     xor si, si                   /* free count */
     mov di, 2
 .a36_loop:
-    cmp di, FAT12_MAX_CLUST
+    cmp di, cs:[bpb_max_clust]
     jae .a36_done
     mov ax, di
     call fat12_get_fat
@@ -369,8 +405,9 @@ dos_ah36:
 .a36_done:
     mov dx, si                   /* free clusters */
     mov bx, si                   /* available (same) */
-    mov ax, 1                    /* sectors/cluster */
-    mov cx, 512                  /* bytes/sector */
+    mov ax, cs:[bpb_spc]
+    xor ah, ah
+    mov cx, 512
     pop ds
     pop di
     pop si

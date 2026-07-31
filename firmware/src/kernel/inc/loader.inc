@@ -302,8 +302,9 @@ build_env_block:
     ret
 
 /*
- * Setup COM: alloc a full 64 KiB arena (DOS-style), copy image to 0100,
- * entry PSP:0100 with SS:SP = PSP:FFFE. PSP[0002] = first para beyond block.
+ * Setup COM: allocate PSP + image + 8KiB stack (not a full 64KiB arena) so
+ * nested tools like FORMAT /S can still AH=48 system files. SP is set to the
+ * top of the actual block.
  */
 load_setup_com:
     push ax
@@ -314,11 +315,18 @@ load_setup_com:
     push di
     push es
 
-    mov bx, 0x1000
+    /* paragraphs = 0x10 (PSP) + ceil(com_size/16) + 0x200 (8K stack) */
+    mov ax, word ptr [com_size]
+    add ax, 15
+    mov cl, 4
+    shr ax, cl
+    add ax, 0x10
+    add ax, 0x200
+    mov bx, ax
     mov ah, 0x48
     int 0x21
     jnc .lsc_got
-    /* Not enough for 64K — take the largest free block. */
+    /* Fall back to largest free block. */
     mov bx, 0xFFFF
     mov ah, 0x48
     int 0x21
@@ -329,32 +337,45 @@ load_setup_com:
     mov word ptr [psp_run], ax
     mov word ptr [exe_cs], ax
     mov word ptr [exe_ip], 0x0100
-    mov word ptr [exe_ss], 0
-    mov word ptr [exe_sp], 0
 
-    /* PSP mem top from actual MCB size */
+    /* Read MCB size → mem top + SP */
     push ax
     dec ax
     mov es, ax
     mov bx, es:[3]
     pop ax
-    add bx, ax
-
+    mov cx, bx                   /* save paragraphs in CX */
+    add bx, ax                   /* mem top paragraph */
     mov es, ax
+
     xor di, di
+    push cx
     mov cx, PSP_SIZE
     xor al, al
     rep stosb
+    pop cx
     mov byte ptr es:[0x00], 0xCD
     mov byte ptr es:[0x01], 0x20
     mov word ptr es:[0x02], bx
 
+    /* SP = paragraphs*16 - 2 (always inside block; <= FFFE for <=64K) */
+    mov bx, cx
+    mov cl, 4
+    shl bx, cl
+    sub bx, 2
+    mov word ptr [exe_sp], bx
     mov ax, word ptr [psp_run]
+    mov word ptr [exe_ss], ax
+
     mov es, ax
     mov cx, word ptr [com_size]
     lea si, [com_buf]
     mov di, 0x0100
+    push ds
+    push cs
+    pop ds
     rep movsb
+    pop ds
     clc
     jmp .lsc_done
 .lsc_fail:
