@@ -1,0 +1,23 @@
+.cursor/
+.desloppify/
+.venv/
+.vscode/
+.idea/
+__pycache__/
+*.pyc
+
+firmware/build/*.bin
+firmware/build/*.elf
+firmware/build/*.img
+firmware/build/*.log
+firmware/build/*.o
+firmware/build/*.com
+firmware/build/*.exe
+firmware/build/*.s
+firmware/build/as8086.*.s
+firmware/build/bios_tests/
+
+# Local host toolchains
+tools/host/
+
+.tools/

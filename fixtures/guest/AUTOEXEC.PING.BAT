@@ -1,0 +1,2 @@
+BIN\DHCP
+BIN\PING -n 2 10.0.2.2

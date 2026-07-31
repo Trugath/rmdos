@@ -1,0 +1,3 @@
+[submodule "emulator/k8086"]
+	path = emulator/k8086
+	url = git@github.com:Trugath/k8086.git

@@ -1,0 +1,60 @@
+/* rmDOS XT BIOS equates — F000 segment / BDA / ports */
+
+.equ BDA_SEG, 0x0040
+.equ IVT_SEG, 0x0000
+
+/* BDA offsets (relative to BDA_SEG) */
+.equ BDA_COM1, 0x00
+.equ BDA_LPT1, 0x08
+.equ BDA_EQUIP, 0x10
+.equ BDA_MEMKB, 0x13
+.equ BDA_KBD_FLAG0, 0x17
+.equ BDA_KBD_FLAG1, 0x18
+.equ BDA_KBD_BUF_HEAD, 0x1A
+.equ BDA_KBD_BUF_TAIL, 0x1C
+.equ BDA_KBD_BUF, 0x1E
+.equ BDA_KBD_BUF_END, 0x3E
+.equ BDA_CRT_MODE, 0x49
+.equ BDA_CRT_COLS, 0x4A
+.equ BDA_CRT_LEN, 0x4C
+.equ BDA_CRT_START, 0x4E
+.equ BDA_CURSOR_POS, 0x50
+.equ BDA_CURSOR_TYPE, 0x60
+.equ BDA_CRT_PAGE, 0x62
+.equ BDA_CRT_PORT, 0x63
+.equ BDA_CRT_MODE_REG, 0x65
+.equ BDA_CRT_PALETTE, 0x66
+.equ BDA_TIMER_LO, 0x6C
+.equ BDA_TIMER_HI, 0x6E
+.equ BDA_TIMER_OFLOW, 0x70
+.equ BDA_WARM_FLAG, 0x72
+.equ BDA_DISK_STATUS, 0x74
+.equ BDA_HF_COUNT, 0x75
+.equ BDA_KBD_BUF_START, 0x80
+.equ BDA_KBD_BUF_ENDPTR, 0x82
+.equ BDA_ROWS, 0x84
+
+.equ WARM_BOOT_MAGIC, 0x1234
+
+/* POST scratch in low conventional RAM (segment 0, below boot sector / EBDA). */
+.equ POST_SKIP, 0x0500
+.equ POST_ERRORS, 0x0501
+.equ POST_ERRCODE, 0x0502
+.equ POST_ACTIVE, 0x0503        /* INT 09h sets POST_SKIP on Esc while nonzero */
+
+.equ PORT_PIC_CMD, 0x20
+.equ PORT_PIC_DATA, 0x21
+.equ PORT_PIT_CH0, 0x40
+.equ PORT_PIT_MODE, 0x43
+.equ PORT_PPI_A, 0x60
+.equ PORT_PPI_B, 0x61
+.equ PORT_PPI_C, 0x62
+.equ PORT_PPI_CTL, 0x63
+.equ PORT_CRTC_IDX, 0x3D4
+.equ PORT_CRTC_DATA, 0x3D5
+.equ PORT_CGA_MODE, 0x3D8
+.equ PORT_CGA_COLOR, 0x3D9
+
+.equ BIOS_SEG, 0xF000
+.equ BOOT_OFF, 0x7C00
+.equ CGA_SEG, 0xB800
