@@ -2,7 +2,8 @@
 
 rmDOS is a clean-room **real-mode** stack for IBM PC/XT-class machines: system
 BIOS chips (U18/U19) plus a DOS-compatible OS. Development and CI run on
-[k8086](https://github.com/Trugath/k8086) (`emulator/k8086/`).
+[k8086](https://github.com/Trugath/k8086) (`emulator/k8086/`). The project is
+MIT-licensed; see [LICENSE](../LICENSE) and [NOTICE](../NOTICE).
 
 Cassette BASIC, protected mode, and DOS extenders are out of scope. A later
 project may grow beyond real mode; **rmDOS itself stays real mode only**.

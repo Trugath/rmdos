@@ -1,0 +1,25 @@
+Third-party notices for rmDOS
+=============================
+
+This project is MIT-licensed (see LICENSE). The following components have
+separate provenance and/or licenses.
+
+k8086 emulator (Git submodule)
+------------------------------
+`emulator/k8086/` is a Git submodule of
+[k8086](https://github.com/Trugath/k8086) (MIT License, Copyright (c) 2026
+Elliot Stirling). It ships its own LICENSE, NOTICE, and third-party notices
+(including the IBM CGA font and optional SingleStepTests corpora). Initialize
+with `./setup.sh` or `git submodule update --init emulator/k8086`. Do not use
+`--recursive` unless you intentionally want the large SingleStepTests checkouts.
+
+Behavioral compatibility notes
+------------------------------
+The system BIOS aims for software compatibility with IBM PC/XT expectations
+(socket map, IVT/BDA, service interrupts, pinned entry points). The IBM 5160
+Technical Reference and open XT BIOS projects such as
+[pcxtbios](https://github.com/virtualxt/pcxtbios/) may be consulted as
+behavioral references. Their source is not vendored or copied into this tree.
+
+Guest shutdown via I/O port `0x8900` (ASCII `Shutdown`) follows the common
+Bochs/QEMU-style convention used by k8086; no Bochs or QEMU source is included.
