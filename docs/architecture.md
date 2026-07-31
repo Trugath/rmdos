@@ -95,7 +95,8 @@ DOS 3.3-ish real-mode kernel and shell, aimed at programs that run on an
 |-------|----------|------|
 | Boot | `firmware/src/boot/` | Sector 0 + RFAT1 chain to `KERNEL.SYS` |
 | Kernel | `firmware/src/kernel/` | INT 20h/21h, FAT12, MCB memory, `.COM` / MZ `.EXE` loader |
-| Shell / tools | `firmware/src/dos/` | `COMMAND.COM`, DIR/TYPE/COPY/DEL, FIND/CHOICE/MORE, PING/DHCP, demos |
+| Shell / tools | `firmware/src/dos/` | `COMMAND.COM`, DIR/TYPE/COPY/DEL/FORMAT, FIND/CHOICE/MORE, PING/DHCP, demos |
+
 
 Notable INT 21h areas: console I/O, file create/open/read/write/seek/delete,
 find-first/next, MCB alloc/free/resize, EXEC with PSP/env/FCBs, vectors
@@ -109,6 +110,14 @@ environment.
 Network tools (`PING`, `DHCP`) talk to the k8086 DE-220 NE2000-class card on the
 virtual NAT network (typical gateway `10.0.2.2`).
 
+The kernel reads the boot-sector BPB at init (geometry, FAT/root placement) so
+volumes are not limited to a hardcoded 720 KB map. `FORMAT [d:] [/S] [/Y]` builds
+FAT12 or FAT16 from INT 13h AH=08 geometry (auto-selected by cluster count) and
+can install `KERNEL.SYS` + `COMMAND.COM` (`/S`). Hard disks are whole-disk volumes
+on `C:` / `D:` (`DL=0x80` / `0x81`) for XT-era sizes up to **40 MB**; larger
+geometries are rejected. The kernel uses a windowed FAT cache and remounts when
+the current drive changes.
+
 ### Floppy image layout
 
 Default `os.img` / k8086 `disks/fd.img` (720 KB FAT12):
@@ -118,7 +127,7 @@ A:\
   KERNEL.SYS
   COMMAND.COM
   AUTOEXEC.BAT
-  BIN\     DIR TYPE COPY DEL FIND CHOICE MORE PING DHCP
+  BIN\     DIR TYPE COPY DEL FORMAT FIND CHOICE MORE PING DHCP
   DEMO\    HELLO.COM HELLO.EXE COMPAT.COM STAR.COM
   TEST\    SAMPLE.TXT
 ```

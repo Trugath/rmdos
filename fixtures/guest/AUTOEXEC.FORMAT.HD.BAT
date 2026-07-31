@@ -1,0 +1,3 @@
+BIN\FORMAT C: /Y
+DIR C:
+ECHO HD OK

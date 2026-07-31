@@ -52,6 +52,11 @@ DEL_OBJ := $(BUILD_DIR)/del.o
 DEL_ELF := $(BUILD_DIR)/del.elf
 DEL_COM := $(BUILD_DIR)/del.com
 
+FORMAT_SRC := $(SRC_DIR)/dos/format.s
+FORMAT_OBJ := $(BUILD_DIR)/format.o
+FORMAT_ELF := $(BUILD_DIR)/format.elf
+FORMAT_COM := $(BUILD_DIR)/format.com
+
 FIND_SRC := $(SRC_DIR)/dos/find.s
 FIND_OBJ := $(BUILD_DIR)/find.o
 FIND_ELF := $(BUILD_DIR)/find.elf
@@ -104,6 +109,12 @@ DHCP_IMAGE := $(BUILD_DIR)/os-dhcp.img
 DHCP_AUTOEXEC := fixtures/guest/AUTOEXEC.DHCP.BAT
 STAR_IMAGE := $(BUILD_DIR)/os-star.img
 STAR_AUTOEXEC := fixtures/guest/AUTOEXEC.STAR.BAT
+DIR_IMAGE := $(BUILD_DIR)/os-dir.img
+DIR_AUTOEXEC := fixtures/guest/AUTOEXEC.DIR.BAT
+FORMAT_IMAGE := $(BUILD_DIR)/os-format.img
+FORMAT_AUTOEXEC := fixtures/guest/AUTOEXEC.FORMAT.BAT
+FORMAT_HD_IMAGE := $(BUILD_DIR)/os-format-hd.img
+FORMAT_HD_AUTOEXEC := fixtures/guest/AUTOEXEC.FORMAT.HD.BAT
 
 BIOS_MODULES := post init video keyboard timer disk misc bios_entries bios_font
 BIOS_OBJS := $(addprefix $(BUILD_DIR)/,$(addsuffix .o,$(BIOS_MODULES)))
@@ -121,7 +132,7 @@ FD_IMG := emulator/k8086/disks/fd.img
 
 K8086_ROMS_DIR := emulator/k8086/roms
 
-.PHONY: all bios os bios-tests clean run run-fd setup test test-fd-img test-dos-compat test-ping test-dhcp test-star install-roms install-floppy
+.PHONY: all bios os bios-tests clean run run-fd setup test test-fd-img test-dos-compat test-ping test-dhcp test-star test-dir test-format test-format-hd install-roms install-floppy
 
 all: bios os
 
@@ -225,6 +236,15 @@ $(DEL_ELF): $(DEL_OBJ) $(LINK_DIR)/com.ld
 $(DEL_COM): $(DEL_ELF)
 	$(OBJCOPY) -O binary $< $@
 
+$(FORMAT_OBJ): $(FORMAT_SRC) | $(BUILD_DIR)
+	$(AS8086) --32 -o $@ $(FORMAT_SRC)
+
+$(FORMAT_ELF): $(FORMAT_OBJ) $(LINK_DIR)/com.ld
+	$(LD) -m elf_i386 -T $(LINK_DIR)/com.ld -o $@ $<
+
+$(FORMAT_COM): $(FORMAT_ELF)
+	$(OBJCOPY) -O binary $< $@
+
 $(FIND_OBJ): $(FIND_SRC) | $(BUILD_DIR)
 	$(AS8086) --32 -o $@ $(FIND_SRC)
 
@@ -305,7 +325,7 @@ $(BOOT_BIN): $(BOOT_ELF)
 
 # Shared FAT12 contents: root = COMMAND + AUTOEXEC; tools in BIN/; demos; SAMPLE in TEST/.
 OS_IMAGE_COMMON_DEPS := $(BOOT_BIN) $(KERNEL_BIN) $(HELLO_COM) $(HELLO_EXE) \
-	$(DIR_COM) $(TYPE_COM) $(COMMAND_COM) $(COPY_COM) $(DEL_COM) \
+	$(DIR_COM) $(TYPE_COM) $(COMMAND_COM) $(COPY_COM) $(DEL_COM) $(FORMAT_COM) \
 	$(FIND_COM) $(CHOICE_COM) $(MORE_COM) \
 	$(COMPAT_COM) $(PING_COM) $(DHCP_COM) $(STAR_COM) $(SAMPLE_TXT) $(EMPTY_AUTOEXEC) \
 	scripts/mkfs_fat12.py scripts/fat12.py scripts/disk.py
@@ -317,6 +337,7 @@ define PACK_OS_IMAGE
 		--file BIN/TYPE.COM=$(TYPE_COM) \
 		--file BIN/COPY.COM=$(COPY_COM) \
 		--file BIN/DEL.COM=$(DEL_COM) \
+		--file BIN/FORMAT.COM=$(FORMAT_COM) \
 		--file BIN/FIND.COM=$(FIND_COM) \
 		--file BIN/CHOICE.COM=$(CHOICE_COM) \
 		--file BIN/MORE.COM=$(MORE_COM) \
@@ -344,6 +365,15 @@ $(DHCP_IMAGE): $(OS_IMAGE_COMMON_DEPS) $(DHCP_AUTOEXEC)
 
 $(STAR_IMAGE): $(OS_IMAGE_COMMON_DEPS) $(STAR_AUTOEXEC)
 	$(call PACK_OS_IMAGE,$@,$(STAR_AUTOEXEC))
+
+$(DIR_IMAGE): $(OS_IMAGE_COMMON_DEPS) $(DIR_AUTOEXEC)
+	$(call PACK_OS_IMAGE,$@,$(DIR_AUTOEXEC))
+
+$(FORMAT_IMAGE): $(OS_IMAGE_COMMON_DEPS) $(FORMAT_AUTOEXEC)
+	$(call PACK_OS_IMAGE,$@,$(FORMAT_AUTOEXEC))
+
+$(FORMAT_HD_IMAGE): $(OS_IMAGE_COMMON_DEPS) $(FORMAT_HD_AUTOEXEC)
+	$(call PACK_OS_IMAGE,$@,$(FORMAT_HD_AUTOEXEC))
 
 # --- BIOS boot-sector unit-test images ---------------------------------------
 
@@ -376,7 +406,7 @@ run-fd: bios $(FD_IMG)
 setup:
 	./setup.sh
 
-test: all bios-tests $(COMPAT_IMAGE) $(PING_IMAGE) $(DHCP_IMAGE) $(STAR_IMAGE)
+test: all bios-tests $(COMPAT_IMAGE) $(PING_IMAGE) $(DHCP_IMAGE) $(STAR_IMAGE) $(DIR_IMAGE) $(FORMAT_IMAGE) $(FORMAT_HD_IMAGE)
 	$(PYTHON) -m tests.test_bios_roms
 	$(PYTHON) -m tests.test_bios_services
 	$(PYTHON) -m tests.test_boot_e2e
@@ -384,6 +414,9 @@ test: all bios-tests $(COMPAT_IMAGE) $(PING_IMAGE) $(DHCP_IMAGE) $(STAR_IMAGE)
 	$(PYTHON) -m tests.test_ping_e2e
 	$(PYTHON) -m tests.test_dhcp_e2e
 	$(PYTHON) -m tests.test_star_e2e
+	$(PYTHON) -m tests.test_dir_e2e
+	$(PYTHON) -m tests.test_format_e2e
+	$(PYTHON) -m tests.test_format_hd_e2e
 	$(PYTHON) -m tests.starfield_alg_test
 
 test-dos-compat: $(COMPAT_IMAGE)
@@ -397,6 +430,15 @@ test-dhcp: $(DHCP_IMAGE)
 
 test-star: $(STAR_IMAGE)
 	$(PYTHON) -m tests.test_star_e2e
+
+test-dir: $(DIR_IMAGE)
+	$(PYTHON) -m tests.test_dir_e2e
+
+test-format: $(FORMAT_IMAGE)
+	$(PYTHON) -m tests.test_format_e2e
+
+test-format-hd: $(FORMAT_HD_IMAGE)
+	$(PYTHON) -m tests.test_format_hd_e2e
 
 test-fd-img: bios $(FD_IMG)
 	$(PYTHON) -m tests.test_fd_img_e2e

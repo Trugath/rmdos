@@ -1,0 +1,1 @@
+BIN\FORMAT A: /S /Y

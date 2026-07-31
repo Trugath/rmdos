@@ -83,7 +83,7 @@ defaults (`make bios` / `make install-roms`). Override at runtime with
 4. Boot reads the FAT12 `RFAT1` loader sector, loads `KERNEL.SYS` into `0070:0000`.
 5. Kernel installs INT 20h/21h, runs a quiet FAT R/W self-check, then starts
    `COMMAND.COM` (empty `AUTOEXEC.BAT` → interactive `A:\>` prompt). The image
-   layout is `BIN\` (tools including FIND/CHOICE/MORE), `DEMO\` (HELLO/COMPAT/STAR),
+   layout is `BIN\` (tools including FIND/CHOICE/MORE/FORMAT), `DEMO\` (HELLO/COMPAT/STAR),
    `TEST\` (SAMPLE.TXT), with `PATH=A:\BIN`. Interactive `PING`/`DHCP` need the
    DE-220 card:
    `--card cards/de220/build/libs/de220-*.jar,base=0x300,irq=3,network=default`

@@ -36,6 +36,7 @@ def test_fat12_image_layout() -> None:
         "BIN\\TYPE.COM",
         "BIN\\COPY.COM",
         "BIN\\DEL.COM",
+        "BIN\\FORMAT.COM",
         "BIN\\FIND.COM",
         "BIN\\CHOICE.COM",
         "BIN\\MORE.COM",
