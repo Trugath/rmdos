@@ -42,7 +42,7 @@ GZIP_COM := $(BUILD_DIR)/gzip.com
 GUNZIP_COM := $(BUILD_DIR)/gunzip.com
 
 # wcc C COM tools (same basename: foo.c -> foo.com), plus starfield.c -> star.com
-DOS_C_TOOLS := command dir type copy del attrib label move xcopy chkdsk find choice more
+DOS_C_TOOLS := command dir type copy del attrib label move xcopy chkdsk find choice more mem fc tree sort
 COMMAND_COM := $(BUILD_DIR)/command.com
 DIR_COM := $(BUILD_DIR)/dir.com
 TYPE_COM := $(BUILD_DIR)/type.com
@@ -56,6 +56,10 @@ CHKDSK_COM := $(BUILD_DIR)/chkdsk.com
 FIND_COM := $(BUILD_DIR)/find.com
 CHOICE_COM := $(BUILD_DIR)/choice.com
 MORE_COM := $(BUILD_DIR)/more.com
+MEM_COM := $(BUILD_DIR)/mem.com
+FC_COM := $(BUILD_DIR)/fc.com
+TREE_COM := $(BUILD_DIR)/tree.com
+SORT_COM := $(BUILD_DIR)/sort.com
 
 STAR_C := $(SRC_DIR)/dos/starfield.c
 STAR_ASM := $(BUILD_DIR)/starfield.s
@@ -107,6 +111,8 @@ NET_AUTOEXEC := fixtures/guest/AUTOEXEC.NET.BAT
 NET_CONFIG := fixtures/guest/CONFIG.NET.SYS
 GZIP_IMAGE := $(BUILD_DIR)/os-gzip.img
 GZIP_AUTOEXEC := fixtures/guest/AUTOEXEC.GZIP.BAT
+UTILS_IMAGE := $(BUILD_DIR)/os-utils.img
+UTILS_AUTOEXEC := fixtures/guest/AUTOEXEC.UTILS.BAT
 
 BIOS_MODULES := post init video keyboard timer disk fdc misc bios_entries bios_font
 BIOS_OBJS := $(addprefix $(BUILD_DIR)/,$(addsuffix .o,$(BIOS_MODULES)))
@@ -114,17 +120,22 @@ U18_ELF := $(BUILD_DIR)/u18.elf
 U18_BIN := $(BUILD_DIR)/u18.bin
 U19_BIN := $(BUILD_DIR)/u19.bin
 
-BIOS_TEST_NAMES := bt_equip bt_bda bt_video bt_scroll bt_disk bt_timer bt_int1c bt_kbd_flags bt_kbd_ext bt_modes_text bt_modes_gfx bt_mode4 bt_mode6 bt_serial bt_int15 bt_pixel bt_misc bt_ctype bt_gfx_scroll bt_pixel6 bt_prtsc bt_ident bt_entry bt_fdc_rw bt_fdc_fmt bt_fdc_type
+BIOS_TEST_NAMES := bt_equip bt_bda bt_video bt_scroll bt_disk bt_disk144 bt_disk120 bt_disk360 bt_disk_stat bt_disk_upgrade bt_timer bt_int1c bt_kbd_flags bt_kbd_ext bt_modes_text bt_modes_gfx bt_mode4 bt_mode6 bt_serial bt_int15 bt_pixel bt_misc bt_ctype bt_gfx_scroll bt_pixel6 bt_prtsc bt_ident bt_entry bt_fdc_rw bt_fdc_fmt bt_fdc_type bt_page bt_palette bt_bel bt_int1a_set bt_hd_params bt_hd_rw bt_kbd_irq bt_kbd_prtsc bt_int18 bt_chgline
 BIOS_TEST_DIR := firmware/bios/tests/boot
 BIOS_TEST_LINK := firmware/bios/tests/linker/boot_test.ld
 BIOS_TEST_BUILD := $(BUILD_DIR)/bios_tests
 BIOS_TEST_IMGS := $(addprefix $(BIOS_TEST_BUILD)/,$(addsuffix .img,$(BIOS_TEST_NAMES)))
+# Image size (sectors): default 1440=720K; HD floppies need full media size for BDA hints.
+BIOS_TEST_SECTORS_bt_disk144 := 2880
+BIOS_TEST_SECTORS_bt_disk120 := 2400
+BIOS_TEST_SECTORS_bt_disk360 := 720
+BIOS_TEST_SECTORS_bt_disk_upgrade := 720
 
 FD_IMG := emulator/k8086/disks/fd.img
 
 K8086_ROMS_DIR := emulator/k8086/roms
 
-.PHONY: all bios os os-disk.img bios-tests clean run run-fd setup test test-fd-img test-dos-compat test-ping test-dhcp test-telnet test-net test-star test-dir test-format test-format-hd test-fat16-hd test-partedit-hd test-multilet-hd test-batch test-disk test-gzip test-install-hd install-roms install-floppy
+.PHONY: all bios os os-disk.img bios-tests clean run run-fd setup test test-fd-img test-dos-compat test-ping test-dhcp test-telnet test-net test-star test-dir test-format test-format-hd test-fat16-hd test-partedit-hd test-multilet-hd test-batch test-disk test-gzip test-utils test-install-hd install-roms install-floppy
 
 all: bios os
 
@@ -249,7 +260,7 @@ $(BOOT_BIN): $(BOOT_ELF)
 OS_IMAGE_COMMON_DEPS := $(BOOT_BIN) $(KERNEL_BIN) $(HELLO_COM) $(HELLO_EXE) \
 	$(DIR_COM) $(TYPE_COM) $(COMMAND_COM) $(COPY_COM) $(DEL_COM) $(ATTRIB_COM) $(LABEL_COM) \
 	$(MOVE_COM) $(XCOPY_COM) $(CHKDSK_COM) $(SYS_COM) $(PARTEDIT_COM) $(FORMAT_COM) \
-	$(FIND_COM) $(CHOICE_COM) $(MORE_COM) \
+	$(FIND_COM) $(CHOICE_COM) $(MORE_COM) $(MEM_COM) $(FC_COM) $(TREE_COM) $(SORT_COM) \
 	$(COMPAT_COM) $(INT21X_COM) $(PING_COM) $(DHCP_COM) $(TELNET_COM) $(NET_COM) $(GZIP_COM) $(GUNZIP_COM) \
 	$(STAR_COM) $(SAMPLE_TXT) $(INSTALL_BAT) \
 	$(EMPTY_AUTOEXEC) scripts/mkfs_fat12.py scripts/fat12.py scripts/disk.py
@@ -273,6 +284,10 @@ define PACK_OS_IMAGE
 		--file BIN/FIND.COM=$(FIND_COM) \
 		--file BIN/CHOICE.COM=$(CHOICE_COM) \
 		--file BIN/MORE.COM=$(MORE_COM) \
+		--file BIN/MEM.COM=$(MEM_COM) \
+		--file BIN/FC.COM=$(FC_COM) \
+		--file BIN/TREE.COM=$(TREE_COM) \
+		--file BIN/SORT.COM=$(SORT_COM) \
 		--file BIN/PING.COM=$(PING_COM) \
 		--file BIN/DHCP.COM=$(DHCP_COM) \
 		--file BIN/TELNET.COM=$(TELNET_COM) \
@@ -308,6 +323,10 @@ define PACK_OS_IMAGE_CFG
 		--file BIN/FIND.COM=$(FIND_COM) \
 		--file BIN/CHOICE.COM=$(CHOICE_COM) \
 		--file BIN/MORE.COM=$(MORE_COM) \
+		--file BIN/MEM.COM=$(MEM_COM) \
+		--file BIN/FC.COM=$(FC_COM) \
+		--file BIN/TREE.COM=$(TREE_COM) \
+		--file BIN/SORT.COM=$(SORT_COM) \
 		--file BIN/PING.COM=$(PING_COM) \
 		--file BIN/DHCP.COM=$(DHCP_COM) \
 		--file BIN/TELNET.COM=$(TELNET_COM) \
@@ -375,6 +394,9 @@ $(NET_IMAGE): $(OS_IMAGE_COMMON_DEPS) $(NETTEST_COM) $(NET_AUTOEXEC) $(NET_CONFI
 $(GZIP_IMAGE): $(OS_IMAGE_COMMON_DEPS) $(GZIP_AUTOEXEC)
 	$(call PACK_OS_IMAGE,$@,$(GZIP_AUTOEXEC))
 
+$(UTILS_IMAGE): $(OS_IMAGE_COMMON_DEPS) $(UTILS_AUTOEXEC)
+	$(call PACK_OS_IMAGE,$@,$(UTILS_AUTOEXEC))
+
 # --- BIOS boot-sector unit-test images ---------------------------------------
 
 $(BIOS_TEST_BUILD):
@@ -392,7 +414,7 @@ $(BIOS_TEST_BUILD)/$(1).bin: $(BIOS_TEST_BUILD)/$(1).elf
 	@sz=$$$$(wc -c < $$@); if [ $$$$sz -ne 512 ]; then echo "$(1).bin size $$$$sz != 512" >&2; exit 1; fi
 
 $(BIOS_TEST_BUILD)/$(1).img: $(BIOS_TEST_BUILD)/$(1).bin scripts/mk_bios_test_img.py
-	$$(PYTHON) scripts/mk_bios_test_img.py --output $$@ --boot $$<
+	$$(PYTHON) scripts/mk_bios_test_img.py --output $$@ --boot $$< --sectors $$(or $$(BIOS_TEST_SECTORS_$(1)),1440)
 endef
 
 $(foreach t,$(BIOS_TEST_NAMES),$(eval $(call BIOS_TEST_RULE,$(t))))
@@ -406,7 +428,7 @@ run-fd: bios $(FD_IMG)
 setup:
 	./setup.sh
 
-test: all bios-tests $(COMPAT_IMAGE) $(PING_IMAGE) $(DHCP_IMAGE) $(TELNET_IMAGE) $(NET_IMAGE) $(STAR_IMAGE) $(DIR_IMAGE) $(FORMAT_IMAGE) $(FORMAT_HD_IMAGE) $(FAT16_HD_IMAGE) $(PARTEDIT_HD_IMAGE) $(MULTILET_HD_IMAGE) $(BATCH_IMAGE) $(DISK_IMAGE) $(GZIP_IMAGE) $(INSTALL_IMAGE)
+test: all bios-tests $(COMPAT_IMAGE) $(PING_IMAGE) $(DHCP_IMAGE) $(TELNET_IMAGE) $(NET_IMAGE) $(STAR_IMAGE) $(DIR_IMAGE) $(FORMAT_IMAGE) $(FORMAT_HD_IMAGE) $(FAT16_HD_IMAGE) $(PARTEDIT_HD_IMAGE) $(MULTILET_HD_IMAGE) $(BATCH_IMAGE) $(DISK_IMAGE) $(GZIP_IMAGE) $(UTILS_IMAGE) $(INSTALL_IMAGE)
 	$(PYTHON) -m tests.test_wcc
 	$(PYTHON) -m tests.test_bios_roms
 	$(PYTHON) -m tests.test_bios_services
@@ -426,6 +448,7 @@ test: all bios-tests $(COMPAT_IMAGE) $(PING_IMAGE) $(DHCP_IMAGE) $(TELNET_IMAGE)
 	$(PYTHON) -m tests.test_batch_e2e
 	$(PYTHON) -m tests.test_disk_tools_e2e
 	$(PYTHON) -m tests.test_gzip_e2e
+	$(PYTHON) -m tests.test_utils_e2e
 	$(PYTHON) -m tests.test_install_hd_e2e
 	$(PYTHON) -m tests.starfield_alg_test
 
@@ -473,6 +496,9 @@ test-disk: $(DISK_IMAGE)
 
 test-gzip: $(GZIP_IMAGE)
 	$(PYTHON) -m tests.test_gzip_e2e
+
+test-utils: $(UTILS_IMAGE)
+	$(PYTHON) -m tests.test_utils_e2e
 
 test-install-hd: $(INSTALL_IMAGE)
 	$(PYTHON) -m tests.test_install_hd_e2e

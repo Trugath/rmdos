@@ -18,7 +18,11 @@ SERIAL_DIR = BIOS_TESTS / "serial"
 
 # These tests write the floppy image; run from a temp copy so the pristine
 # build artifact (especially the boot sector) is not persisted-over.
-DESTRUCTIVE_DISK_TESTS = frozenset({"bt_fdc_rw", "bt_fdc_fmt"})
+DESTRUCTIVE_DISK_TESTS = frozenset({"bt_fdc_rw", "bt_fdc_fmt", "bt_hd_rw"})
+
+# Attach a blank XT ~10MB HD so C800 Fixed Disk ROM is exercised (DL=80).
+HD_BIOS_TESTS = frozenset({"bt_hd_params", "bt_hd_rw"})
+HD_SIZE = 306 * 4 * 17 * 512
 
 TESTS = [
     "bt_equip",
@@ -26,6 +30,11 @@ TESTS = [
     "bt_video",
     "bt_scroll",
     "bt_disk",
+    "bt_disk144",
+    "bt_disk120",
+    "bt_disk360",
+    "bt_disk_stat",
+    "bt_disk_upgrade",
     "bt_timer",
     "bt_int1c",
     "bt_kbd_flags",
@@ -47,6 +56,16 @@ TESTS = [
     "bt_fdc_rw",
     "bt_fdc_fmt",
     "bt_fdc_type",
+    "bt_page",
+    "bt_palette",
+    "bt_bel",
+    "bt_int1a_set",
+    "bt_hd_params",
+    "bt_hd_rw",
+    "bt_kbd_irq",
+    "bt_kbd_prtsc",
+    "bt_int18",
+    "bt_chgline",
 ]
 
 
@@ -55,6 +74,7 @@ def _run_one(
     timeout_s: float = 20.0,
     *,
     floppy_int13_shim: bool = False,
+    hd_int13_bios: bool | None = None,
 ) -> None:
     img = BIOS_TESTS / f"{name}.img"
     if not img.is_file():
@@ -62,6 +82,8 @@ def _run_one(
 
     SERIAL_DIR.mkdir(parents=True, exist_ok=True)
     suffix = "_shim" if floppy_int13_shim else ""
+    if hd_int13_bios:
+        suffix = suffix + "_hosthd"
     serial = SERIAL_DIR / f"{name}{suffix}.log"
     serial.write_text("")
 
@@ -70,6 +92,7 @@ def _run_one(
     env["K8086_U19_ROM"] = str(BUILD / "u19.bin")
 
     tmp_path: Path | None = None
+    hd_path: Path | None = None
     run_img = img
     if name in DESTRUCTIVE_DISK_TESTS:
         with tempfile.NamedTemporaryFile(suffix=".img", delete=False) as tmp:
@@ -77,13 +100,23 @@ def _run_one(
         shutil.copyfile(img, tmp_path)
         run_img = tmp_path
 
+    launch_args: list = [run_img]
+    if name in HD_BIOS_TESTS:
+        with tempfile.NamedTemporaryFile(suffix=".hd.img", delete=False) as tmp:
+            hd_path = Path(tmp.name)
+        with hd_path.open("wb") as f:
+            f.truncate(HD_SIZE)
+        launch_args.append(hd_path)
+
     expect = f"PASS {name}"
     kwargs: dict = {}
     if not floppy_int13_shim:
         kwargs["floppy_int13_shim"] = False
+    if hd_int13_bios is True:
+        kwargs["hd_int13_bios"] = True
     proc = subprocess.Popen(
         launcher_argv(
-            run_img,
+            *launch_args,
             "--quiet",
             "--headless",
             "--serial-log",
@@ -115,6 +148,8 @@ def _run_one(
         terminate_emulator(proc)
         if tmp_path is not None:
             unlink_retry(tmp_path)
+        if hd_path is not None:
+            unlink_retry(hd_path)
 
 
 def test_bios_services() -> None:
@@ -122,6 +157,8 @@ def test_bios_services() -> None:
         _run_one(name)
     # One smoke with the legacy host floppy INT 13h shim still enabled.
     _run_one("bt_disk", floppy_int13_shim=True)
+    # Host Fixed Disk BIOS still services AH=08 for the same guest boot sector.
+    _run_one("bt_hd_params", hd_int13_bios=True)
 
 
 if __name__ == "__main__":

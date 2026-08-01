@@ -75,10 +75,10 @@ Sources live under `firmware/bios/src/` (`post`, `init`, `video`, `keyboard`,
   (`0Ch`/`0Dh`), CRTC cursor programming on set cursor/type, BEL beep, and
   graphics teletype scroll
 - INT 13h floppy via onboard FDC (DMA ch2 / IRQ6): AH=00–05, 08, 15–16 with
-  360K/720K media via BDA hint + dual INT 1Eh tables. HD uses guest C800 Fixed
-  Disk option ROM by default; host Fixed Disk BIOS is opt-in (`--hd-int13-bios` /
-  `K8086_HD_INT13_BIOS=1`). Floppy host shim is opt-in (`--floppy-int13-shim` /
-  `K8086_FLOPPY_INT13_SHIM=1`).
+  360K/720K/1.2M/1.44M media via BDA `40:8B` hint + INT 1Eh tables (FDC follows
+  the live DPT). HD uses guest C800 Fixed Disk option ROM by default; host Fixed
+  Disk BIOS is opt-in (`--hd-int13-bios` / `K8086_HD_INT13_BIOS=1`). Floppy host
+  shim is opt-in (`--floppy-int13-shim` / `K8086_FLOPPY_INT13_SHIM=1`).
   INT 14h (COM1 8250 AH=00–03), 15h (AH=86h wait; AH=80h–82h succeed; else CF), 16h
   (AH=00–02,05 stuff,10–12→00–02; Caps/Num/Scroll/Insert flags), 17h
   (printer timeout stub), 18h, 19h, 1Ah
@@ -87,7 +87,7 @@ Sources live under `firmware/bios/src/` (`post`, `init`, `video`, `keyboard`,
   IRQ6 → INT 0Eh for FDC completion; IRQ5 → INT 0Dh for Fixed Disk (guest ROM)
 - Option ROM scan `C000–F400` (`AA55`, checksum, far call +3); Fixed Disk ROM at `C800`
 - INT 18h prints a short “no BASIC” message (U19 is not an interpreter)
-- INT 1Eh diskette parameter table (720K default; 360K selectable)
+- INT 1Eh diskette parameter table (720K default; 360K / 1.2M / 1.44M selectable)
 - ROM identity: `F000:FFF5` release date, `FFFE=FEh` (XT), top-8K checksum 0
 
 Pinned absolute entry points (k8086 and XT software expect these):
@@ -175,9 +175,9 @@ images ship **without** `CONFIG.SYS`.
 `COMMAND.COM` supports internal CD/MD/RD/CLS/REN/VER/SET/PAUSE, external
 program exec, `ECHO`, `IF ERRORLEVEL` / `IF EXIST`, `GOTO`/`CALL`, redirection
 and pipes, and `AUTOEXEC.BAT`. `PATH=A:\BIN` is set in the kernel
-environment. Still absent as internals: `FOR`, `PROMPT`, `DATE`/`TIME`, `VOL`,
-`VERIFY`, `CTTY`. Classic utilities still absent: `EDIT`, `DEBUG`, `DISKCOPY`,
-`SORT`, `FC`, `TREE`, `MEM`, …
+environment. Internals present: `FOR`, `PROMPT`, `DATE`/`TIME`, `VOL`, `VERIFY`,
+`CTTY` (CON/NUL). Wave-1 utilities present: `MEM`, `FC`, `TREE`, `SORT`. Still
+absent (large/interactive): `EDIT`, `DEBUG`, `DISKCOPY`.
 
 
 `CHKDSK [d:] [/F]` audits the volume via INT 25h: BPB sanity, FAT1↔FAT2 compare,
@@ -251,7 +251,8 @@ A:\
   INSTALL.BAT
   AUTOEXEC.BAT
   BIN\     DIR TYPE COPY DEL ATTRIB LABEL MOVE XCOPY CHKDSK SYS PARTEDIT
-           FORMAT FIND CHOICE MORE PING DHCP TELNET NET
+           FORMAT FIND CHOICE MORE MEM FC TREE SORT
+           PING DHCP TELNET NET
            (os-net.img also: NETTEST)
   DEMO\    HELLO.COM HELLO.EXE COMPAT.COM INT21X.COM STAR.COM
   TEST\    SAMPLE.TXT
@@ -280,10 +281,15 @@ make run / make run-fd
 BIOS service units are boot-sector images under `firmware/bios/tests/boot/`; they
 print `PASS`/`FAIL` on COM1 and shut down via port `0x8900`. Coverage includes
 equipment/BDA, INT 10h text/graphics (modes, scroll, pixels, CRTC cursor/type,
-graphics teletype scroll), INT 13h floppy via FDC with shim off (reset/read/write/
-format/DASD), timer/INT 1Ch, INT 14h COM1 loopback, INT 15h wait/no-ops, INT 16h
-flags and extended AH=05/10–12, INT 17h stub edges, INT 05h Print Screen, ROM
-identity/checksum, and IBM entry trampolines.
+graphics teletype scroll, active page, palette, BEL), INT 13h floppy via FDC with
+shim off (reset/read/write/format/DASD/status, 360K/720K/1.2M/1.44M AH=08, 360→720
+upgrade, change-line), C800 Fixed Disk AH=08/R/W (with blank HD attached),
+timer/INT 1Ch/INT 1Ah set, INT 14h COM1 loopback, INT 15h wait/no-ops, INT 16h
+flags/extended APIs plus IRQ1 Caps and Shift+PrtSc via scancode inject port
+`0x8901`, INT 17h stub edges, INT 05h/INT 18h no-BASIC, ROM identity/checksum,
+and IBM entry trampolines. Host-only inject assists: `0x8901` scancode,
+`0x8902` FDC disk-change. Not covered: real printer success, COM2–4, CAD warm-boot
+unit (e2e elsewhere).
 
 ## References
 
