@@ -629,6 +629,116 @@ com_resume_kernel:
     pop ax
     ret
 
+/* TSR: free env, keep PSP, shrink after switching to parent stack. */
+com_tsr_kernel:
+    cli
+    mov ax, cs
+    mov ds, ax
+    mov es, ax
+
+    mov word ptr [tsr_keep_paras], dx
+
+    dec byte ptr [com_depth]
+    xor bh, bh
+    mov bl, [com_depth]
+    shl bx, 1
+
+    mov ax, word ptr [psp_tbl + bx]
+    mov word ptr [tsr_psp], ax
+
+    push bx
+    mov ax, word ptr [psp_tbl + bx]
+    push es
+    push ds
+    mov es, ax
+    xor ax, ax
+    mov ds, ax
+    mov ax, word ptr es:[0x0A]
+    mov word ptr [0x22 * 4], ax
+    mov ax, word ptr es:[0x0C]
+    mov word ptr [0x22 * 4 + 2], ax
+    mov ax, word ptr es:[0x0E]
+    mov word ptr [0x23 * 4], ax
+    mov ax, word ptr es:[0x10]
+    mov word ptr [0x23 * 4 + 2], ax
+    mov ax, word ptr es:[0x12]
+    mov word ptr [0x24 * 4], ax
+    mov ax, word ptr es:[0x14]
+    mov word ptr [0x24 * 4 + 2], ax
+    pop ds
+    pop es
+    cmp bl, 0
+    je .cts_psp_kernel
+    mov ax, word ptr [psp_tbl + bx - 2]
+    jmp .cts_psp_set
+.cts_psp_kernel:
+    mov ax, cs
+.cts_psp_set:
+    mov word ptr [current_psp], ax
+    pop bx
+
+    /* Free env on child stack; keep PSP resident. */
+    push bx
+    push es
+    mov ax, word ptr [tsr_psp]
+    mov es, ax
+    mov ax, word ptr es:[0x2C]
+    test ax, ax
+    jz .cts_no_env
+    mov es, ax
+    mov ah, 0x49
+    int 0x21
+    mov es, word ptr [tsr_psp]
+    mov word ptr es:[0x2C], 0
+.cts_no_env:
+    pop es
+    pop bx
+
+    push cs
+    pop es
+    mov ss, word ptr [save_ss_tbl + bx]
+    mov sp, word ptr [save_sp_tbl + bx]
+    cmp byte ptr [com_depth], 0
+    jne .cts_shr
+    mov byte ptr [com_active], 0
+    mov word ptr [dta_seg], cs
+    lea ax, [default_dta]
+    mov word ptr [dta_off], ax
+.cts_shr:
+    push bx
+    push es
+    mov es, word ptr [tsr_psp]
+    mov bx, word ptr [tsr_keep_paras]
+    test bx, bx
+    jnz .cts_do_shr
+    /* DX=0: keep current MCB size */
+    push es
+    mov ax, es
+    dec ax
+    mov es, ax
+    mov bx, word ptr es:[3]
+    pop es
+.cts_do_shr:
+    mov ah, 0x4A
+    int 0x21
+    mov ax, es
+    add ax, bx
+    mov word ptr es:[0x02], ax
+    pop es
+    pop bx
+
+    sti
+    clc
+    pop ds
+    pop es
+    pop di
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
 dos_ah4b:
     cmp al, 0
     je .a4b_load

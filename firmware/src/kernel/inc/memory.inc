@@ -69,12 +69,13 @@ dos_ah48:
     mov cx, es:[3]
     cmp cx, dx
     je .a48_take
-    /* split: leftover MCB at si+1+dx */
+    /* split: leftover inherits original type so later MCBs stay linked */
+    mov bl, byte ptr es:[0]
     mov di, si
     inc di
     add di, dx
     mov es, di
-    mov byte ptr es:[0], 'Z'
+    mov byte ptr es:[0], bl
     mov word ptr es:[1], 0
     mov bx, cx
     sub bx, dx
@@ -186,14 +187,16 @@ dos_ah4a:
     cmp bx, cx
     ja .a4a_grow
     je .a4a_ok
+    /* Split: free tail inherits original 'M'/'Z' (do not force Z). */
     mov dx, bx
+    mov bl, byte ptr es:[0]
     mov si, es
     mov ax, si
     inc ax
     add ax, dx
     push es
     mov es, ax
-    mov byte ptr es:[0], 'Z'
+    mov byte ptr es:[0], bl
     mov word ptr es:[1], 0
     mov bx, cx
     sub bx, dx

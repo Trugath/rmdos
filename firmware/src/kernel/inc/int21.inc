@@ -114,6 +114,8 @@ int21_handler:
     je dos_ah2d
     cmp ah, 0x30
     je dos_ah30
+    cmp ah, 0x31
+    je dos_ah31
     cmp ah, 0x33
     je dos_ah33
     cmp ah, 0x35
@@ -197,6 +199,10 @@ dos_ah30:
 dos_ah4c:
     jmp dos_terminate
 
+/* AH=31h � terminate and stay resident: AL=code, DX=paragraphs to keep */
+dos_ah31:
+    jmp dos_tsr
+
 /* AH=4Dh — get child exit code */
 dos_ah4d:
     mov al, byte ptr cs:[child_exit_code]
@@ -216,6 +222,22 @@ dos_terminate:
 .halt:
     hlt
     jmp .halt
+
+dos_tsr:
+    mov byte ptr cs:[child_exit_code], al
+    mov byte ptr cs:[child_exit_type], 3
+    cmp byte ptr cs:[com_active], 0
+    jne com_tsr_kernel
+    push es
+    push bx
+    mov es, word ptr cs:[current_psp]
+    mov bx, dx
+    mov ah, 0x4A
+    int 0x21
+    pop bx
+    pop es
+    clc
+    jmp int21_iret
 
 /* AH=25h — set interrupt vector AL=number, DS:DX=handler */
 dos_ah25:

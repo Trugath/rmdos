@@ -106,7 +106,9 @@ _start:
     int 0x21
     jc .rw_fail
 
-    /* Drop straight into the shell */
+    call dos_process_config
+
+    /* Drop into the shell (path_command may be set by SHELL=) */
     lea dx, [path_command]
     call load_and_run_com
     jc .com_fail
@@ -151,6 +153,7 @@ _start:
 .include "firmware/src/kernel/inc/find.inc"
 .include "firmware/src/kernel/inc/memory.inc"
 .include "firmware/src/kernel/inc/loader.inc"
+.include "firmware/src/kernel/inc/config.inc"
 .include "firmware/src/kernel/inc/absdisk.inc"
 .include "firmware/src/kernel/inc/int2f.inc"
 
@@ -216,6 +219,16 @@ child_exit_code:
     .byte 0
 child_exit_type:
     .byte 0
+tsr_keep_paras:
+    .word 0
+tsr_psp:
+    .word 0
+cfg_files:
+    .word 20
+cfg_buffers:
+    .word 8
+cfg_handle:
+    .word 0
 exec_pb_valid:
     .byte 0
 find_attr:
@@ -305,6 +318,20 @@ path_rw:
     .asciz "RWTEST.TXT"
 path_command:
     .asciz "COMMAND.COM"
+path_config:
+    .asciz "CONFIG.SYS"
+cfg_kw_install:
+    .asciz "INSTALL"
+cfg_kw_device:
+    .asciz "DEVICE"
+cfg_kw_files:
+    .asciz "FILES"
+cfg_kw_buffers:
+    .asciz "BUFFERS"
+cfg_kw_shell:
+    .asciz "SHELL"
+msg_cfg_install:
+    .ascii "CONFIG: INSTALL failed\r\n$"
 rw_payload:
     .ascii "rwok\n"
 env_comspec:
@@ -380,6 +407,10 @@ exe_ss:
     .word 0
 exe_sp:
     .word 0
+cfg_ch:
+    .byte 0
+cfg_line:
+    .space 120, 0
 com_buf:
     .space 24576, 0
 
