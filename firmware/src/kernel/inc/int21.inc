@@ -200,6 +200,8 @@ int21_handler:
     je dos_ah2c
     cmp ah, 0x2D
     je dos_ah2d
+    cmp ah, 0x2E
+    je dos_ah2e
     cmp ah, 0x30
     je dos_ah30
     cmp ah, 0x31
@@ -574,6 +576,13 @@ dos_ah2c:
 
 /* AH=2Dh — set time CH:CL:DH:DL (accept, no RTC) */
 dos_ah2d:
+    xor al, al
+    clc
+    jmp int21_iret
+
+/* AH=2Eh — verify write flag AL=0 off / 1 on (stored; I/O may ignore) */
+dos_ah2e:
+    mov byte ptr cs:[dos_verify_flag], al
     xor al, al
     clc
     jmp int21_iret

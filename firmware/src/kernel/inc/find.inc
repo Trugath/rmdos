@@ -340,8 +340,13 @@ find_search:
     jz .fs_fail
     cmp al, 0xE5
     je .fs_skip
+    /* Volume labels (attr 08h) only when search attr requests them. */
     test byte ptr cs:[si + 11], 0x08
-    jnz .fs_skip
+    jz .fs_after_vol
+    test byte ptr es:[di + 5], 0x08
+    jz .fs_skip
+    jmp .fs_cmp
+.fs_after_vol:
 
     mov al, cs:[si + 11]
     mov ah, es:[di + 5]

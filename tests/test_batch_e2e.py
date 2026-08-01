@@ -16,7 +16,19 @@ ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "firmware" / "build"
 SERIAL = BUILD / "serial.log"
 IMAGE = BUILD / "os-batch.img"
-MARKERS = ("EXISTS", "RENAMED", "BAR", "rmDOS DOS 3.31", "BATCH OK")
+MARKERS = (
+    "EXISTS",
+    "RENAMED",
+    "BAR",
+    "rmDOS DOS 3.31",
+    "PROMPT OK",
+    "Current date is",
+    "VERIFY is ON",
+    "ONE",
+    "TWO",
+    "FOR OK",
+    "BATCH OK",
+)
 
 
 def test_batch_on_image() -> None:

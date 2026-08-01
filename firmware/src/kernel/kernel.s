@@ -245,6 +245,8 @@ current_psp:
     .word 0
 dos_last_error:
     .word 0
+dos_verify_flag:
+    .byte 0
 dos_country_id:
     .word 1
 tmp_name_ctr:

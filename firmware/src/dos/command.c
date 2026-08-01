@@ -29,6 +29,10 @@ static char batch_names[256] = { 0 };
 static char batch_args[1280] = { 0 };
 static char goto_name[64] = { 0 };
 static char last_set[80] = { 0 };
+static char prompt_fmt[80] = { '$', 'p', '$', 'g', 0 };
+static char for_var[4] = { 0 };
+static char for_body[82] = { 0 };
+static char for_item[64] = { 0 };
 static int cursor;
 static int last_errorlevel;
 static int batch_depth;
@@ -40,6 +44,7 @@ static int saved_stdin;
 static int saved_stdout;
 static int dir_count;
 static int dir_bytes;
+static int verify_on;
 
 /* DOS calls which are not shared by the other Small-C tools. */
 int dos_chdir(char *path)
@@ -127,6 +132,78 @@ int dos_version(void)
 {
     asm("mov ah, 0x30");
     asm("int 0x21");
+}
+
+static int g_year;
+static int g_month;
+static int g_day;
+static int g_hour;
+static int g_min;
+static int g_sec;
+
+void dos_get_date(void)
+{
+    asm("mov ah, 0x2A");
+    asm("int 0x21");
+    asm("mov [g_year], cx");
+    asm("mov al, dh");
+    asm("mov ah, 0");
+    asm("mov [g_month], ax");
+    asm("mov al, dl");
+    asm("mov ah, 0");
+    asm("mov [g_day], ax");
+    asm("push cs");
+    asm("pop ds");
+}
+
+int dos_set_date(int year, int month, int day)
+{
+    asm("mov cx, [bp+8]");
+    asm("mov dh, [bp+6]");
+    asm("mov dl, [bp+4]");
+    asm("mov ah, 0x2B");
+    asm("int 0x21");
+    asm("mov ah, 0");
+    asm("push cs");
+    asm("pop ds");
+}
+
+void dos_get_time(void)
+{
+    asm("mov ah, 0x2C");
+    asm("int 0x21");
+    asm("mov al, ch");
+    asm("mov ah, 0");
+    asm("mov [g_hour], ax");
+    asm("mov al, cl");
+    asm("mov ah, 0");
+    asm("mov [g_min], ax");
+    asm("mov al, dh");
+    asm("mov ah, 0");
+    asm("mov [g_sec], ax");
+    asm("push cs");
+    asm("pop ds");
+}
+
+void dos_set_time(int hour, int min, int sec)
+{
+    asm("mov ch, [bp+8]");
+    asm("mov cl, [bp+6]");
+    asm("mov dh, [bp+4]");
+    asm("xor dl, dl");
+    asm("mov ah, 0x2D");
+    asm("int 0x21");
+    asm("push cs");
+    asm("pop ds");
+}
+
+void dos_set_verify(int on)
+{
+    asm("mov al, [bp+4]");
+    asm("mov ah, 0x2E");
+    asm("int 0x21");
+    asm("push cs");
+    asm("pop ds");
 }
 
 void dos_line_input(char *buf)
@@ -264,13 +341,59 @@ void print_crlf(void)
 
 void show_prompt(void)
 {
+    int i;
+    int c;
     int drive;
-    drive = dos_current_drive();
-    print_char(drive + 'A');
-    print_dollar(":$");
-    get_cwd(cwd);
-    print_string(cwd);
-    print_dollar("> $");
+    i = 0;
+    while (1) {
+        c = buf_get(prompt_fmt, i);
+        if (c == 0) break;
+        if (c == '$') {
+            i = i + 1;
+            c = buf_get(prompt_fmt, i);
+            if (c == 'p' || c == 'P') {
+                drive = dos_current_drive();
+                print_char(drive + 'A');
+                print_dollar(":$");
+                get_cwd(cwd);
+                print_string(cwd);
+            } else if (c == 'n' || c == 'N') {
+                drive = dos_current_drive();
+                print_char(drive + 'A');
+            } else if (c == 'g' || c == 'G') {
+                print_char('>');
+            } else if (c == 'l' || c == 'L') {
+                print_char('<');
+            } else if (c == 'b' || c == 'B') {
+                print_char('|');
+            } else if (c == 'q' || c == 'Q') {
+                print_char('=');
+            } else if (c == '$') {
+                print_char('$');
+            } else if (c == '_') {
+                print_crlf();
+            } else if (c == 'd' || c == 'D') {
+                dos_get_date();
+                print_num(g_month);
+                print_char('-');
+                print_num(g_day);
+                print_char('-');
+                print_num(g_year);
+            } else if (c == 't' || c == 'T') {
+                dos_get_time();
+                print_num(g_hour);
+                print_char(':');
+                print_num(g_min);
+                print_char(':');
+                print_num(g_sec);
+            }
+            if (c != 0) i = i + 1;
+        } else {
+            print_char(c);
+            i = i + 1;
+        }
+    }
+    print_char(' ');
 }
 
 void do_type(void)
@@ -485,6 +608,283 @@ void do_set(void)
         cursor = cursor + 1;
     }
     buf_set(last_set, i, 0);
+}
+
+void do_prompt(void)
+{
+    int i;
+    int c;
+    skip_spaces();
+    if (peek_byte(cursor) == 0) {
+        print_string(prompt_fmt);
+        print_crlf();
+        return;
+    }
+    i = 0;
+    while (peek_byte(cursor) != 0 && i < 78) {
+        c = peek_byte(cursor);
+        buf_set(prompt_fmt, i, c);
+        i = i + 1;
+        cursor = cursor + 1;
+    }
+    buf_set(prompt_fmt, i, 0);
+}
+
+static int parse_pos;
+
+int parse_uint(char *s)
+{
+    int n;
+    int c;
+    n = 0;
+    while (1) {
+        c = buf_get(s, parse_pos);
+        if (c < '0' || c > '9') break;
+        n = n * 10 + (c - '0');
+        parse_pos = parse_pos + 1;
+    }
+    return n;
+}
+
+void do_date(void)
+{
+    int month;
+    int day;
+    int year;
+    int rc;
+    skip_spaces();
+    if (peek_byte(cursor) == 0) {
+        dos_get_date();
+        print_dollar("Current date is $");
+        print_num(g_month);
+        print_char('-');
+        print_num(g_day);
+        print_char('-');
+        print_num(g_year);
+        print_crlf();
+        return;
+    }
+    if (!next_token(arg1, PATH_MAX)) return;
+    parse_pos = 0;
+    month = parse_uint(arg1);
+    if (buf_get(arg1, parse_pos) == '-' || buf_get(arg1, parse_pos) == '/') parse_pos = parse_pos + 1;
+    day = parse_uint(arg1);
+    if (buf_get(arg1, parse_pos) == '-' || buf_get(arg1, parse_pos) == '/') parse_pos = parse_pos + 1;
+    year = parse_uint(arg1);
+    rc = dos_set_date(year, month, day);
+    if (rc == 255) print_dollar("Invalid date\r\n$");
+}
+
+void do_time(void)
+{
+    int hour;
+    int min;
+    int sec;
+    skip_spaces();
+    if (peek_byte(cursor) == 0) {
+        dos_get_time();
+        print_dollar("Current time is $");
+        print_num(g_hour);
+        print_char(':');
+        print_num(g_min);
+        print_char(':');
+        print_num(g_sec);
+        print_crlf();
+        return;
+    }
+    if (!next_token(arg1, PATH_MAX)) return;
+    parse_pos = 0;
+    hour = parse_uint(arg1);
+    if (buf_get(arg1, parse_pos) == ':') parse_pos = parse_pos + 1;
+    min = parse_uint(arg1);
+    if (buf_get(arg1, parse_pos) == ':') parse_pos = parse_pos + 1;
+    sec = parse_uint(arg1);
+    dos_set_time(hour, min, sec);
+}
+
+void do_vol(void)
+{
+    dos_set_dta(dta);
+    if (dos_find_first("*.*", 8) == -1) {
+        print_dollar("Volume in drive A has no label\r\n$");
+        return;
+    }
+    print_dollar("Volume in drive A is $");
+    print_string(buf_addr(dta, 0x1E));
+    print_crlf();
+}
+
+void do_verify(void)
+{
+    skip_spaces();
+    if (!next_token(arg1, PATH_MAX)) {
+        if (verify_on) print_dollar("VERIFY is ON\r\n$");
+        else print_dollar("VERIFY is OFF\r\n$");
+        return;
+    }
+    if (str_eq(arg1, "ON")) {
+        verify_on = 1;
+        dos_set_verify(1);
+    } else if (str_eq(arg1, "OFF")) {
+        verify_on = 0;
+        dos_set_verify(0);
+    } else {
+        print_dollar("VERIFY ON|OFF\r\n$");
+    }
+}
+
+void do_ctty(void)
+{
+    int h;
+    if (!next_token(arg1, PATH_MAX)) {
+        print_dollar("CTTY device\r\n$");
+        return;
+    }
+    h = dos_open(arg1, 2);
+    if (h == -1) {
+        print_dollar("Invalid device\r\n$");
+        return;
+    }
+    dos_force_dup(h, 0);
+    dos_force_dup(h, 1);
+    dos_force_dup(h, 2);
+    if (h > 2) dos_close(h);
+}
+
+void dispatch(void);
+
+void for_run_body(char *value)
+{
+    int i;
+    int o;
+    int c;
+    int vlen;
+    int match;
+    int j;
+    vlen = str_len(for_var);
+    i = 0;
+    o = 0;
+    while (buf_get(for_body, i) != 0 && o < 80) {
+        c = buf_get(for_body, i);
+        match = 0;
+        if (c == '%') {
+            j = 0;
+            while (j < vlen && buf_get(for_body, i + 1 + j) == buf_get(for_var, j)) {
+                j = j + 1;
+            }
+            if (j == vlen) {
+                match = 1;
+                i = i + 1 + vlen;
+                j = 0;
+                while (buf_get(value, j) != 0 && o < 80) {
+                    buf_set(cmd, o, buf_get(value, j));
+                    o = o + 1;
+                    j = j + 1;
+                }
+            } else if (buf_get(for_body, i + 1) == '%' && vlen > 0) {
+                j = 0;
+                while (j < vlen && buf_get(for_body, i + 2 + j) == buf_get(for_var, j)) {
+                    j = j + 1;
+                }
+                if (j == vlen) {
+                    match = 1;
+                    i = i + 2 + vlen;
+                    j = 0;
+                    while (buf_get(value, j) != 0 && o < 80) {
+                        buf_set(cmd, o, buf_get(value, j));
+                        o = o + 1;
+                        j = j + 1;
+                    }
+                }
+            }
+        }
+        if (!match) {
+            buf_set(cmd, o, c);
+            o = o + 1;
+            i = i + 1;
+        }
+    }
+    buf_set(cmd, o, 0);
+    dispatch();
+}
+
+void do_for(void)
+{
+    int i;
+    int c;
+    int wild;
+    skip_spaces();
+    if (!next_token(arg1, PATH_MAX)) {
+        print_dollar("FOR %v IN (set) DO cmd\r\n$");
+        return;
+    }
+    i = 0;
+    if (buf_get(arg1, 0) == '%') i = 1;
+    if (buf_get(arg1, i) == '%') i = i + 1;
+    buf_set(for_var, 0, buf_get(arg1, i));
+    buf_set(for_var, 1, 0);
+    if (!next_token(arg1, PATH_MAX) || !str_eq(arg1, "IN")) {
+        print_dollar("FOR %v IN (set) DO cmd\r\n$");
+        return;
+    }
+    skip_spaces();
+    if (peek_byte(cursor) != '(') {
+        print_dollar("FOR %v IN (set) DO cmd\r\n$");
+        return;
+    }
+    cursor = cursor + 1;
+    i = 0;
+    while (peek_byte(cursor) != 0 && peek_byte(cursor) != ')' && i < 62) {
+        c = peek_byte(cursor);
+        buf_set(for_item, i, c);
+        i = i + 1;
+        cursor = cursor + 1;
+    }
+    buf_set(for_item, i, 0);
+    if (peek_byte(cursor) == ')') cursor = cursor + 1;
+    skip_spaces();
+    if (!next_token(arg1, PATH_MAX) || !str_eq(arg1, "DO")) {
+        print_dollar("FOR %v IN (set) DO cmd\r\n$");
+        return;
+    }
+    skip_spaces();
+    i = 0;
+    while (peek_byte(cursor) != 0 && i < 80) {
+        buf_set(for_body, i, peek_byte(cursor));
+        i = i + 1;
+        cursor = cursor + 1;
+    }
+    buf_set(for_body, i, 0);
+    wild = 0;
+    i = 0;
+    while (buf_get(for_item, i) != 0) {
+        c = buf_get(for_item, i);
+        if (c == '*' || c == '?') wild = 1;
+        i = i + 1;
+    }
+    if (wild) {
+        dos_set_dta(dta);
+        if (dos_find_first(for_item, 0x10) == -1) return;
+        while (1) {
+            for_run_body(buf_addr(dta, 0x1E));
+            if (dos_find_next() == -1) break;
+        }
+        return;
+    }
+    /* Space/comma-separated literal set. */
+    i = 0;
+    while (buf_get(for_item, i) != 0) {
+        while (buf_get(for_item, i) == ' ' || buf_get(for_item, i) == ',') i = i + 1;
+        if (buf_get(for_item, i) == 0) break;
+        c = 0;
+        while (buf_get(for_item, i) != 0 && buf_get(for_item, i) != ' ' && buf_get(for_item, i) != ',') {
+            buf_set(arg2, c, buf_get(for_item, i));
+            c = c + 1;
+            i = i + 1;
+        }
+        buf_set(arg2, c, 0);
+        for_run_body(arg2);
+    }
 }
 
 /* Print the value from the most recent NAME=VALUE assignment. */
@@ -775,6 +1175,13 @@ void dispatch_plain(void)
     if (str_eq(prog, "PAUSE")) { print_dollar("Press any key to continue . . .$"); read_key(); print_crlf(); return; }
     if (str_eq(prog, "VER")) { h = dos_version(); print_dollar("rmDOS DOS $"); print_num(h & 255); print_char('.'); print_num(h >> 8); print_crlf(); return; }
     if (str_eq(prog, "SET")) { do_set(); return; }
+    if (str_eq(prog, "PROMPT")) { do_prompt(); return; }
+    if (str_eq(prog, "DATE")) { do_date(); return; }
+    if (str_eq(prog, "TIME")) { do_time(); return; }
+    if (str_eq(prog, "VOL")) { do_vol(); return; }
+    if (str_eq(prog, "VERIFY")) { do_verify(); return; }
+    if (str_eq(prog, "CTTY")) { do_ctty(); return; }
+    if (str_eq(prog, "FOR")) { do_for(); return; }
     if (str_eq(prog, "IF")) { do_if(); return; }
     if (str_eq(prog, "CALL")) { if (next_token(arg1, PATH_MAX)) do_batch(arg1); return; }
     if (str_eq(prog, "GOTO")) {
