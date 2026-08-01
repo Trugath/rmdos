@@ -447,7 +447,7 @@ sector_guard:
 
 /* Dedicated kernel stack (grows down). Kept out of the MCB arena. */
 kernel_stack:
-    .space 1024, 0
+    .space 4096, 0
 kernel_stack_top:
 
 com_size:
