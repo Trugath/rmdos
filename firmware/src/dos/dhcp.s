@@ -55,6 +55,7 @@ _start:
     int 0x21
 
 .go:
+    call net_probe
     call install_break
     call nic_init
     jc .hard_fail
@@ -735,7 +736,7 @@ save_lease:
     lea si, [dns_ip]
     movsw
     movsw
-    call lease_write_file
+    call net_save_lease
     pop di
     pop si
     pop ax
@@ -754,6 +755,7 @@ print_crlf:
     ret
 
 .include "firmware/src/dos/inc/netlease.inc"
+.include "firmware/src/dos/inc/nettsr.inc"
 .include "firmware/src/dos/inc/netutil.inc"
 .include "firmware/src/dos/inc/ne2000.inc"
 
@@ -761,6 +763,12 @@ msg_help:
     .ascii "Usage: DHCP\r\n"
     .ascii "\r\n"
     .ascii "Acquire an IPv4 lease and write LEASE.DAT for PING.\r\n$"
+msg_mode_tsr:
+    .ascii "DHCP via TSR
+
+$"
+msg_mode_solo:
+    .ascii "DHCP solo\r\n$"
 msg_start:
     .ascii "\r\nDHCP Client\r\n\r\n$"
 msg_discover:
@@ -796,6 +804,8 @@ lease_handle:
     .word 0
 lease_buf:
     .space LEASE_SIZE, 0
+net_use_tsr:
+    .byte 0
 
 my_mac:
     .space 6, 0

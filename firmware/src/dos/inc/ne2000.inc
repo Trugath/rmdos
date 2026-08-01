@@ -4,11 +4,18 @@
  * Include after app .set overrides. Defaults:
  *   NE_BASE=0x300, TX_PAGE=0x40, RX_START=0x46, RX_STOP=0x60
  *   NE_RX_POLL_OUTER=0x30  (outer nic_rx timeout loops)
+ *   NE2000_FORCE_HW=0 — set to 1 in NET.COM so mux handlers never re-enter.
  *
  * Caller must provide near data: my_mac, tx_buf, rx_buf, tx_len, rx_len,
- * poll_left; and near check_abort (ZF clear / NZ = abort).
+ * poll_left, net_use_tsr; and near check_abort (ZF clear / NZ = abort).
+ * If net_use_tsr≠0 (and not FORCE_HW), nic_init/TX/RX go through INT 60h
+ * AH=B8h (NET.COM); else hardware at NE_BASE.
  * nic_transmit: SI=packet, CX=length. nic_rx: CF=timeout/error, else CX=len.
  */
+
+.ifndef NE2000_FORCE_HW
+.set NE2000_FORCE_HW, 0
+.endif
 
 .ifndef NE_BASE
 .set NE_BASE, 0x300
@@ -41,6 +48,25 @@ inb_ne:
     ret
 
 nic_init:
+.if NE2000_FORCE_HW == 0
+    cmp byte ptr [net_use_tsr], 0
+    je .nic_init_hw
+    /* Copy MAC from resident stack into local my_mac. */
+    push ax
+    push es
+    push di
+    push ds
+    pop es
+    lea di, [my_mac]
+    mov ax, 0xB801
+    int 0x60
+    pop di
+    pop es
+    pop ax
+    clc
+    ret
+.endif
+.nic_init_hw:
     push ax
     push bx
     push cx
@@ -185,6 +211,16 @@ remote_write:
     ret
 
 nic_transmit:
+.if NE2000_FORCE_HW == 0
+    cmp byte ptr [net_use_tsr], 0
+    je .nic_tx_hw
+    push ax
+    mov ax, 0xB802
+    int 0x60
+    pop ax
+    ret
+.endif
+.nic_tx_hw:
     push ax
     push bx
     push cx
@@ -224,6 +260,10 @@ nic_transmit:
     ret
 
 nic_rx:
+.if NE2000_FORCE_HW == 0
+    cmp byte ptr [net_use_tsr], 0
+    jne .nic_rx_tsr
+.endif
     push ax
     push bx
     push dx
@@ -234,12 +274,38 @@ nic_rx:
 
 /* Same as nic_rx but only one outer poll — for drain loops. */
 nic_rx_quick:
+.if NE2000_FORCE_HW == 0
+    cmp byte ptr [net_use_tsr], 0
+    jne .nic_rx_tsr
+.endif
     push ax
     push bx
     push dx
     push si
     push di
     mov word ptr [poll_left], 1
+    jmp .ne_rx_poll
+
+.if NE2000_FORCE_HW == 0
+.nic_rx_tsr:
+    push ax
+    push bx
+    push di
+    push es
+    push ds
+    pop es
+    lea di, [rx_buf]
+    mov bx, 1600
+    mov ax, 0xB803
+    int 0x60
+    mov [rx_len], cx
+    pop es
+    pop di
+    pop bx
+    pop ax
+    ret
+.endif
+
 .ne_rx_poll:
     call check_abort
     jnz .ne_rx_to

@@ -41,6 +41,7 @@ _start:
     int 0x21
 
 .have_target:
+    call net_probe
     call load_lease
     jc .no_lease
 
@@ -102,7 +103,7 @@ load_lease:
     push ax
     push si
     push di
-    call lease_read_file
+    call net_load_lease
     jc .ll_fail
     lea si, [lease_buf + LEASE_OFF_YIADDR]
     lea di, [my_ip]
@@ -813,6 +814,7 @@ parse_num:
     ret
 
 .include "firmware/src/dos/inc/netlease.inc"
+.include "firmware/src/dos/inc/nettsr.inc"
 .include "firmware/src/dos/inc/netutil.inc"
 .include "firmware/src/dos/inc/ne2000.inc"
 .include "firmware/src/dos/inc/dns.inc"
@@ -906,6 +908,8 @@ lease_handle:
     .word 0
 lease_buf:
     .space LEASE_SIZE, 0
+net_use_tsr:
+    .byte 0
 my_mac:
     .space 6, 0
 gw_mac:

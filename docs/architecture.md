@@ -109,7 +109,7 @@ live in [`firmware/src/dos/inc/dos.h`](../firmware/src/dos/inc/dos.h).
 
 | Built with wcc (C) | Left as assembly |
 |--------------------|------------------|
-| `COMMAND.COM`, DIR, TYPE, COPY, DEL, ATTRIB, LABEL, MOVE, XCOPY, CHKDSK, FIND, CHOICE, MORE, DEMO/STAR | Boot, kernel, BIOS; FORMAT, PARTEDIT, SYS; PING, DHCP, TELNET; HELLO, COMPAT |
+| `COMMAND.COM`, DIR, TYPE, COPY, DEL, ATTRIB, LABEL, MOVE, XCOPY, CHKDSK, FIND, CHOICE, MORE, DEMO/STAR | Boot, kernel, BIOS; FORMAT, PARTEDIT, SYS; PING, DHCP, TELNET, NET; HELLO, COMPAT |
 
 Keep assembly where fixed layout, interrupt ABI, or dense hardware I/O dominate
 (boot sector, kernel IVT/`iret`/EXEC, NE2000, INT 13h format/partition tools).
@@ -120,23 +120,48 @@ Notable INT 21h areas: console I/O, file create/open/read/write/seek/delete,
 find-first/next, MCB alloc/free/resize (including grow), EXEC with PSP/env/FCBs,
 handle dup (AH=45h/46h), file datetime (AH=57h), INT 25h/26h absolute disk,
 minimal INT 2Fh, vectors (AH=25h/35h), Ctrl-C/break, date/time, drive/cwd,
-mkdir/rmdir/chdir, attrs, rename. AH=30h reports DOS 3.31.
+mkdir/rmdir/chdir, attrs, rename, **AH=31h TSR**. AH=30h reports DOS 3.31.
+
+After the FAT self-test, the kernel opens **`CONFIG.SYS`** if present (missing file
+is ignored). Supported lines: `INSTALL=` / `DEVICE=` (load+run a COM; failures
+print and continue), `FILES=` / `BUFFERS=` (stored), `SHELL=` (overrides the
+command processor path). Comments (`;`) and blank lines are skipped. Default
+images ship **without** `CONFIG.SYS`.
 
 `COMMAND.COM` supports internal CD/MD/RD/CLS/REN/VER/SET/PAUSE, external
 program exec, `ECHO`, `IF ERRORLEVEL` / `IF EXIST`, `GOTO`/`CALL`, redirection
 and pipes, and `AUTOEXEC.BAT`. `PATH=A:\BIN` is set in the kernel
 environment.
 
+`CHKDSK [d:]` audits the volume via INT 25h: BPB sanity, FAT1↔FAT2 compare,
+directory chain walk (cross-links / orphans / bad chains), and a classic-style
+space report. `/F` is accepted but not implemented yet. Prints `CHKDSK OK` when
+the scan completes without I/O failure.
+
 Network tools (`PING`, `DHCP`, `TELNET`) talk to the k8086 DE-220 NE2000-class
-card on the virtual NAT network (typical gateway `10.0.2.2`). There is no kernel
-NIC driver: each COM owns the card exclusively while it runs. Shared assembly
+card on the virtual NAT network (typical gateway `10.0.2.2`). Shared assembly
 lives under [`firmware/src/dos/inc/`](../firmware/src/dos/inc/) (`ne2000.inc`,
-`netlease*.inc`, `netutil.inc`, `dns.inc`). Config is passed via cwd-relative **`LEASE.DAT`**
-(24 bytes): magic `"DHCP"`, version `1`, then yiaddr / gateway / mask / DNS
-(4 bytes each). `DHCP.COM` writes the file after a lease; `PING.COM` and
-`TELNET.COM` refuse to run without a valid one. Both accept an IPv4 address or
-DNS hostname and resolve A records via the lease DNS server (typically the NAT
-gateway `10.0.2.2`, which answers from the host resolver). `TELNET host [port]`
+`netlease*.inc`, `nettsr.inc`, `netutil.inc`, `dns.inc`).
+
+**Standalone (default):** each COM owns the card while it runs. Lease is
+cwd-relative **`LEASE.DAT`** (24 bytes): magic `"DHCP"`, version `1`, then
+yiaddr / gateway / mask / DNS. `DHCP.COM` writes the file; `PING`/`TELNET`
+require it.
+
+**Resident (optional):** `INSTALL=A:\BIN\NET.COM` in `CONFIG.SYS` loads
+`NET.COM`, which hooks **INT 60h** `AH=B8h` (multiplex version in `BX`,
+currently **2**) and stays resident (AH=31; frees its env, shrinks the PSP).
+The NIC is initialized lazily on the first MAC/TX/RX multiplex call (with
+`ES=DS=CS` inside the TSR). When present, DHCP/PING/TELNET use the multiplex
+for MAC/TX/RX and lease (`AL=1`–`5`; no `LEASE.DAT`) so the TSR owns the NIC
+exclusively. `AL=0` install check, `AL=6` NIC-ready, `AL=7` prepare-unload
+(restore INT 60; caller frees the PSP). `NET /U` unloads when the version
+matches. CF for TX/RX/lease is returned via the IRET flags frame.
+`BIN\NETTEST.COM` on `os-net.img` smoke-tests the mux. Default images leave
+INSTALL **off**. (INT 60h avoids colliding with DOS INT 2Fh probes.)
+
+`PING`/`TELNET` accept an IPv4 address or DNS hostname and resolve A records via
+the lease DNS server (typically the NAT gateway `10.0.2.2`). `TELNET host [port]`
 is an outbound TCP client (default port 23) with minimal NVT (skips IAC option
 negotiation) and a small ANSI CSI interpreter (`ESC[H`/`J`/`K`/cursor moves;
 SGR ignored) so full-screen animations work on the CGA console. The emulator
@@ -171,15 +196,17 @@ A:\
   INSTALL.BAT
   AUTOEXEC.BAT
   BIN\     DIR TYPE COPY DEL ATTRIB LABEL MOVE XCOPY CHKDSK SYS PARTEDIT
-           FORMAT FIND CHOICE MORE PING DHCP TELNET
+           FORMAT FIND CHOICE MORE PING DHCP TELNET NET
+           (os-net.img also: NETTEST)
   DEMO\    HELLO.COM HELLO.EXE COMPAT.COM STAR.COM
   TEST\    SAMPLE.TXT
 ```
 
 Packing fixtures live in [`fixtures/guest/`](../fixtures/guest/README.md)
-(AUTOEXEC variants for compat / ping / dhcp / telnet / star / batch / disk / format /
+(AUTOEXEC variants for compat / ping / dhcp / telnet / net / star / batch / disk / format /
 partedit / multilet / install / fat16 gates). `INSTALL.BAT` on the floppy walks PARTEDIT → FORMAT C: /S
-→ DIR C: for hard-disk installs.
+→ DIR C: for hard-disk installs. `os-net.img` also packs `CONFIG.SYS` with
+`INSTALL=A:\BIN\NET.COM`.
 
 ## Build and test
 
