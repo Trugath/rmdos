@@ -13,7 +13,8 @@ _start:
     mov ax, cs
     mov ds, ax
     mov ss, ax
-    mov sp, 0xFFFE
+    /* Stack must live inside the image, not at 0xFFFE overlapping the MCB arena. */
+    lea sp, [kernel_stack_top]
     mov [boot_drive], dl
     mov byte ptr [cur_drive], 0
     mov byte ptr [num_drives], 2
@@ -443,6 +444,11 @@ sector_buf:
     .space 512, 0
 sector_guard:
     .byte 0xA5, 0xA5, 0xA5, 0xA5
+
+/* Dedicated kernel stack (grows down). Kept out of the MCB arena. */
+kernel_stack:
+    .space 1024, 0
+kernel_stack_top:
 
 com_size:
     .word 0
