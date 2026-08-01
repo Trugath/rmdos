@@ -52,6 +52,41 @@ DEL_OBJ := $(BUILD_DIR)/del.o
 DEL_ELF := $(BUILD_DIR)/del.elf
 DEL_COM := $(BUILD_DIR)/del.com
 
+ATTRIB_SRC := $(SRC_DIR)/dos/attrib.s
+ATTRIB_OBJ := $(BUILD_DIR)/attrib.o
+ATTRIB_ELF := $(BUILD_DIR)/attrib.elf
+ATTRIB_COM := $(BUILD_DIR)/attrib.com
+
+LABEL_SRC := $(SRC_DIR)/dos/label.s
+LABEL_OBJ := $(BUILD_DIR)/label.o
+LABEL_ELF := $(BUILD_DIR)/label.elf
+LABEL_COM := $(BUILD_DIR)/label.com
+
+MOVE_SRC := $(SRC_DIR)/dos/move.s
+MOVE_OBJ := $(BUILD_DIR)/move.o
+MOVE_ELF := $(BUILD_DIR)/move.elf
+MOVE_COM := $(BUILD_DIR)/move.com
+
+XCOPY_SRC := $(SRC_DIR)/dos/xcopy.s
+XCOPY_OBJ := $(BUILD_DIR)/xcopy.o
+XCOPY_ELF := $(BUILD_DIR)/xcopy.elf
+XCOPY_COM := $(BUILD_DIR)/xcopy.com
+
+CHKDSK_SRC := $(SRC_DIR)/dos/chkdsk.s
+CHKDSK_OBJ := $(BUILD_DIR)/chkdsk.o
+CHKDSK_ELF := $(BUILD_DIR)/chkdsk.elf
+CHKDSK_COM := $(BUILD_DIR)/chkdsk.com
+
+SYS_SRC := $(SRC_DIR)/dos/sys.s
+SYS_OBJ := $(BUILD_DIR)/sys.o
+SYS_ELF := $(BUILD_DIR)/sys.elf
+SYS_COM := $(BUILD_DIR)/sys.com
+
+FDISK_SRC := $(SRC_DIR)/dos/fdisk.s
+FDISK_OBJ := $(BUILD_DIR)/fdisk.o
+FDISK_ELF := $(BUILD_DIR)/fdisk.elf
+FDISK_COM := $(BUILD_DIR)/fdisk.com
+
 FORMAT_SRC := $(SRC_DIR)/dos/format.s
 FORMAT_OBJ := $(BUILD_DIR)/format.o
 FORMAT_ELF := $(BUILD_DIR)/format.elf
@@ -115,6 +150,12 @@ FORMAT_IMAGE := $(BUILD_DIR)/os-format.img
 FORMAT_AUTOEXEC := fixtures/guest/AUTOEXEC.FORMAT.BAT
 FORMAT_HD_IMAGE := $(BUILD_DIR)/os-format-hd.img
 FORMAT_HD_AUTOEXEC := fixtures/guest/AUTOEXEC.FORMAT.HD.BAT
+FDISK_HD_IMAGE := $(BUILD_DIR)/os-fdisk-hd.img
+FDISK_HD_AUTOEXEC := fixtures/guest/AUTOEXEC.FDISK.BAT
+BATCH_IMAGE := $(BUILD_DIR)/os-batch.img
+BATCH_AUTOEXEC := fixtures/guest/AUTOEXEC.BATCH.BAT
+DISK_IMAGE := $(BUILD_DIR)/os-disk.img
+DISK_AUTOEXEC := fixtures/guest/AUTOEXEC.DISK.BAT
 
 BIOS_MODULES := post init video keyboard timer disk misc bios_entries bios_font
 BIOS_OBJS := $(addprefix $(BUILD_DIR)/,$(addsuffix .o,$(BIOS_MODULES)))
@@ -132,13 +173,15 @@ FD_IMG := emulator/k8086/disks/fd.img
 
 K8086_ROMS_DIR := emulator/k8086/roms
 
-.PHONY: all bios os bios-tests clean run run-fd setup test test-fd-img test-dos-compat test-ping test-dhcp test-star test-dir test-format test-format-hd install-roms install-floppy
+.PHONY: all bios os os-disk.img bios-tests clean run run-fd setup test test-fd-img test-dos-compat test-ping test-dhcp test-star test-dir test-format test-format-hd test-batch test-disk install-roms install-floppy
 
 all: bios os
 
 bios: $(U18_BIN) $(U19_BIN) install-roms
 
 os: $(IMAGE) install-floppy
+
+os-disk.img: $(DISK_IMAGE)
 
 bios-tests: bios $(BIOS_TEST_IMGS)
 
@@ -236,6 +279,25 @@ $(DEL_ELF): $(DEL_OBJ) $(LINK_DIR)/com.ld
 $(DEL_COM): $(DEL_ELF)
 	$(OBJCOPY) -O binary $< $@
 
+define DOS_TOOL_RULE
+$(BUILD_DIR)/$(1).o: $(SRC_DIR)/dos/$(1).s | $(BUILD_DIR)
+	$$(AS8086) --32 -o $$@ $$<
+$(BUILD_DIR)/$(1).elf: $(BUILD_DIR)/$(1).o $(LINK_DIR)/com.ld
+	$$(LD) -m elf_i386 -T $(LINK_DIR)/com.ld -o $$@ $$<
+$(BUILD_DIR)/$(1).com: $(BUILD_DIR)/$(1).elf
+	$$(OBJCOPY) -O binary $$< $$@
+endef
+$(foreach t,attrib label move xcopy chkdsk sys,$(eval $(call DOS_TOOL_RULE,$(t))))
+
+$(FDISK_OBJ): $(FDISK_SRC) | $(BUILD_DIR)
+	$(AS8086) --32 -o $@ $(FDISK_SRC)
+
+$(FDISK_ELF): $(FDISK_OBJ) $(LINK_DIR)/com.ld
+	$(LD) -m elf_i386 -T $(LINK_DIR)/com.ld -o $@ $<
+
+$(FDISK_COM): $(FDISK_ELF)
+	$(OBJCOPY) -O binary $< $@
+
 $(FORMAT_OBJ): $(FORMAT_SRC) | $(BUILD_DIR)
 	$(AS8086) --32 -o $@ $(FORMAT_SRC)
 
@@ -325,7 +387,8 @@ $(BOOT_BIN): $(BOOT_ELF)
 
 # Shared FAT12 contents: root = COMMAND + AUTOEXEC; tools in BIN/; demos; SAMPLE in TEST/.
 OS_IMAGE_COMMON_DEPS := $(BOOT_BIN) $(KERNEL_BIN) $(HELLO_COM) $(HELLO_EXE) \
-	$(DIR_COM) $(TYPE_COM) $(COMMAND_COM) $(COPY_COM) $(DEL_COM) $(FORMAT_COM) \
+	$(DIR_COM) $(TYPE_COM) $(COMMAND_COM) $(COPY_COM) $(DEL_COM) $(ATTRIB_COM) $(LABEL_COM) \
+	$(MOVE_COM) $(XCOPY_COM) $(CHKDSK_COM) $(SYS_COM) $(FDISK_COM) $(FORMAT_COM) \
 	$(FIND_COM) $(CHOICE_COM) $(MORE_COM) \
 	$(COMPAT_COM) $(PING_COM) $(DHCP_COM) $(STAR_COM) $(SAMPLE_TXT) $(EMPTY_AUTOEXEC) \
 	scripts/mkfs_fat12.py scripts/fat12.py scripts/disk.py
@@ -337,6 +400,13 @@ define PACK_OS_IMAGE
 		--file BIN/TYPE.COM=$(TYPE_COM) \
 		--file BIN/COPY.COM=$(COPY_COM) \
 		--file BIN/DEL.COM=$(DEL_COM) \
+		--file BIN/ATTRIB.COM=$(ATTRIB_COM) \
+		--file BIN/LABEL.COM=$(LABEL_COM) \
+		--file BIN/MOVE.COM=$(MOVE_COM) \
+		--file BIN/XCOPY.COM=$(XCOPY_COM) \
+		--file BIN/CHKDSK.COM=$(CHKDSK_COM) \
+		--file BIN/SYS.COM=$(SYS_COM) \
+		--file BIN/FDISK.COM=$(FDISK_COM) \
 		--file BIN/FORMAT.COM=$(FORMAT_COM) \
 		--file BIN/FIND.COM=$(FIND_COM) \
 		--file BIN/CHOICE.COM=$(CHOICE_COM) \
@@ -375,6 +445,15 @@ $(FORMAT_IMAGE): $(OS_IMAGE_COMMON_DEPS) $(FORMAT_AUTOEXEC)
 $(FORMAT_HD_IMAGE): $(OS_IMAGE_COMMON_DEPS) $(FORMAT_HD_AUTOEXEC)
 	$(call PACK_OS_IMAGE,$@,$(FORMAT_HD_AUTOEXEC))
 
+$(FDISK_HD_IMAGE): $(OS_IMAGE_COMMON_DEPS) $(FDISK_HD_AUTOEXEC)
+	$(call PACK_OS_IMAGE,$@,$(FDISK_HD_AUTOEXEC))
+
+$(BATCH_IMAGE): $(OS_IMAGE_COMMON_DEPS) $(BATCH_AUTOEXEC)
+	$(call PACK_OS_IMAGE,$@,$(BATCH_AUTOEXEC))
+
+$(DISK_IMAGE): $(OS_IMAGE_COMMON_DEPS) $(DISK_AUTOEXEC)
+	$(call PACK_OS_IMAGE,$@,$(DISK_AUTOEXEC))
+
 # --- BIOS boot-sector unit-test images ---------------------------------------
 
 $(BIOS_TEST_BUILD):
@@ -406,7 +485,7 @@ run-fd: bios $(FD_IMG)
 setup:
 	./setup.sh
 
-test: all bios-tests $(COMPAT_IMAGE) $(PING_IMAGE) $(DHCP_IMAGE) $(STAR_IMAGE) $(DIR_IMAGE) $(FORMAT_IMAGE) $(FORMAT_HD_IMAGE)
+test: all bios-tests $(COMPAT_IMAGE) $(PING_IMAGE) $(DHCP_IMAGE) $(STAR_IMAGE) $(DIR_IMAGE) $(FORMAT_IMAGE) $(FORMAT_HD_IMAGE) $(FDISK_HD_IMAGE) $(BATCH_IMAGE) $(DISK_IMAGE)
 	$(PYTHON) -m tests.test_bios_roms
 	$(PYTHON) -m tests.test_bios_services
 	$(PYTHON) -m tests.test_boot_e2e
@@ -417,6 +496,9 @@ test: all bios-tests $(COMPAT_IMAGE) $(PING_IMAGE) $(DHCP_IMAGE) $(STAR_IMAGE) $
 	$(PYTHON) -m tests.test_dir_e2e
 	$(PYTHON) -m tests.test_format_e2e
 	$(PYTHON) -m tests.test_format_hd_e2e
+	$(PYTHON) -m tests.test_fdisk_hd_e2e
+	$(PYTHON) -m tests.test_batch_e2e
+	$(PYTHON) -m tests.test_disk_tools_e2e
 	$(PYTHON) -m tests.starfield_alg_test
 
 test-dos-compat: $(COMPAT_IMAGE)
@@ -439,6 +521,15 @@ test-format: $(FORMAT_IMAGE)
 
 test-format-hd: $(FORMAT_HD_IMAGE)
 	$(PYTHON) -m tests.test_format_hd_e2e
+
+test-fdisk-hd: $(FDISK_HD_IMAGE)
+	$(PYTHON) -m tests.test_fdisk_hd_e2e
+
+test-batch: $(BATCH_IMAGE)
+	$(PYTHON) -m tests.test_batch_e2e
+
+test-disk: $(DISK_IMAGE)
+	$(PYTHON) -m tests.test_disk_tools_e2e
 
 test-fd-img: bios $(FD_IMG)
 	$(PYTHON) -m tests.test_fd_img_e2e

@@ -66,12 +66,29 @@ int19_handler:
     mov cx, 0x0001
     mov dx, 0x0000
     int 0x13
-    jc .i19_fail
+    jc .i19_hd
 
     cmp word ptr [BOOT_OFF + 510], 0xAA55
-    jne .i19_fail
+    jne .i19_hd
 
     mov dl, 0x00
+    jmp 0x0000:BOOT_OFF
+
+.i19_hd:
+    /* Fixed Disk BIOS / emulator shim services DL >= 80h. */
+    mov ah, 0x00
+    mov dl, 0x80
+    int 0x13
+    mov ax, 0x0201
+    mov bx, BOOT_OFF
+    mov cx, 0x0001
+    mov dx, 0x0080
+    int 0x13
+    jc .i19_fail
+    /* A signed MBR or a signed VBR is directly executable at 7C00. */
+    cmp word ptr [BOOT_OFF + 510], 0xAA55
+    jne .i19_fail
+    mov dl, 0x80
     jmp 0x0000:BOOT_OFF
 
 .i19_fail:

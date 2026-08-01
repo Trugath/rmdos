@@ -34,8 +34,10 @@ flowchart TD
   post --> ivt["IVT + BDA + chipset"]
   ivt --> orom["Option ROM scan C000-F400"]
   orom --> i19["INT 19h"]
-  i19 --> boot["Boot sector 0000:7C00"]
+  i19 --> boot["Floppy VBR or HD MBR at 0000:7C00"]
+  boot --> mbr["Active partition VBR (HD only)"]
   boot --> rfat["RFAT1 loader sector"]
+  mbr --> rfat
   rfat --> kern["KERNEL.SYS at 0070:0000"]
   kern --> cmd["COMMAND.COM"]
   cmd --> prompt["A:\\>"]
@@ -43,7 +45,8 @@ flowchart TD
 
 1. Reset vector in U18 far-jumps to `F000:E05B`.
 2. POST initializes the chipset, BDA, and IVT; scans option ROMs; then INT 19h.
-3. INT 19h loads the floppy boot sector to `0000:7C00`.
+3. INT 19h tries the floppy boot sector at `0000:7C00`, then a hard-disk
+   sector zero when floppy boot fails. A hard-disk MBR loads its active VBR.
 4. The boot sector reads the FAT12 `RFAT1` loader and loads `KERNEL.SYS`.
 5. The kernel installs INT 20h/21h, optionally runs a quiet FAT self-check, then
    starts `COMMAND.COM`. Empty `AUTOEXEC.BAT` drops to an interactive `A:\>` prompt.
@@ -99,12 +102,14 @@ DOS 3.3-ish real-mode kernel and shell, aimed at programs that run on an
 
 
 Notable INT 21h areas: console I/O, file create/open/read/write/seek/delete,
-find-first/next, MCB alloc/free/resize, EXEC with PSP/env/FCBs, vectors
-(AH=25h/35h), Ctrl-C/break, date/time, drive/cwd, mkdir/rmdir/chdir, attrs,
-rename. AH=30h reports DOS 3.31.
+find-first/next, MCB alloc/free/resize (including grow), EXEC with PSP/env/FCBs,
+handle dup (AH=45h/46h), file datetime (AH=57h), INT 25h/26h absolute disk,
+minimal INT 2Fh, vectors (AH=25h/35h), Ctrl-C/break, date/time, drive/cwd,
+mkdir/rmdir/chdir, attrs, rename. AH=30h reports DOS 3.31.
 
-`COMMAND.COM` supports internal CD/MD/RD/CLS, external program exec, `ECHO`,
-`IF ERRORLEVEL`, and `AUTOEXEC.BAT`. `PATH=A:\BIN` is set in the kernel
+`COMMAND.COM` supports internal CD/MD/RD/CLS/REN/VER/SET/PAUSE, external
+program exec, `ECHO`, `IF ERRORLEVEL` / `IF EXIST`, `GOTO`/`CALL`, redirection
+and pipes, and `AUTOEXEC.BAT`. `PATH=A:\BIN` is set in the kernel
 environment.
 
 Network tools (`PING`, `DHCP`) talk to the k8086 DE-220 NE2000-class card on the
@@ -113,10 +118,14 @@ virtual NAT network (typical gateway `10.0.2.2`).
 The kernel reads the boot-sector BPB at init (geometry, FAT/root placement) so
 volumes are not limited to a hardcoded 720 KB map. `FORMAT [d:] [/S] [/Y]` builds
 FAT12 or FAT16 from INT 13h AH=08 geometry (auto-selected by cluster count) and
-can install `KERNEL.SYS` + `COMMAND.COM` (`/S`). Hard disks are whole-disk volumes
-on `C:` / `D:` (`DL=0x80` / `0x81`) for XT-era sizes up to **40 MB**; larger
-geometries are rejected. The kernel uses a windowed FAT cache and remounts when
-the current drive changes.
+can install `KERNEL.SYS` + `COMMAND.COM` (`/S`). `FDISK /AUTO` creates one
+active primary DOS partition (leaving track zero for an MBR); `FORMAT C: /S /Y`
+then formats and installs the system inside that partition. On mount, a signed
+MBR with a DOS partition type (`01h`, `04h`, or `06h`) is mounted as that
+partition and its BPB hidden-sector base is honored. A disk without such a
+partition remains a whole-disk volume for compatibility. Hard disks are limited
+to **40 MB**; larger geometries are rejected. The kernel uses a windowed FAT
+cache and remounts when the current drive changes.
 
 ### Floppy image layout
 
@@ -127,13 +136,14 @@ A:\
   KERNEL.SYS
   COMMAND.COM
   AUTOEXEC.BAT
-  BIN\     DIR TYPE COPY DEL FORMAT FIND CHOICE MORE PING DHCP
+  BIN\     DIR TYPE COPY DEL ATTRIB LABEL MOVE XCOPY CHKDSK SYS FDISK
+           FORMAT FIND CHOICE MORE PING DHCP
   DEMO\    HELLO.COM HELLO.EXE COMPAT.COM STAR.COM
   TEST\    SAMPLE.TXT
 ```
 
 Packing fixtures live in [`fixtures/guest/`](../fixtures/guest/README.md)
-(AUTOEXEC variants for compat / ping / dhcp / star gates).
+(AUTOEXEC variants for compat / ping / dhcp / star / batch / disk / format / fdisk gates).
 
 ## Build and test
 

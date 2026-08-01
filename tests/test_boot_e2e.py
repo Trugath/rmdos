@@ -15,7 +15,7 @@ from tests.k8086_util import launcher_argv, terminate_emulator, unlink_retry
 ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "firmware" / "build"
 SERIAL = BUILD / "serial.log"
-BANNER = "rmDOS 0.7"
+BANNER = "rmDOS 0.8"
 PROMPT = "A:>"
 IMAGE = BUILD / "os.img"
 
@@ -36,6 +36,13 @@ def test_fat12_image_layout() -> None:
         "BIN\\TYPE.COM",
         "BIN\\COPY.COM",
         "BIN\\DEL.COM",
+        "BIN\\ATTRIB.COM",
+        "BIN\\LABEL.COM",
+        "BIN\\MOVE.COM",
+        "BIN\\XCOPY.COM",
+        "BIN\\CHKDSK.COM",
+        "BIN\\SYS.COM",
+        "BIN\\FDISK.COM",
         "BIN\\FORMAT.COM",
         "BIN\\FIND.COM",
         "BIN\\CHOICE.COM",

@@ -228,10 +228,40 @@ get_geometry:
     push ds
     pop es
     mov word ptr [bpb_totsec_hi], 0
+    mov word ptr [vol_base_lba], 0
     mov ax, 0
     lea bx, [secbuf]
-    call read_lba
+    call read_raw_lba
     jc gg_bios
+    /* A DOS primary partition makes FORMAT operate on that volume only. */
+    cmp word ptr [secbuf + 510], 0xAA55
+    jne gg_vbr
+    mov si, 0x1BE
+    mov cx, 4
+gg_part:
+    mov al, [secbuf + si + 4]
+    cmp al, 0x01
+    je gg_dos_part
+    cmp al, 0x04
+    je gg_dos_part
+    cmp al, 0x06
+    jne gg_part_next
+gg_dos_part:
+    cmp word ptr [secbuf + si + 10], 0
+    jne gg_fail
+    mov ax, [secbuf + si + 8]
+    test ax, ax
+    jz gg_part_next
+    mov [vol_base_lba], ax
+    mov ax, [secbuf + si + 12]
+    mov dx, [secbuf + si + 14]
+    mov [bpb_totsec], ax
+    mov [bpb_totsec_hi], dx
+    jmp gg_bios
+gg_part_next:
+    add si, 16
+    loop gg_part
+gg_vbr:
     cmp word ptr [secbuf + 11], 512
     jne gg_bios
     mov ax, [secbuf + 19]
@@ -432,7 +462,8 @@ cl_fail:
     stc
     ret
 
-read_lba:
+/* AX = physical disk LBA, ES:BX = buffer. */
+read_raw_lba:
     push ax
     push bx
     push cx
@@ -479,6 +510,11 @@ rl_hd:
     pop ax
     ret
 
+/* AX = volume-relative LBA, ES:BX = buffer. */
+read_lba:
+    add ax, [vol_base_lba]
+    jmp read_raw_lba
+
 write_lba:
     push ax
     push bx
@@ -488,6 +524,7 @@ write_lba:
     push es
     push ds
     pop es
+    add ax, [vol_base_lba]
     mov si, bx
     xor dx, dx
     mov cx, [bpb_spt]
@@ -560,8 +597,9 @@ ab_ts_done:
     mov [secbuf + 24], ax
     mov ax, [bpb_heads]
     mov [secbuf + 26], ax
-    xor ax, ax
+    mov ax, [vol_base_lba]
     mov [secbuf + 28], ax
+    xor ax, ax
     mov [secbuf + 30], ax
     mov al, [drive_dl]
     mov [secbuf + 36], al
@@ -1177,6 +1215,8 @@ drive_dl:
     .byte 0
 drive_let:
     .byte 'A'
+vol_base_lba:
+    .word 0
 bpb_spc:
     .byte 1
 bpb_fats:

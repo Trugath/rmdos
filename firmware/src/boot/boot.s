@@ -19,8 +19,9 @@
 .equ BOOT_RELOC_SEG, 0x0060
 
 _start:
-    jmp boot_start
-    nop
+    /* Fixed three-byte jump keeps the BPB at its canonical offsets. */
+    .byte 0xE9
+    .word boot_start - . - 2
     .space 59, 0
 
 /* ---- hot path: must remain below offset 0x100 ---- */
@@ -34,21 +35,14 @@ read_lba:
     push si
 
     mov si, bx
+    add ax, [0x1C]               /* BPB HiddenSectors (partition base) */
     xor dx, dx
     mov cx, [0x18]
-    test cx, cx
-    jnz .spt
-    mov cx, 9
-.spt:
     div cx
     mov cl, dl
     inc cl
     xor dx, dx
     mov bx, [0x1A]
-    test bx, bx
-    jnz .hd
-    mov bx, 2
-.hd:
     div bx
     mov dh, dl
     mov ch, al

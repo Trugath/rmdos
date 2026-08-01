@@ -8,7 +8,10 @@
 .equ FAT_WIN_SECS, 2             /* 1KB window (covers FAT12 span) */
 
 /*
- * Read boot sector via CHS (C0/H0/S1), fill CS:bpb_* and derived LBAs.
+ * Read the VBR and fill CS:bpb_* and derived absolute LBAs.
+ *
+ * A valid MBR with a primary DOS partition (01h/04h/06h) is mounted through
+ * its first such partition.  Otherwise sector zero remains a whole-disk VBR.
  * OUT: CF set on failure.
  */
 fat12_init_bpb:
@@ -33,6 +36,40 @@ fat12_init_bpb:
     int 0x13
     jc .fib_fail
 
+    mov word ptr [vol_base_lba], 0
+    cmp word ptr [sector_buf + 510], 0xAA55
+    jne .fib_vbr
+    mov si, 0x1BE
+    mov cx, 4
+.fib_part:
+    mov al, [sector_buf + si + 4]
+    cmp al, 0x01
+    je .fib_dos_part
+    cmp al, 0x04
+    je .fib_dos_part
+    cmp al, 0x06
+    jne .fib_next_part
+.fib_dos_part:
+    cmp word ptr [sector_buf + si + 10], 0
+    jne .fib_fail                /* rmDOS supports era-sized LBAs only */
+    mov ax, [sector_buf + si + 8]
+    test ax, ax
+    jz .fib_next_part
+    mov [vol_base_lba], ax
+    /* Read the VBR at the partition's recorded CHS start. */
+    mov bx, 0x0000
+    mov dh, [sector_buf + si + 1]
+    mov cl, [sector_buf + si + 2]
+    mov ch, [sector_buf + si + 3]
+    mov dl, cs:[boot_drive]
+    mov ax, 0x0201
+    int 0x13
+    jc .fib_fail
+    jmp .fib_vbr
+.fib_next_part:
+    add si, 16
+    loop .fib_part
+.fib_vbr:
     /* Require 512 BPS */
     cmp word ptr [sector_buf + 11], 512
     jne .fib_fail
@@ -98,6 +135,13 @@ fat12_init_bpb:
     div bx                       /* assume quot fits in AX for era sizes */
     add ax, 2
     mov [bpb_max_clust], ax
+
+    /* The BPB addresses are volume-relative; all filesystem I/O is physical. */
+    mov ax, [vol_base_lba]
+    add [bpb_fat1_lba], ax
+    add [bpb_fat2_lba], ax
+    add [bpb_root_lba], ax
+    add [bpb_data_lba], ax
 
     /* FAT12 if clusters <= 4085, else FAT16 */
     mov byte ptr [bpb_fat_type], 12

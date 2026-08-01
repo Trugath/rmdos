@@ -14,6 +14,9 @@
 | `AUTOEXEC.DIR.BAT` | `DIR` / `DIR BIN` for `os-dir.img` |
 | `AUTOEXEC.FORMAT.BAT` | `BIN\FORMAT A: /S /Y` for `os-format.img` |
 | `AUTOEXEC.FORMAT.HD.BAT` | `BIN\FORMAT C: /Y` then `DIR C:` for `os-format-hd.img` |
+| `AUTOEXEC.FDISK.BAT` | `FDISK /AUTO` then `FORMAT C: /S /Y` for partitioned-HD e2e |
+| `AUTOEXEC.BATCH.BAT` | Batch language / redirection gate for `os-batch.img` |
+| `AUTOEXEC.DISK.BAT` | ATTRIB/LABEL/MOVE/XCOPY/CHKDSK gate for `os-disk.img` |
 
 ## Image layout
 
@@ -22,7 +25,8 @@ A:\
   KERNEL.SYS
   COMMAND.COM
   AUTOEXEC.BAT
-  BIN\     DIR TYPE COPY DEL FORMAT FIND CHOICE MORE PING DHCP
+  BIN\     DIR TYPE COPY DEL ATTRIB LABEL MOVE XCOPY CHKDSK SYS FDISK
+           FORMAT FIND CHOICE MORE PING DHCP
   DEMO\    HELLO.COM HELLO.EXE COMPAT.COM STAR.COM
   TEST\    SAMPLE.TXT
 ```
@@ -30,9 +34,10 @@ A:\
 `PATH=A:\BIN` is set in the kernel environment so tools work from `A:\>`.
 
 `FORMAT [d:] [/S] [/Y]` builds a FAT12 or FAT16 filesystem from INT 13h geometry
-(floppy or whole-disk HDD up to 40 MB), optionally installing a bootable rmDOS
-system (`/S`). The kernel mounts volumes via the on-disk BPB and can switch to
-`C:` when a hard disk is attached.
+(floppy or HDD up to 40 MB), optionally installing a bootable rmDOS system
+(`/S`). `FDISK /AUTO` creates an active primary DOS partition; FORMAT detects
+it, preserves the MBR, and writes the VBR with BPB hidden sectors. Without a DOS
+partition table, FORMAT retains its whole-disk HDD behavior.
 
 The same image is installed into the k8086 submodule as `disks/fd.img`
 (`make install-floppy` / `make os`).
