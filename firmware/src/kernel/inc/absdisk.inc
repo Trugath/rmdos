@@ -80,15 +80,16 @@ absdisk_xfer:
     mov byte ptr cs:[abs_saved_drv], 0xFF
     mov ah, byte ptr cs:[cur_drive]
     mov byte ptr cs:[abs_saved_drv], ah
+    /* Save INT 25h/26h args before dos_select_drive clobbers DX via DL. */
+    mov si, cx
+    mov di, dx
+    mov bp, bx
     push ax
     mov dl, al
     call dos_select_drive
     pop ax
     jc .ax_drv
 
-    mov si, cx
-    mov di, dx
-    mov bp, bx
     push ds
     pop es
 
