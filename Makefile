@@ -37,6 +37,8 @@ DHCP_COM := $(BUILD_DIR)/dhcp.com
 TELNET_COM := $(BUILD_DIR)/telnet.com
 NET_COM := $(BUILD_DIR)/net.com
 NETTEST_COM := $(BUILD_DIR)/nettest.com
+GZIP_COM := $(BUILD_DIR)/gzip.com
+GUNZIP_COM := $(BUILD_DIR)/gunzip.com
 
 # wcc C COM tools (same basename: foo.c -> foo.com), plus starfield.c -> star.com
 DOS_C_TOOLS := command dir type copy del attrib label move xcopy chkdsk find choice more
@@ -102,6 +104,8 @@ INSTALL_AUTOEXEC := fixtures/guest/AUTOEXEC.INSTALL.BAT
 NET_IMAGE := $(BUILD_DIR)/os-net.img
 NET_AUTOEXEC := fixtures/guest/AUTOEXEC.NET.BAT
 NET_CONFIG := fixtures/guest/CONFIG.NET.SYS
+GZIP_IMAGE := $(BUILD_DIR)/os-gzip.img
+GZIP_AUTOEXEC := fixtures/guest/AUTOEXEC.GZIP.BAT
 
 BIOS_MODULES := post init video keyboard timer disk misc bios_entries bios_font
 BIOS_OBJS := $(addprefix $(BUILD_DIR)/,$(addsuffix .o,$(BIOS_MODULES)))
@@ -119,7 +123,7 @@ FD_IMG := emulator/k8086/disks/fd.img
 
 K8086_ROMS_DIR := emulator/k8086/roms
 
-.PHONY: all bios os os-disk.img bios-tests clean run run-fd setup test test-fd-img test-dos-compat test-ping test-dhcp test-telnet test-net test-star test-dir test-format test-format-hd test-fat16-hd test-partedit-hd test-multilet-hd test-batch test-disk test-install-hd install-roms install-floppy
+.PHONY: all bios os os-disk.img bios-tests clean run run-fd setup test test-fd-img test-dos-compat test-ping test-dhcp test-telnet test-net test-star test-dir test-format test-format-hd test-fat16-hd test-partedit-hd test-multilet-hd test-batch test-disk test-gzip test-install-hd install-roms install-floppy
 
 all: bios os
 
@@ -189,7 +193,7 @@ $(BUILD_DIR)/$(1).elf: $(BUILD_DIR)/$(1).o $(LINK_DIR)/com.ld
 $(BUILD_DIR)/$(1).com: $(BUILD_DIR)/$(1).elf
 	$$(OBJCOPY) -O binary $$< $$@
 endef
-$(foreach t,sys partedit format compat ping dhcp telnet net nettest,$(eval $(call DOS_ASM_COM_RULE,$(t))))
+$(foreach t,sys partedit format compat ping dhcp telnet net nettest gzip gunzip,$(eval $(call DOS_ASM_COM_RULE,$(t))))
 
 # C COM pattern: foo.c -> build/foo.s -> .o -> .elf -> .com
 define DOS_C_COM_RULE
@@ -233,7 +237,8 @@ OS_IMAGE_COMMON_DEPS := $(BOOT_BIN) $(KERNEL_BIN) $(HELLO_COM) $(HELLO_EXE) \
 	$(DIR_COM) $(TYPE_COM) $(COMMAND_COM) $(COPY_COM) $(DEL_COM) $(ATTRIB_COM) $(LABEL_COM) \
 	$(MOVE_COM) $(XCOPY_COM) $(CHKDSK_COM) $(SYS_COM) $(PARTEDIT_COM) $(FORMAT_COM) \
 	$(FIND_COM) $(CHOICE_COM) $(MORE_COM) \
-	$(COMPAT_COM) $(PING_COM) $(DHCP_COM) $(TELNET_COM) $(NET_COM) $(STAR_COM) $(SAMPLE_TXT) $(INSTALL_BAT) \
+	$(COMPAT_COM) $(PING_COM) $(DHCP_COM) $(TELNET_COM) $(NET_COM) $(GZIP_COM) $(GUNZIP_COM) \
+	$(STAR_COM) $(SAMPLE_TXT) $(INSTALL_BAT) \
 	$(EMPTY_AUTOEXEC) scripts/mkfs_fat12.py scripts/fat12.py scripts/disk.py
 
 define PACK_OS_IMAGE
@@ -259,6 +264,8 @@ define PACK_OS_IMAGE
 		--file BIN/DHCP.COM=$(DHCP_COM) \
 		--file BIN/TELNET.COM=$(TELNET_COM) \
 		--file BIN/NET.COM=$(NET_COM) \
+		--file BIN/GZIP.COM=$(GZIP_COM) \
+		--file BIN/GUNZIP.COM=$(GUNZIP_COM) \
 		--file DEMO/HELLO.COM=$(HELLO_COM) \
 		--file DEMO/HELLO.EXE=$(HELLO_EXE) \
 		--file DEMO/COMPAT.COM=$(COMPAT_COM) \
@@ -291,6 +298,8 @@ define PACK_OS_IMAGE_CFG
 		--file BIN/DHCP.COM=$(DHCP_COM) \
 		--file BIN/TELNET.COM=$(TELNET_COM) \
 		--file BIN/NET.COM=$(NET_COM) \
+		--file BIN/GZIP.COM=$(GZIP_COM) \
+		--file BIN/GUNZIP.COM=$(GUNZIP_COM) \
 		--file BIN/NETTEST.COM=$(NETTEST_COM) \
 		--file DEMO/HELLO.COM=$(HELLO_COM) \
 		--file DEMO/HELLO.EXE=$(HELLO_EXE) \
@@ -348,6 +357,9 @@ $(INSTALL_IMAGE): $(OS_IMAGE_COMMON_DEPS) $(INSTALL_AUTOEXEC)
 $(NET_IMAGE): $(OS_IMAGE_COMMON_DEPS) $(NETTEST_COM) $(NET_AUTOEXEC) $(NET_CONFIG)
 	$(call PACK_OS_IMAGE_CFG,$@,$(NET_AUTOEXEC),$(NET_CONFIG))
 
+$(GZIP_IMAGE): $(OS_IMAGE_COMMON_DEPS) $(GZIP_AUTOEXEC)
+	$(call PACK_OS_IMAGE,$@,$(GZIP_AUTOEXEC))
+
 # --- BIOS boot-sector unit-test images ---------------------------------------
 
 $(BIOS_TEST_BUILD):
@@ -379,7 +391,7 @@ run-fd: bios $(FD_IMG)
 setup:
 	./setup.sh
 
-test: all bios-tests $(COMPAT_IMAGE) $(PING_IMAGE) $(DHCP_IMAGE) $(TELNET_IMAGE) $(NET_IMAGE) $(STAR_IMAGE) $(DIR_IMAGE) $(FORMAT_IMAGE) $(FORMAT_HD_IMAGE) $(FAT16_HD_IMAGE) $(PARTEDIT_HD_IMAGE) $(MULTILET_HD_IMAGE) $(BATCH_IMAGE) $(DISK_IMAGE) $(INSTALL_IMAGE)
+test: all bios-tests $(COMPAT_IMAGE) $(PING_IMAGE) $(DHCP_IMAGE) $(TELNET_IMAGE) $(NET_IMAGE) $(STAR_IMAGE) $(DIR_IMAGE) $(FORMAT_IMAGE) $(FORMAT_HD_IMAGE) $(FAT16_HD_IMAGE) $(PARTEDIT_HD_IMAGE) $(MULTILET_HD_IMAGE) $(BATCH_IMAGE) $(DISK_IMAGE) $(GZIP_IMAGE) $(INSTALL_IMAGE)
 	$(PYTHON) -m tests.test_wcc
 	$(PYTHON) -m tests.test_bios_roms
 	$(PYTHON) -m tests.test_bios_services
@@ -398,6 +410,7 @@ test: all bios-tests $(COMPAT_IMAGE) $(PING_IMAGE) $(DHCP_IMAGE) $(TELNET_IMAGE)
 	$(PYTHON) -m tests.test_multilet_hd_e2e
 	$(PYTHON) -m tests.test_batch_e2e
 	$(PYTHON) -m tests.test_disk_tools_e2e
+	$(PYTHON) -m tests.test_gzip_e2e
 	$(PYTHON) -m tests.test_install_hd_e2e
 	$(PYTHON) -m tests.starfield_alg_test
 
@@ -442,6 +455,9 @@ test-batch: $(BATCH_IMAGE)
 
 test-disk: $(DISK_IMAGE)
 	$(PYTHON) -m tests.test_disk_tools_e2e
+
+test-gzip: $(GZIP_IMAGE)
+	$(PYTHON) -m tests.test_gzip_e2e
 
 test-install-hd: $(INSTALL_IMAGE)
 	$(PYTHON) -m tests.test_install_hd_e2e

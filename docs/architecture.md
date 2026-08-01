@@ -109,7 +109,7 @@ live in [`firmware/src/dos/inc/dos.h`](../firmware/src/dos/inc/dos.h).
 
 | Built with wcc (C) | Left as assembly |
 |--------------------|------------------|
-| `COMMAND.COM`, DIR, TYPE, COPY, DEL, ATTRIB, LABEL, MOVE, XCOPY, CHKDSK, FIND, CHOICE, MORE, DEMO/STAR | Boot, kernel, BIOS; FORMAT, PARTEDIT, SYS; PING, DHCP, TELNET, NET; HELLO, COMPAT |
+| `COMMAND.COM`, DIR, TYPE, COPY, DEL, ATTRIB, LABEL, MOVE, XCOPY, CHKDSK, FIND, CHOICE, MORE, DEMO/STAR | Boot, kernel, BIOS; FORMAT, PARTEDIT, SYS; PING, DHCP, TELNET, NET; GZIP, GUNZIP; HELLO, COMPAT |
 
 Keep assembly where fixed layout, interrupt ABI, or dense hardware I/O dominate
 (boot sector, kernel IVT/`iret`/EXEC, NE2000, INT 13h format/partition tools).
@@ -137,6 +137,14 @@ environment.
 directory chain walk (cross-links / orphans / bad chains), and a classic-style
 space report. `/F` is accepted but not implemented yet. Prints `CHKDSK OK` when
 the scan completes without I/O failure.
+
+`GZIP [src [dst]]` / `GUNZIP [src [dst]]` compress and decompress a single gzip
+member (RFC 1952, DEFLATE method 8). Zero args use stdin→stdout; one arg reads a
+file to stdout. Status lines are omitted when writing to stdout so pipes and
+redirects stay binary-clean. Compression emits stored DEFLATE blocks;
+decompression accepts stored, fixed, and dynamic Huffman blocks. Source files are
+kept. Shared codec includes live under [`firmware/src/dos/inc/`](../firmware/src/dos/inc/)
+(`crc32.inc`, `deflate.inc`, `inflate.inc`).
 
 Network tools (`PING`, `DHCP`, `TELNET`) talk to the k8086 DE-220 NE2000-class
 card on the virtual NAT network (typical gateway `10.0.2.2`). Shared assembly

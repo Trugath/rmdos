@@ -50,6 +50,8 @@ def test_fat12_image_layout() -> None:
         "BIN\\MORE.COM",
         "BIN\\PING.COM",
         "BIN\\DHCP.COM",
+        "BIN\\GZIP.COM",
+        "BIN\\GUNZIP.COM",
         "DEMO\\HELLO.COM",
         "DEMO\\HELLO.EXE",
         "DEMO\\COMPAT.COM",

@@ -20,14 +20,96 @@ handle_index:
     cmp bx, MAX_HANDLES
     jae .hi_bad
     mov ax, bx
-    mov cl, 4
-    shl ax, cl
+    /* ×16 without touching CX — AH=46 keeps the dest handle in CX */
+    shl ax, 1
+    shl ax, 1
+    shl ax, 1
+    shl ax, 1
     lea di, [handles]
     add di, ax
     clc
     ret
 .hi_bad:
     stc
+    ret
+
+/*
+ * Mirror cluster/size/pos from ES:SI to every other H_FILE handle that
+ * refers to the same directory entry. Dup/force-dup copy entries rather
+ * than sharing an SFT, so redirect (stdout→file) needs this to keep the
+ * original create-handle in sync for a later close/flush.
+ */
+handles_mirror:
+    push ax
+    push bx
+    push cx
+    push di
+    lea di, [handles]
+    xor bx, bx
+.hm_loop:
+    cmp bx, MAX_HANDLES
+    jae .hm_done
+    cmp di, si
+    je .hm_next
+    cmp byte ptr es:[di], H_FILE
+    jne .hm_next
+    mov al, es:[di + 15]
+    cmp al, es:[si + 15]
+    jne .hm_next
+    mov ax, es:[di + 12]
+    cmp ax, es:[si + 12]
+    jne .hm_next
+    mov al, es:[di + 14]
+    cmp al, es:[si + 14]
+    jne .hm_next
+    push si
+    push di
+    push ds
+    push cs
+    pop ds
+    mov cx, 10                   /* +2 .. +11: cluster, size, pos */
+    add si, 2
+    add di, 2
+    rep movsb
+    pop ds
+    pop di
+    pop si
+.hm_next:
+    add di, HANDLE_SIZE
+    inc bx
+    jmp .hm_loop
+.hm_done:
+    pop di
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+/* Flush H_FILE at ES:DI to its directory entry (does not clear the slot). */
+handle_flush_file:
+    cmp byte ptr es:[di], H_FILE
+    jne .hff_done
+    push ax
+    push cx
+    push dx
+    call handle_mount_drive
+    jc .hff_pop
+    mov ax, word ptr es:[di + 12]
+    mov word ptr cs:[last_dir_lba], ax
+    mov al, byte ptr es:[di + 14]
+    xor ah, ah
+    mov word ptr cs:[last_dir_idx], ax
+    mov ax, word ptr es:[di + 2]
+    mov dx, word ptr es:[di + 4]
+    mov cx, word ptr es:[di + 6]
+    mov word ptr cs:[last_size_hi], cx
+    call fat12_update_dirent
+    call fat12_flush_fat
+.hff_pop:
+    pop dx
+    pop cx
+    pop ax
+.hff_done:
     ret
 
 dos_open_slot:
@@ -404,7 +486,7 @@ dos_ah3f:
     xor bp, bp
 .a3f_loop:
     cmp bp, word ptr cs:[xfer_want]
-    jae .a3f_ok
+    jae .a3f_file_done
     call file_cluster_at_pos
     jc .a3f_fail
     mov word ptr cs:[xfer_soff], cx
@@ -453,6 +535,10 @@ dos_ah3f:
     add word ptr es:[si + 8], ax
     adc word ptr es:[si + 10], 0
     jmp .a3f_loop
+
+.a3f_file_done:
+    call handles_mirror
+    jmp .a3f_ok
 
 .a3f_con:
     mov ds, word ptr cs:[xfer_buf_seg]
@@ -537,7 +623,7 @@ dos_ah40:
     xor bp, bp
 .a40_loop:
     cmp bp, word ptr cs:[xfer_want]
-    jae .a40_ok
+    jae .a40_file_done
     call file_cluster_at_pos
     jc .a40_fail
     mov word ptr cs:[xfer_soff], cx
@@ -613,6 +699,10 @@ dos_ah40:
     mov es:[si + 6], dx
 .a40_nosz:
     jmp .a40_loop
+
+.a40_file_done:
+    call handles_mirror
+    jmp .a40_ok
 
 .a40_con:
     mov ds, word ptr cs:[xfer_buf_seg]
@@ -819,6 +909,10 @@ dos_ah42:
 .a42_set:
     mov word ptr es:[di + 8], bx
     mov word ptr es:[di + 10], si
+    push si
+    mov si, di
+    call handles_mirror
+    pop si
     mov ax, bx
     mov dx, si
     pop es
@@ -967,6 +1061,8 @@ dos_ah46:
     call handle_index
     pop bx
     jc .a46_err
+    /* flush+drop dest if it was an open file (redirect restore) */
+    call handle_flush_file
     mov byte ptr es:[di], 0
     mov cx, HANDLE_SIZE
     push ds
