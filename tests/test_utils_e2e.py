@@ -1,4 +1,4 @@
-"""E2E gate for MEM/FC/TREE/SORT classic utilities."""
+"""E2E gate for MEM/FC/TREE/SORT/EDIT/DEBUG classic utilities."""
 
 from __future__ import annotations
 
@@ -20,13 +20,23 @@ MARKERS = (
     "Conventional Memory:",
     "Files compare OK",
     "Directory PATH listing",
+    "EDIT OK",
+    "DEBUG",
+    "DEBUG OK",
     "UTILS2 OK",
 )
 
 
 def test_utils_on_image() -> None:
     raw = IMAGE.read_bytes()
-    for name in ("BIN\\MEM.COM", "BIN\\FC.COM", "BIN\\TREE.COM", "BIN\\SORT.COM"):
+    for name in (
+        "BIN\\MEM.COM",
+        "BIN\\FC.COM",
+        "BIN\\TREE.COM",
+        "BIN\\SORT.COM",
+        "BIN\\EDIT.COM",
+        "BIN\\DEBUG.COM",
+    ):
         assert fat12.find_directory_entry(raw, name).size_bytes > 0
 
 
@@ -49,7 +59,7 @@ def test_utils_e2e() -> None:
             stderr=subprocess.DEVNULL,
         )
         try:
-            deadline = time.time() + 90
+            deadline = time.time() + 120
             text = ""
             while time.time() < deadline:
                 if SERIAL.is_file():

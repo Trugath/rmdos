@@ -176,8 +176,9 @@ images ship **without** `CONFIG.SYS`.
 program exec, `ECHO`, `IF ERRORLEVEL` / `IF EXIST`, `GOTO`/`CALL`, redirection
 and pipes, and `AUTOEXEC.BAT`. `PATH=A:\BIN` is set in the kernel
 environment. Internals present: `FOR`, `PROMPT`, `DATE`/`TIME`, `VOL`, `VERIFY`,
-`CTTY` (CON/NUL). Wave-1 utilities present: `MEM`, `FC`, `TREE`, `SORT`. Still
-absent (large/interactive): `EDIT`, `DEBUG`, `DISKCOPY`.
+`CTTY` (CON/NUL). Wave-1 utilities present: `MEM`, `FC`, `TREE`, `SORT`. Wave-2:
+`EDIT` (fullscreen + `/Q` smoke), `DEBUG` (D/E/U/A/N/L/W/Q; stdin scripts),
+`DISKCOPY` (INT 13h track copy, `/Y`).
 
 
 `CHKDSK [d:] [/F]` audits the volume via INT 25h: BPB sanity, FAT1↔FAT2 compare,
@@ -251,9 +252,9 @@ A:\
   INSTALL.BAT
   AUTOEXEC.BAT
   BIN\     DIR TYPE COPY DEL ATTRIB LABEL MOVE XCOPY CHKDSK SYS PARTEDIT
-           FORMAT FIND CHOICE MORE MEM FC TREE SORT
+           FORMAT FIND CHOICE MORE MEM FC TREE SORT EDIT DEBUG DISKCOPY
            PING DHCP TELNET NET
-           (os-net.img also: NETTEST)
+            (os-net.img also: NETTEST)
   DEMO\    HELLO.COM HELLO.EXE COMPAT.COM INT21X.COM STAR.COM
   TEST\    SAMPLE.TXT
 ```

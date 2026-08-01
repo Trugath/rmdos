@@ -23,7 +23,8 @@
 | `AUTOEXEC.BATCH.BAT` | Batch language / redirection gate for `os-batch.img` |
 | `AUTOEXEC.DISK.BAT` | ATTRIB/LABEL/MOVE/XCOPY/CHKDSK gate for `os-disk.img` |
 | `AUTOEXEC.GZIP.BAT` | `BIN\GZIP` / `BIN\GUNZIP` file and pipe round-trips for `os-gzip.img` |
-| `AUTOEXEC.UTILS.BAT` | `MEM` / `FC` / `TREE` / `SORT` smoke for `os-utils.img` |
+| `AUTOEXEC.UTILS.BAT` | `MEM` / `FC` / `TREE` / `SORT` / `EDIT` / `DEBUG` smoke for `os-utils.img` |
+| `AUTOEXEC.DISKCOPY.BAT` | `DISKCOPY A: B: /Y` for `os-diskcopy.img` |
 | `INSTALL.BAT` | Hard-disk install helper: PARTEDIT /CREATE → FORMAT C: /S → DIR C: (on every `os*.img`) |
 | `AUTOEXEC.INSTALL.BAT` | Calls `INSTALL.BAT` for `os-install.img` / HD install e2e |
 
@@ -36,7 +37,7 @@ A:\
   INSTALL.BAT
   AUTOEXEC.BAT
   BIN\     DIR TYPE COPY DEL ATTRIB LABEL MOVE XCOPY CHKDSK SYS PARTEDIT
-           FORMAT FIND CHOICE MORE MEM FC TREE SORT
+           FORMAT FIND CHOICE MORE MEM FC TREE SORT EDIT DEBUG DISKCOPY
            PING DHCP TELNET NET GZIP GUNZIP
   DEMO\    HELLO.COM HELLO.EXE COMPAT.COM STAR.COM
   TEST\    SAMPLE.TXT
