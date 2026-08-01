@@ -3,16 +3,22 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 
-from tests.k8086_util import launcher_argv, terminate_emulator
+from tests.k8086_util import launcher_argv, terminate_emulator, unlink_retry
 
 ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "firmware" / "build"
 BIOS_TESTS = BUILD / "bios_tests"
 SERIAL_DIR = BIOS_TESTS / "serial"
+
+# These tests write the floppy image; run from a temp copy so the pristine
+# build artifact (especially the boot sector) is not persisted-over.
+DESTRUCTIVE_DISK_TESTS = frozenset({"bt_fdc_rw", "bt_fdc_fmt"})
 
 TESTS = [
     "bt_equip",
@@ -23,6 +29,7 @@ TESTS = [
     "bt_timer",
     "bt_int1c",
     "bt_kbd_flags",
+    "bt_kbd_ext",
     "bt_modes_text",
     "bt_modes_gfx",
     "bt_mode4",
@@ -34,30 +41,54 @@ TESTS = [
     "bt_ctype",
     "bt_gfx_scroll",
     "bt_pixel6",
+    "bt_prtsc",
+    "bt_ident",
+    "bt_entry",
+    "bt_fdc_rw",
+    "bt_fdc_fmt",
+    "bt_fdc_type",
 ]
 
 
-def _run_one(name: str, timeout_s: float = 20.0) -> None:
+def _run_one(
+    name: str,
+    timeout_s: float = 20.0,
+    *,
+    floppy_int13_shim: bool = False,
+) -> None:
     img = BIOS_TESTS / f"{name}.img"
     if not img.is_file():
         raise AssertionError(f"missing {img}; run make bios-tests")
 
     SERIAL_DIR.mkdir(parents=True, exist_ok=True)
-    serial = SERIAL_DIR / f"{name}.log"
+    suffix = "_shim" if floppy_int13_shim else ""
+    serial = SERIAL_DIR / f"{name}{suffix}.log"
     serial.write_text("")
 
     env = os.environ.copy()
     env["K8086_U18_ROM"] = str(BUILD / "u18.bin")
     env["K8086_U19_ROM"] = str(BUILD / "u19.bin")
 
+    tmp_path: Path | None = None
+    run_img = img
+    if name in DESTRUCTIVE_DISK_TESTS:
+        with tempfile.NamedTemporaryFile(suffix=".img", delete=False) as tmp:
+            tmp_path = Path(tmp.name)
+        shutil.copyfile(img, tmp_path)
+        run_img = tmp_path
+
     expect = f"PASS {name}"
+    kwargs: dict = {}
+    if not floppy_int13_shim:
+        kwargs["floppy_int13_shim"] = False
     proc = subprocess.Popen(
         launcher_argv(
-            img,
+            run_img,
             "--quiet",
             "--headless",
             "--serial-log",
             serial,
+            **kwargs,
         ),
         cwd=str(ROOT / "emulator" / "k8086"),
         env=env,
@@ -82,11 +113,16 @@ def _run_one(name: str, timeout_s: float = 20.0) -> None:
         )
     finally:
         terminate_emulator(proc)
+        if tmp_path is not None:
+            unlink_retry(tmp_path)
 
 
 def test_bios_services() -> None:
     for name in TESTS:
         _run_one(name)
+    # Default workstation path keeps the host floppy INT 13h shim.
+    _run_one("bt_equip", floppy_int13_shim=True)
+    _run_one("bt_disk", floppy_int13_shim=True)
 
 
 if __name__ == "__main__":

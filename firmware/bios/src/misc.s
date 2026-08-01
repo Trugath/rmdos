@@ -13,6 +13,7 @@
 .global isr_default
 .global int11_handler, int12_handler, int14_handler, int15_handler
 .global int17_handler, int18_handler
+.global int5_handler
 .global cad_main, f1_wait
 
 isr_default:
@@ -277,15 +278,7 @@ uart_read_status:
     ret
 
 /* Baud divisors for 1.8432 MHz (index = AL bits 7-5). */
-uart_divisors:
-    .word 1047                   /* 110 */
-    .word 768                    /* 150 */
-    .word 384                    /* 300 */
-    .word 192                    /* 600 */
-    .word 96                     /* 1200 */
-    .word 48                     /* 2400 */
-    .word 24                     /* 4800 */
-    .word 12                     /* 9600 */
+/* Baud divisors live at F000:E729 (see bios_entries.s uart_divisors). */
 
 /*
  * INT 15h — XT-safe: AH=86 wait, AH=80/81/82 succeed, else CF.
@@ -384,6 +377,91 @@ int15_handler:
     and word ptr [bp + 6], 0xFFFE
     pop bp
     iret
+
+/*
+ * INT 05h — Print Screen (IBM). Status at 0000:0500:
+ *  00 = idle/OK, 01 = in progress, FF = error (e.g. no printer).
+ */
+int5_handler:
+    sti
+    push ds
+    push ax
+    push bx
+    push cx
+    push dx
+    xor ax, ax
+    mov ds, ax
+    cmp byte ptr [0x0500], 1
+    je .i5_done
+    mov byte ptr [0x0500], 1
+
+    /* CR+LF before dump */
+    call .i5_crlf
+
+    mov ah, 0x0F
+    int 0x10                     /* AH=cols, AL=mode */
+    push ax
+    mov ah, 0x03
+    int 0x10                     /* DX = cursor */
+    pop ax
+    push dx                      /* save cursor */
+    mov ch, 25                   /* 25 rows */
+    mov cl, ah                   /* columns */
+    xor dx, dx
+
+.i5_loop:
+    mov ah, 0x02
+    int 0x10
+    mov ah, 0x08
+    int 0x10
+    test al, al
+    jnz .i5_print
+    mov al, ' '
+.i5_print:
+    push dx
+    xor dx, dx
+    mov ah, 0                    /* INT 17 print */
+    int 0x17
+    pop dx
+    test ah, 0x25                /* timeout / I/O / out-of-paper */
+    jz .i5_next
+    mov byte ptr [0x0500], 0xFF
+    jmp .i5_restore
+.i5_next:
+    inc dl
+    cmp dl, cl
+    jne .i5_loop
+    xor dl, dl
+    call .i5_crlf
+    inc dh
+    cmp dh, ch
+    jne .i5_loop
+    mov byte ptr [0x0500], 0
+.i5_restore:
+    pop dx
+    mov ah, 0x02
+    int 0x10
+.i5_done:
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    pop ds
+    iret
+
+.i5_crlf:
+    push ax
+    push dx
+    xor dx, dx
+    mov al, 0x0D
+    mov ah, 0
+    int 0x17
+    mov al, 0x0A
+    mov ah, 0
+    int 0x17
+    pop dx
+    pop ax
+    ret
 
 int17_handler:
     /* printer not present: AH bit0=timeout */

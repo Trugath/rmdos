@@ -12,11 +12,12 @@ _start:
     mov es, ax
     mov ss, ax
     mov sp, 0x7c00
-    mov [0x7bfe], dl            /* save boot drive just below us */
+    /* Save boot drive above the boot sector — not under SP (INT clobbers 0x7BFE). */
+    mov [0x7e00], dl
     sti
 
     mov ah, 0x00
-    mov dl, [0x7bfe]
+    mov dl, [0x7e00]
     int 0x13
     jc .fail_reset
 
@@ -25,7 +26,7 @@ _start:
     mov bx, 0x8000
     mov cx, 0x0001
     mov dh, 0
-    mov dl, [0x7bfe]
+    mov dl, [0x7e00]
     int 0x13
     jc .fail_read
 
@@ -33,7 +34,7 @@ _start:
     jne .fail_sig
 
     mov ah, 0x08
-    mov dl, [0x7bfe]
+    mov dl, [0x7e00]
     int 0x13
     jc .fail_params
     /* CL low 6 bits = SPT; expect 9 for 720K test image */

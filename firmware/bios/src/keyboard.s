@@ -78,7 +78,7 @@ isr_09:
 .k09_post_esc:
     /* During POST, Esc make latches skip — RAM test sees it between chunks. */
     cmp ah, 0x01                      /* Esc */
-    jne .k09_enqueue
+    jne .k09_prtsc
     push es
     xor bx, bx
     mov es, bx
@@ -90,6 +90,15 @@ isr_09:
 .k09_esc_queue:
     pop es
     jmp .k09_enqueue
+
+.k09_prtsc:
+    /* Shift+PrtSc (37h) → INT 5; bare 37h is keypad '*'. */
+    cmp ah, 0x37
+    jne .k09_enqueue
+    test byte ptr [BDA_KBD_FLAG0], 0x03
+    jz .k09_enqueue
+    int 0x05
+    jmp .k09_eoi
 
 .k09_break:
     and ah, 0x7F
@@ -225,6 +234,7 @@ scancode_to_ascii:
     pop bx
     ret
 
+/* AX = (scan, ascii). DS = BDA. CF clear if queued, set if buffer full. */
 kbd_enqueue:
     push si
     push di
@@ -239,19 +249,33 @@ kbd_enqueue:
     je .kq_full
     mov [si], ax
     mov [BDA_KBD_BUF_TAIL], di
+    clc
+    pop di
+    pop si
+    ret
 .kq_full:
+    stc
     pop di
     pop si
     ret
 
 int16_handler:
     sti
+    /* AH=10h/11h/12h → 00h/01h/02h (enhanced API probes). */
+    cmp ah, 0x10
+    jb .i16_std
+    cmp ah, 0x12
+    ja .i16_std
+    and ah, 0x0F
+.i16_std:
     cmp ah, 0x00
     je .i16_read
     cmp ah, 0x01
     je .i16_status
     cmp ah, 0x02
     je .i16_shift
+    cmp ah, 0x05
+    je .i16_stuff
     xor ah, ah
     iret
 
@@ -311,6 +335,27 @@ int16_handler:
     mov ds, ax
     mov al, [BDA_KBD_FLAG0]
     pop ds
+    iret
+
+/* AH=05h: stuff CX (CH=scan, CL=ascii) into keyboard buffer. CF if full. */
+.i16_stuff:
+    push ax
+    push ds
+    mov ax, BDA_SEG
+    mov ds, ax
+    mov ax, cx
+    call kbd_enqueue
+    pop ds
+    pop ax
+    push bp
+    mov bp, sp
+    jc .i16_stuff_full
+    and word ptr [bp + 6], 0xFFFE
+    jmp .i16_stuff_done
+.i16_stuff_full:
+    or word ptr [bp + 6], 0x0001
+.i16_stuff_done:
+    pop bp
     iret
 
 scancode_table:

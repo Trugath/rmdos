@@ -14,6 +14,12 @@
 .equ BDA_KBD_BUF_TAIL, 0x1C
 .equ BDA_KBD_BUF, 0x1E
 .equ BDA_KBD_BUF_END, 0x3E
+/* Floppy BDA (XT): motor status shares end-of-kbd exclusive marker 0x3E. */
+.equ BDA_FLOPPY_MOTOR, 0x3E
+.equ BDA_FLOPPY_TIMEOUT, 0x3F
+.equ BDA_FLOPPY_STATUS, 0x40
+.equ BDA_FLOPPY_NEC, 0x41
+.equ BDA_FLOPPY_CYL, 0x45
 .equ BDA_CRT_MODE, 0x49
 .equ BDA_CRT_COLS, 0x4A
 .equ BDA_CRT_LEN, 0x4C
@@ -41,6 +47,8 @@
 .equ POST_ERRORS, 0x0501
 .equ POST_ERRCODE, 0x0502
 .equ POST_ACTIVE, 0x0503        /* INT 09h sets POST_SKIP on Esc while nonzero */
+.equ FDC_IRQ_FLAG, 0x0504       /* set by INT 0Eh; polled by floppy INT 13h */
+.equ FDC_VERIFY_BUF, 0x0600     /* 512-byte discard buffer for AH=04 */
 
 .equ PORT_PIC_CMD, 0x20
 .equ PORT_PIC_DATA, 0x21
@@ -55,6 +63,18 @@
 .equ PORT_CRTC_DATA, 0x3D5
 .equ PORT_CGA_MODE, 0x3D8
 .equ PORT_CGA_COLOR, 0x3D9
+
+/* FDC / DMA channel 2 */
+.equ PORT_FDC_DOR, 0x3F2
+.equ PORT_FDC_MSR, 0x3F4
+.equ PORT_FDC_DATA, 0x3F5
+.equ PORT_FDC_DIR, 0x3F7
+.equ PORT_DMA_CH2_ADDR, 0x04
+.equ PORT_DMA_CH2_CNT, 0x05
+.equ PORT_DMA_FF, 0x0C
+.equ PORT_DMA_MODE, 0x0B
+.equ PORT_DMA_MASK, 0x0A
+.equ PORT_DMA_PAGE_CH2, 0x81
 
 .equ BIOS_SEG, 0xF000
 .equ BOOT_OFF, 0x7C00

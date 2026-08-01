@@ -58,6 +58,7 @@ post_main:
     xor ax, ax
     mov ds, ax
     mov byte ptr [POST_ACTIVE], 0
+    mov byte ptr [POST_SKIP], 0
 
     call size_memory            /* always refresh MEMKB (skips probe on warm) */
     call scan_option_roms

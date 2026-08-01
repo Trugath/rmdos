@@ -74,27 +74,49 @@ Sources live under `firmware/bios/src/` (`post`, `init`, `video`, `keyboard`,
 - INT 10h (text + CGA modes 0–6): AH=00–03,05–0F including pixel read/write
   (`0Ch`/`0Dh`), CRTC cursor programming on set cursor/type, BEL beep, and
   graphics teletype scroll
-- INT 13h (floppy geometry/reset stubs in ROM; R/W via k8086 host path), 14h
-  (COM1 8250 AH=00–03), 15h (AH=86h wait; AH=80h–82h succeed; else CF), 16h
-  (AH=00–02; Caps/Num/Scroll/Insert flags), 17h (printer timeout stub), 18h,
-  19h, 1Ah
-- IRQ0 timer (INT 08h → INT 1Ch) and IRQ1 keyboard (INT 09h)
+- INT 13h floppy via onboard FDC (DMA ch2 / IRQ6): AH=00–05, 08, 15–16; HD
+  remains Fixed Disk BIOS / optional host shim. k8086 defaults to a floppy INT 13h
+  host shim; `--no-floppy-int13-shim` / `K8086_FLOPPY_INT13_SHIM=0` uses guest FDC.
+  INT 14h (COM1 8250 AH=00–03), 15h (AH=86h wait; AH=80h–82h succeed; else CF), 16h
+  (AH=00–02,05 stuff,10–12→00–02; Caps/Num/Scroll/Insert flags), 17h
+  (printer timeout stub), 18h, 19h, 1Ah
+- INT 05h Print Screen (status at `0000:0500`; Shift+PrtSc from INT 09h)
+- IRQ0 timer (INT 08h → INT 1Ch; floppy motor timeout) and IRQ1 keyboard (INT 09h);
+  IRQ6 → INT 0Eh for FDC completion
 - Option ROM scan `C000–F400` (`AA55`, checksum, far call +3)
 - INT 18h prints a short “no BASIC” message (U19 is not an interpreter)
+- INT 1Eh diskette parameter table tuned for **720K** (9 SPT)
+- ROM identity: `F000:FFF5` release date, `FFFE=FEh` (XT), top-8K checksum 0
 
 Pinned absolute entry points (k8086 and XT software expect these):
 
 | Address | Purpose |
 |---------|---------|
 | `F000:E05B` | Cold/warm POST entry |
+| `F000:E6F2` | INT 19h trampoline |
+| `F000:E729` | Baud divisor table (INT 14h) |
+| `F000:E739` | INT 14h trampoline |
+| `F000:E82E` | INT 16h trampoline |
 | `F000:E842` | F1 resume wait (headless auto-F1) |
 | `F000:EA82` | Ctrl-Alt-Del warm-boot entry |
+| `F000:EC59` | INT 13h trampoline |
+| `F000:EFD2` | INT 17h trampoline |
 | `F000:F065` | INT 10h entry trampoline |
+| `F000:F841` | INT 12h trampoline |
+| `F000:F84D` | INT 11h trampoline |
+| `F000:F859` | INT 15h trampoline |
 | `F000:FA6E` | 8×8 glyphs `0x00–0x7F` |
+| `F000:FE6E` | INT 1Ah trampoline |
+| `F000:FEA5` | IRQ0 / timer ISR trampoline |
+| `F000:FF54` | INT 05h Print Screen trampoline |
+| `F000:FFF0` | Reset vector |
+| `F000:FFF5` | Release date / `FFFE` machine type |
 
-Floppy INT 13h may be satisfied by k8086’s host path; hard disk (`DL ≥ 0x80`) by
-the Fixed Disk BIOS / INT 13h shim. Override ROMs with `K8086_U18_ROM` /
-`K8086_U19_ROM`, `run-k8086.sh --u18/--u19`, or the workstation ROM picker.
+BIOS service tests, boot E2E, and FORMAT floppy E2E force the guest FDC path
+(`--no-floppy-int13-shim`). Workstation default remains the host floppy shim.
+Hard disk (`DL ≥ 0x80`) stays Fixed Disk BIOS / optional INT 13h shim. Override
+ROMs with `K8086_U18_ROM` / `K8086_U19_ROM`, `run-k8086.sh --u18/--u19`, or the
+workstation ROM picker.
 
 ## Operating system
 
@@ -239,8 +261,10 @@ make run / make run-fd
 BIOS service units are boot-sector images under `firmware/bios/tests/boot/`; they
 print `PASS`/`FAIL` on COM1 and shut down via port `0x8900`. Coverage includes
 equipment/BDA, INT 10h text/graphics (modes, scroll, pixels, CRTC cursor/type,
-graphics teletype scroll), INT 13h floppy smoke, timer/INT 1Ch, INT 14h COM1
-loopback, INT 15h wait/no-ops, INT 16h flags, and INT 17h stub edges.
+graphics teletype scroll), INT 13h floppy via FDC with shim off (reset/read/write/
+format/DASD), timer/INT 1Ch, INT 14h COM1 loopback, INT 15h wait/no-ops, INT 16h
+flags and extended AH=05/10–12, INT 17h stub edges, INT 05h Print Screen, ROM
+identity/checksum, and IBM entry trampolines.
 
 ## References
 

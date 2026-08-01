@@ -19,7 +19,7 @@ init_pic:
     out PORT_PIC_DATA, al
     mov al, 0x09
     out PORT_PIC_DATA, al
-    mov al, 0xFC                /* mask all except IRQ0+IRQ1 */
+    mov al, 0xBC                /* mask all except IRQ0+IRQ1+IRQ6 */
     out PORT_PIC_DATA, al
     ret
 
@@ -110,6 +110,10 @@ init_ivt:
     mov word ptr [0x08 * 4 + 2], BIOS_SEG
     mov word ptr [0x09 * 4], offset isr_09
     mov word ptr [0x09 * 4 + 2], BIOS_SEG
+    mov word ptr [0x05 * 4], offset int5_handler
+    mov word ptr [0x05 * 4 + 2], BIOS_SEG
+    mov word ptr [0x0E * 4], offset isr_0e
+    mov word ptr [0x0E * 4 + 2], BIOS_SEG
     mov word ptr [0x10 * 4], 0xF065
     mov word ptr [0x10 * 4 + 2], BIOS_SEG
     mov word ptr [0x11 * 4], offset int11_handler

@@ -107,13 +107,13 @@ NET_CONFIG := fixtures/guest/CONFIG.NET.SYS
 GZIP_IMAGE := $(BUILD_DIR)/os-gzip.img
 GZIP_AUTOEXEC := fixtures/guest/AUTOEXEC.GZIP.BAT
 
-BIOS_MODULES := post init video keyboard timer disk misc bios_entries bios_font
+BIOS_MODULES := post init video keyboard timer disk fdc misc bios_entries bios_font
 BIOS_OBJS := $(addprefix $(BUILD_DIR)/,$(addsuffix .o,$(BIOS_MODULES)))
 U18_ELF := $(BUILD_DIR)/u18.elf
 U18_BIN := $(BUILD_DIR)/u18.bin
 U19_BIN := $(BUILD_DIR)/u19.bin
 
-BIOS_TEST_NAMES := bt_equip bt_bda bt_video bt_scroll bt_disk bt_timer bt_int1c bt_kbd_flags bt_modes_text bt_modes_gfx bt_mode4 bt_mode6 bt_serial bt_int15 bt_pixel bt_misc bt_ctype bt_gfx_scroll bt_pixel6
+BIOS_TEST_NAMES := bt_equip bt_bda bt_video bt_scroll bt_disk bt_timer bt_int1c bt_kbd_flags bt_kbd_ext bt_modes_text bt_modes_gfx bt_mode4 bt_mode6 bt_serial bt_int15 bt_pixel bt_misc bt_ctype bt_gfx_scroll bt_pixel6 bt_prtsc bt_ident bt_entry bt_fdc_rw bt_fdc_fmt bt_fdc_type
 BIOS_TEST_DIR := firmware/bios/tests/boot
 BIOS_TEST_LINK := firmware/bios/tests/linker/boot_test.ld
 BIOS_TEST_BUILD := $(BUILD_DIR)/bios_tests

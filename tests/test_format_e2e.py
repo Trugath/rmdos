@@ -47,6 +47,7 @@ def test_format_e2e() -> None:
                 "--headless",
                 "--serial-log",
                 SERIAL,
+                floppy_int13_shim=False,
             ),
             cwd=str(ROOT / "emulator" / "k8086"),
             env=env,

@@ -34,16 +34,19 @@ Options:
   --emu-log PATH        Host emulator stdout/stderr log
   --display NAME        Open the CGA window (interactive). Headless is default.
   --turbo               Free-run CPU (fast boot; click toolbar to return to realtime)
+  --no-floppy-int13-shim  Guest BIOS owns floppy INT 13h (FDC); default is host shim
   --u18 PATH            Override U18 system ROM
   --u19 PATH            Override U19 system ROM
   --help                Show this help message
 
 Also honors K8086_U18_ROM / K8086_U19_ROM if set in the environment before launch
-(the --u18/--u19 flags take precedence).
+(the --u18/--u19 flags take precedence). K8086_FLOPPY_INT13_SHIM=0 disables the
+host floppy INT 13h shim (same as --no-floppy-int13-shim).
 USAGE
 }
 
 TURBO=0
+NO_FLOPPY_INT13_SHIM=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --help|-h) usage; exit 0 ;;
@@ -52,6 +55,7 @@ while [[ $# -gt 0 ]]; do
         --emu-log) EMU_LOG="$2"; shift 2 ;;
         --display) HEADLESS=0; shift 2 ;;
         --turbo) TURBO=1; shift ;;
+        --no-floppy-int13-shim) NO_FLOPPY_INT13_SHIM=1; shift ;;
         --u18) U18_ROM="$2"; shift 2 ;;
         --u19) U19_ROM="$2"; shift 2 ;;
         *)
@@ -109,6 +113,9 @@ if [[ $HEADLESS -eq 1 ]]; then
 fi
 if [[ $TURBO -eq 1 ]]; then
     ARGS+=(--turbo)
+fi
+if [[ $NO_FLOPPY_INT13_SHIM -eq 1 ]]; then
+    ARGS+=(--no-floppy-int13-shim)
 fi
 
 export K8086_U18_ROM="$U18_ROM"

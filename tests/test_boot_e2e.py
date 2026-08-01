@@ -82,6 +82,7 @@ def test_boot_to_prompt() -> None:
                 SERIAL,
                 "--cga-expect",
                 PROMPT,
+                floppy_int13_shim=False,
             ),
             cwd=str(ROOT / "emulator" / "k8086"),
             env=env,
