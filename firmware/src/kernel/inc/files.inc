@@ -935,6 +935,12 @@ dos_ah42:
 dos_ah44:
     cmp al, 0
     je .a44_getinfo
+    cmp al, 1
+    je .a44_setinfo
+    cmp al, 6
+    je .a44_instat
+    cmp al, 7
+    je .a44_outstat
     cmp al, 8
     je .a44_remov
     cmp al, 0x0D
@@ -966,6 +972,33 @@ dos_ah44:
     pop es
     pop di
     xor ax, ax
+    clc
+    jmp int21_iret
+
+/* AL=01 — set device info (accept for char devices / files) */
+.a44_setinfo:
+    push di
+    push es
+    push cs
+    pop es
+    call handle_index
+    jc .a44_err
+    /* DX already has new info; ignore stored value */
+    pop es
+    pop di
+    xor ax, ax
+    clc
+    jmp int21_iret
+
+/* AL=06 — get input status: AL=FF ready / 00 not */
+.a44_instat:
+    mov al, 0xFF
+    clc
+    jmp int21_iret
+
+/* AL=07 — get output status: AL=FF ready / 00 not */
+.a44_outstat:
+    mov al, 0xFF
     clc
     jmp int21_iret
 
@@ -1218,6 +1251,207 @@ dos_ah57:
     mov ax, 6
     stc
     jmp int21_iret_cf
+
+/*
+ * AH=5Ah — create unique temp file.
+ * DS:DX = ASCIZ directory prefix; name appended in place.
+ * CX = attributes. Tail-calls dos_ah3c (same INT frame, no nest).
+ */
+dos_ah5a:
+    push ax
+    push bx
+    push si
+    push di
+    mov word ptr cs:[tmp_attrs], cx
+    mov word ptr cs:[tmp_name_ctr], 0
+    mov si, dx
+.a5a_find0:
+    cmp byte ptr [si], 0
+    je .a5a_got0
+    inc si
+    jmp .a5a_find0
+.a5a_got0:
+    mov word ptr cs:[tmp_prefix_end], si
+    mov di, si
+    mov byte ptr [di], 'R'
+    mov byte ptr [di + 1], 'M'
+    mov ax, word ptr cs:[tmp_name_ctr]
+    mov bx, 2
+    mov cx, 4
+.a5a_hex:
+    push cx
+    mov cl, 4
+    rol ax, cl
+    push ax
+    and al, 0x0F
+    add al, '0'
+    cmp al, '9'
+    jbe .a5a_hexd
+    add al, 7
+.a5a_hexd:
+    mov [di + bx], al
+    inc bx
+    pop ax
+    pop cx
+    loop .a5a_hex
+    mov byte ptr [di + bx], '.'
+    inc bx
+    mov byte ptr [di + bx], 'T'
+    inc bx
+    mov byte ptr [di + bx], 'M'
+    inc bx
+    mov byte ptr [di + bx], 'P'
+    inc bx
+    mov byte ptr [di + bx], 0
+    pop di
+    pop si
+    pop bx
+    pop ax
+    mov cx, word ptr cs:[tmp_attrs]
+    /* DX still user path buffer with unique name filled */
+    jmp dos_ah3c
+
+/*
+ * AH=5Bh — create new file (fail if exists).
+ * DS:DX = ASCIZ, CX = attrs. AX=handle.
+ */
+dos_ah5b:
+    push bx
+    push cx
+    push dx
+    mov word ptr cs:[tmp_attrs], cx
+    push dx
+    call path_resolve
+    pop dx
+    jc .a5b_create
+    call path_name83_present
+    jc .a5b_create
+    mov dx, word ptr cs:[path_resolve_cluster]
+    call fat12_find_in_dir
+    jc .a5b_create
+    pop dx
+    pop cx
+    pop bx
+    mov ax, 0x50
+    stc
+    jmp int21_iret_cf
+.a5b_create:
+    pop dx
+    pop cx
+    pop bx
+    mov cx, word ptr cs:[tmp_attrs]
+    jmp dos_ah3c
+
+/* AH=5Ch — lock/unlock file region (single-user stub: always succeed) */
+dos_ah5c:
+    xor ax, ax
+    clc
+    jmp int21_iret
+
+/*
+ * AH=60h — truename: DS:SI source path, ES:DI dest buffer.
+ * Writes D:\PATH\FILE form (drive from path or current).
+ */
+dos_ah60:
+    push ax
+    push bx
+    push cx
+    push dx
+    push si
+    push di
+    push ds
+    push es
+    push bp
+
+    mov bp, di                   /* dest */
+    mov al, [si]
+    call .a60_up
+    cmp al, 'A'
+    jb .a60_nodrv
+    cmp al, 'Z'
+    ja .a60_nodrv
+    cmp byte ptr [si + 1], ':'
+    jne .a60_nodrv
+    mov bl, al
+    sub bl, 'A'
+    add si, 2
+    jmp .a60_have_drv
+.a60_nodrv:
+    mov bl, byte ptr cs:[cur_drive]
+.a60_have_drv:
+    mov al, bl
+    add al, 'A'
+    mov es:[bp], al
+    mov byte ptr es:[bp + 1], ':'
+    add bp, 2
+
+    mov al, [si]
+    cmp al, '\\'
+    je .a60_abs
+    cmp al, '/'
+    je .a60_abs
+    /* relative: emit cwd_path then \\ if needed then SI */
+    push si
+    push ds
+    push cs
+    pop ds
+    lea si, [cwd_path]
+.a60_cwd:
+    lodsb
+    test al, al
+    jz .a60_cwd_done
+    mov es:[bp], al
+    inc bp
+    jmp .a60_cwd
+.a60_cwd_done:
+    pop ds
+    pop si
+    cmp byte ptr [si], 0
+    je .a60_term
+    cmp bp, 2
+    je .a60_slash
+    cmp byte ptr es:[bp - 1], '\\'
+    je .a60_copy
+.a60_slash:
+    mov byte ptr es:[bp], '\\'
+    inc bp
+    jmp .a60_copy
+.a60_abs:
+.a60_copy:
+    lodsb
+    test al, al
+    jz .a60_term
+    cmp al, '/'
+    jne .a60_store
+    mov al, '\\'
+.a60_store:
+    call .a60_up
+    mov es:[bp], al
+    inc bp
+    jmp .a60_copy
+.a60_term:
+    mov byte ptr es:[bp], 0
+    pop bp
+    pop es
+    pop ds
+    pop di
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    xor ax, ax
+    clc
+    jmp int21_iret
+
+.a60_up:
+    cmp al, 'a'
+    jb .a60_up_ret
+    cmp al, 'z'
+    ja .a60_up_ret
+    sub al, 0x20
+.a60_up_ret:
+    ret
 
 init_std_handles:
     push es

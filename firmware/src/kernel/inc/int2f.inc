@@ -1,5 +1,6 @@
 /*
- * INT 2Fh — minimal multiplex. Answers common “is DOS here?” probes.
+ * INT 2Fh — multiplex. Install-check probes return "not installed"
+ * cleanly; DOS internal AH=12 AL=0 answers installed.
  */
 
 install_int2f_vector:
@@ -20,13 +21,20 @@ int2f_handler:
     sti
     cmp ah, 0x12
     je .i2f_12
+    cmp ah, 0x01
+    je .i2f_not_inst
+    cmp ah, 0x10
+    je .i2f_not_inst
+    cmp ah, 0x43
+    je .i2f_not_inst
     cmp ax, 0x1600
     je .i2f_1600
     cmp ah, 0x16
     je .i2f_iret
-    /* AH=1680h yield — ignore */
     cmp ax, 0x1680
     je .i2f_iret
+    cmp ah, 0xB7
+    je .i2f_append
     iret
 
 .i2f_12:
@@ -38,6 +46,15 @@ int2f_handler:
 
 .i2f_1600:
     /* Windows enhanced mode check — return AL=0 (not present) */
+    xor al, al
+    iret
+
+.i2f_append:
+    /* AH=B7 AL=0 APPEND install check → not installed */
+    cmp al, 0
+    jne .i2f_iret
+    /* fall through */
+.i2f_not_inst:
     xor al, al
     iret
 

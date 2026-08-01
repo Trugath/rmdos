@@ -32,6 +32,7 @@ SYS_COM := $(BUILD_DIR)/sys.com
 PARTEDIT_COM := $(BUILD_DIR)/partedit.com
 FORMAT_COM := $(BUILD_DIR)/format.com
 COMPAT_COM := $(BUILD_DIR)/compat.com
+INT21X_COM := $(BUILD_DIR)/int21x.com
 PING_COM := $(BUILD_DIR)/ping.com
 DHCP_COM := $(BUILD_DIR)/dhcp.com
 TELNET_COM := $(BUILD_DIR)/telnet.com
@@ -205,7 +206,7 @@ $(BUILD_DIR)/$(1).elf: $(BUILD_DIR)/$(1).o $(LINK_DIR)/com.ld
 $(BUILD_DIR)/$(1).com: $(BUILD_DIR)/$(1).elf
 	$$(OBJCOPY) -O binary $$< $$@
 endef
-$(foreach t,sys partedit format compat ping dhcp telnet net nettest gzip gunzip,$(eval $(call DOS_ASM_COM_RULE,$(t))))
+$(foreach t,sys partedit format compat int21x ping dhcp telnet net nettest gzip gunzip,$(eval $(call DOS_ASM_COM_RULE,$(t))))
 
 # C COM pattern: foo.c -> build/foo.s -> .o -> .elf -> .com
 define DOS_C_COM_RULE
@@ -249,7 +250,7 @@ OS_IMAGE_COMMON_DEPS := $(BOOT_BIN) $(KERNEL_BIN) $(HELLO_COM) $(HELLO_EXE) \
 	$(DIR_COM) $(TYPE_COM) $(COMMAND_COM) $(COPY_COM) $(DEL_COM) $(ATTRIB_COM) $(LABEL_COM) \
 	$(MOVE_COM) $(XCOPY_COM) $(CHKDSK_COM) $(SYS_COM) $(PARTEDIT_COM) $(FORMAT_COM) \
 	$(FIND_COM) $(CHOICE_COM) $(MORE_COM) \
-	$(COMPAT_COM) $(PING_COM) $(DHCP_COM) $(TELNET_COM) $(NET_COM) $(GZIP_COM) $(GUNZIP_COM) \
+	$(COMPAT_COM) $(INT21X_COM) $(PING_COM) $(DHCP_COM) $(TELNET_COM) $(NET_COM) $(GZIP_COM) $(GUNZIP_COM) \
 	$(STAR_COM) $(SAMPLE_TXT) $(INSTALL_BAT) \
 	$(EMPTY_AUTOEXEC) scripts/mkfs_fat12.py scripts/fat12.py scripts/disk.py
 
@@ -281,6 +282,7 @@ define PACK_OS_IMAGE
 		--file DEMO/HELLO.COM=$(HELLO_COM) \
 		--file DEMO/HELLO.EXE=$(HELLO_EXE) \
 		--file DEMO/COMPAT.COM=$(COMPAT_COM) \
+		--file DEMO/INT21X.COM=$(INT21X_COM) \
 		--file DEMO/STAR.COM=$(STAR_COM) \
 		--file TEST/SAMPLE.TXT=$(SAMPLE_TXT) \
 		--file AUTOEXEC.BAT=$(2)
@@ -316,6 +318,7 @@ define PACK_OS_IMAGE_CFG
 		--file DEMO/HELLO.COM=$(HELLO_COM) \
 		--file DEMO/HELLO.EXE=$(HELLO_EXE) \
 		--file DEMO/COMPAT.COM=$(COMPAT_COM) \
+		--file DEMO/INT21X.COM=$(INT21X_COM) \
 		--file DEMO/STAR.COM=$(STAR_COM) \
 		--file TEST/SAMPLE.TXT=$(SAMPLE_TXT) \
 		--file AUTOEXEC.BAT=$(2)

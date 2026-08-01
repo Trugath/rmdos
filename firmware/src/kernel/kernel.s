@@ -242,6 +242,22 @@ psp_run:
     .word 0
 current_psp:
     .word 0
+dos_last_error:
+    .word 0
+dos_country_id:
+    .word 1
+tmp_name_ctr:
+    .word 0
+tmp_attrs:
+    .word 0
+tmp_prefix_end:
+    .word 0
+tmp_path:
+    .space 64, 0
+fcb_blk_want:
+    .word 0
+fcb_blk_done:
+    .word 0
 path_off:
     .word 0
 path_seg:
@@ -308,6 +324,12 @@ first_mcb:
     .word 0
 mem_top:
     .word 0
+/* Minimal DOS list-of-lists (AH=52). Offset 0 = first MCB segment. */
+dos_sysvars:
+    .word 0                      /* +00 first MCB */
+    .space 14, 0                 /* +02 .. +0F stubs */
+    .byte 0                      /* +10 boot drive (0=A) */
+    .space 15, 0
 
 msg_banner:
     .ascii "rmDOS 0.8\r\n$"
@@ -390,6 +412,8 @@ find_pat:
 find_dirbuf:
     .space 64, 0
 fcb_path:
+    .space 16, 0
+fcb_path2:
     .space 16, 0
 fcb_pos_lo:
     .word 0

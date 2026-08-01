@@ -1,11 +1,12 @@
 /*
- * INT 21h FCB subset: AH=0F/10/11/12/14/15/16/29.
+ * INT 21h FCB subset: AH=0F/10/11/12/13/14/15/16/17/21/22/27/28/29.
  *
  * FCB (DS:DX; AH=29 uses ES:DI + DS:SI):
  *   +00 drive (0=default, 1=A)  +01 name8  +09 ext3
  *   +0C cur block  +0E record size  +10 file size
  *   +14 date  +16 time  +18 handle  +19 open flag
- *   +20 cur record (0-127)  +21 relative record
+ *   +20 cur record (0-127)  +21 relative record (24-bit)
+ *   +11 new name (AH=17 rename only)
  *
  * Path via path.inc; open/create/R/W/close via handle INT 21h (files.inc);
  * find via find.inc using CS:fcb_find_dta.
@@ -13,6 +14,7 @@
 
 .equ FCB_DRV, 0
 .equ FCB_NAME, 1
+.equ FCB_NEWNAME, 0x11
 .equ FCB_BLOCK, 0x0C
 .equ FCB_RECSIZ, 0x0E
 .equ FCB_FSIZE, 0x10
@@ -21,6 +23,7 @@
 .equ FCB_HANDLE, 0x18
 .equ FCB_OPEN, 0x19
 .equ FCB_CURREC, 0x20
+.equ FCB_RELREC, 0x21
 
 /*
  * CS:fcb_path from FCB at DS:SI. Mounts drive. CF if drive bad.
@@ -170,8 +173,53 @@ fcb_advance_seq:
     mov byte ptr [si + FCB_CURREC], 0
     inc word ptr [si + FCB_BLOCK]
 .fas_rel:
-    add word ptr [si + 0x21], 1
-    adc byte ptr [si + 0x23], 0
+    add word ptr [si + FCB_RELREC], 1
+    adc byte ptr [si + FCB_RELREC + 2], 0
+    ret
+
+/*
+ * Byte offset DX:AX from relative record at DS:SI.
+ * CF if record size is 0.
+ */
+fcb_rel_byte_pos:
+    push bx
+    push cx
+    push si
+    mov ax, [si + FCB_RELREC]
+    mov dl, [si + FCB_RELREC + 2]
+    xor dh, dh
+    mov cx, [si + FCB_RECSIZ]
+    jcxz .frbp_bad
+    mov bx, dx
+    mul cx
+    mov si, ax
+    mov ax, bx
+    mov bx, dx
+    mul cx
+    add ax, bx
+    mov dx, ax
+    mov ax, si
+    pop si
+    clc
+    jmp .frbp_done
+.frbp_bad:
+    pop si
+    stc
+.frbp_done:
+    pop cx
+    pop bx
+    ret
+
+fcb_advance_rel:
+    add word ptr [si + FCB_RELREC], 1
+    adc byte ptr [si + FCB_RELREC + 2], 0
+    /* keep seq fields loosely in sync */
+    inc byte ptr [si + FCB_CURREC]
+    cmp byte ptr [si + FCB_CURREC], 128
+    jb .far_done
+    mov byte ptr [si + FCB_CURREC], 0
+    inc word ptr [si + FCB_BLOCK]
+.far_done:
     ret
 
 /* Init open FCB fields at DS:SI; BL = handle. */
@@ -184,8 +232,8 @@ fcb_init_open:
 .fio_pos:
     mov word ptr [si + FCB_BLOCK], 0
     mov byte ptr [si + FCB_CURREC], 0
-    mov word ptr [si + 0x21], 0
-    mov byte ptr [si + 0x23], 0
+    mov word ptr [si + FCB_RELREC], 0
+    mov byte ptr [si + FCB_RELREC + 2], 0
     ret
 
 /* Handle BX open: fill size/date/time at DS:SI. */
@@ -353,6 +401,372 @@ dos_ah16:
     pop cx
     pop bx
     mov al, 0xFF
+    clc
+    jmp int21_iret
+
+/* AH=13h delete FCB -> AL=00/FF */
+dos_ah13:
+    push bx
+    push cx
+    push dx
+    push si
+    push di
+    push ds
+    push es
+
+    mov si, dx
+    call fcb_build_path
+    jc .a13_fail
+    call fcb_path_wild
+    jc .a13_fail
+
+    push ds
+    push cs
+    pop ds
+    lea dx, [fcb_path]
+    mov ah, 0x41
+    int 0x21
+    pop ds
+    jc .a13_fail
+    pop es
+    pop ds
+    pop di
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    xor al, al
+    clc
+    jmp int21_iret
+.a13_fail:
+    pop es
+    pop ds
+    pop di
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    mov al, 0xFF
+    clc
+    jmp int21_iret
+
+/*
+ * AH=17h rename FCB. New 11-byte name at FCB+11h.
+ * Builds old/new ASCIZ and calls AH=56.
+ */
+dos_ah17:
+    push bx
+    push cx
+    push dx
+    push si
+    push di
+    push ds
+    push es
+    push bp
+
+    mov si, dx
+    call fcb_build_path
+    jc .a17_fail
+    call fcb_path_wild
+    jc .a17_fail
+
+    push cs
+    pop es
+    lea di, [fcb_path2]
+    lea si, [fcb_path]
+    push ds
+    push cs
+    pop ds
+    mov cx, 16
+    rep movsb
+    pop ds
+
+    mov si, dx
+    push cx
+    mov cx, 11
+    lea di, [si + FCB_NAME]
+    lea bx, [si + FCB_NEWNAME]
+.a17_swap:
+    mov al, [di]
+    mov ah, [bx]
+    mov [di], ah
+    mov [bx], al
+    inc di
+    inc bx
+    loop .a17_swap
+    pop cx
+
+    mov si, dx
+    call fcb_build_path
+    pushf
+    /* restore name fields */
+    mov cx, 11
+    lea di, [si + FCB_NAME]
+    lea bx, [si + FCB_NEWNAME]
+.a17_unswap:
+    mov al, [di]
+    mov ah, [bx]
+    mov [di], ah
+    mov [bx], al
+    inc di
+    inc bx
+    loop .a17_unswap
+    popf
+    jc .a17_fail
+    call fcb_path_wild
+    jc .a17_fail
+
+    push cs
+    pop ds
+    lea dx, [fcb_path2]
+    push cs
+    pop es
+    lea di, [fcb_path]
+    mov ah, 0x56
+    int 0x21
+    jc .a17_fail_rest
+    pop bp
+    pop es
+    pop ds
+    pop di
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    xor al, al
+    clc
+    jmp int21_iret
+.a17_fail_rest:
+.a17_fail:
+    pop bp
+    pop es
+    pop ds
+    pop di
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    mov al, 0xFF
+    clc
+    jmp int21_iret
+
+/* AH=21h random read one record */
+dos_ah21:
+    mov cx, 1
+    jmp dos_ah27
+
+/* AH=22h random write one record */
+dos_ah22:
+    mov cx, 1
+    jmp dos_ah28
+
+/*
+ * AH=27h random block read. CX=count in/out; AL=00/01/03.
+ * Uses relative record at +21h; transfers into DTA.
+ */
+dos_ah27:
+    push bx
+    push dx
+    push si
+    push di
+    push ds
+    push es
+    push bp
+
+    mov si, dx
+    mov word ptr cs:[fcb_blk_want], cx
+    mov word ptr cs:[fcb_blk_done], 0
+    cmp byte ptr [si + FCB_OPEN], 0
+    je .a27_fail
+    mov ax, [si + FCB_RECSIZ]
+    test ax, ax
+    jz .a27_fail
+    mov word ptr cs:[fcb_xfer], ax
+    test cx, cx
+    jnz .a27_loop
+    jmp .a27_zero
+
+.a27_loop:
+    mov ax, word ptr cs:[fcb_blk_done]
+    cmp ax, word ptr cs:[fcb_blk_want]
+    jae .a27_done_ok
+
+    call fcb_rel_byte_pos
+    jc .a27_fail
+    mov word ptr cs:[fcb_pos_lo], ax
+    mov word ptr cs:[fcb_pos_hi], dx
+    mov bx, [si + FCB_FSIZE]
+    mov cx, [si + FCB_FSIZE + 2]
+    cmp dx, cx
+    ja .a27_eof
+    jb .a27_room
+    cmp ax, bx
+    jae .a27_eof
+.a27_room:
+    sub bx, ax
+    sbb cx, dx
+    mov ax, word ptr cs:[fcb_xfer]
+    xor bp, bp
+    test cx, cx
+    jnz .a27_want
+    cmp bx, ax
+    jae .a27_want
+    mov ax, bx
+    test ax, ax
+    jz .a27_eof
+    mov bp, 1
+.a27_want:
+    mov word ptr cs:[fcb_xfer], ax
+    mov bl, [si + FCB_HANDLE]
+    xor bh, bh
+    mov ax, 0x4200
+    mov cx, word ptr cs:[fcb_pos_hi]
+    mov dx, word ptr cs:[fcb_pos_lo]
+    int 0x21
+    jc .a27_fail
+    /* DTA + done*recsiz */
+    mov ax, word ptr cs:[fcb_blk_done]
+    mov cx, [si + FCB_RECSIZ]
+    mul cx
+    add ax, word ptr cs:[dta_off]
+    mov dx, ax
+    mov cx, word ptr cs:[fcb_xfer]
+    mov ah, 0x3F
+    push ds
+    mov ds, word ptr cs:[dta_seg]
+    int 0x21
+    pop ds
+    jc .a27_fail
+    cmp ax, word ptr cs:[fcb_xfer]
+    jb .a27_fail
+    call fcb_advance_rel
+    inc word ptr cs:[fcb_blk_done]
+    test bp, bp
+    jz .a27_loop
+    mov al, 3
+    jmp .a27_ret
+.a27_eof:
+    mov al, 1
+    jmp .a27_ret
+.a27_done_ok:
+.a27_zero:
+    xor al, al
+.a27_ret:
+    mov cx, word ptr cs:[fcb_blk_done]
+    pop bp
+    pop es
+    pop ds
+    pop di
+    pop si
+    pop dx
+    pop bx
+    clc
+    jmp int21_iret
+.a27_fail:
+    mov cx, word ptr cs:[fcb_blk_done]
+    pop bp
+    pop es
+    pop ds
+    pop di
+    pop si
+    pop dx
+    pop bx
+    mov al, 1
+    clc
+    jmp int21_iret
+
+/* AH=28h random block write. CX=count in/out; AL=00/01. */
+dos_ah28:
+    push bx
+    push dx
+    push si
+    push di
+    push ds
+    push es
+
+    mov si, dx
+    mov word ptr cs:[fcb_blk_want], cx
+    mov word ptr cs:[fcb_blk_done], 0
+    cmp byte ptr [si + FCB_OPEN], 0
+    je .a28_fail
+    mov cx, [si + FCB_RECSIZ]
+    test cx, cx
+    jnz .a28_have_rec
+    jmp .a28_fail
+.a28_have_rec:
+    mov word ptr cs:[fcb_xfer], cx
+    mov cx, word ptr cs:[fcb_blk_want]
+    test cx, cx
+    jnz .a28_loop
+    jmp .a28_zero
+
+.a28_loop:
+    mov ax, word ptr cs:[fcb_blk_done]
+    cmp ax, word ptr cs:[fcb_blk_want]
+    jae .a28_done_ok
+
+    call fcb_rel_byte_pos
+    jc .a28_fail
+    mov word ptr cs:[fcb_pos_lo], ax
+    mov word ptr cs:[fcb_pos_hi], dx
+    mov bl, [si + FCB_HANDLE]
+    xor bh, bh
+    mov ax, 0x4200
+    mov cx, word ptr cs:[fcb_pos_hi]
+    mov dx, word ptr cs:[fcb_pos_lo]
+    int 0x21
+    jc .a28_fail
+    mov ax, word ptr cs:[fcb_blk_done]
+    mov cx, [si + FCB_RECSIZ]
+    mul cx
+    add ax, word ptr cs:[dta_off]
+    mov dx, ax
+    mov cx, word ptr cs:[fcb_xfer]
+    mov ah, 0x40
+    push ds
+    mov ds, word ptr cs:[dta_seg]
+    int 0x21
+    pop ds
+    jc .a28_fail
+    cmp ax, word ptr cs:[fcb_xfer]
+    jb .a28_fail
+    mov ax, word ptr cs:[fcb_pos_lo]
+    mov dx, word ptr cs:[fcb_pos_hi]
+    add ax, word ptr cs:[fcb_xfer]
+    adc dx, 0
+    cmp dx, [si + FCB_FSIZE + 2]
+    ja .a28_grow
+    jb .a28_adv
+    cmp ax, [si + FCB_FSIZE]
+    jbe .a28_adv
+.a28_grow:
+    mov [si + FCB_FSIZE], ax
+    mov [si + FCB_FSIZE + 2], dx
+.a28_adv:
+    call fcb_advance_rel
+    inc word ptr cs:[fcb_blk_done]
+    jmp .a28_loop
+.a28_done_ok:
+.a28_zero:
+    xor al, al
+    mov cx, word ptr cs:[fcb_blk_done]
+    pop es
+    pop ds
+    pop di
+    pop si
+    pop dx
+    pop bx
+    clc
+    jmp int21_iret
+.a28_fail:
+    mov cx, word ptr cs:[fcb_blk_done]
+    pop es
+    pop ds
+    pop di
+    pop si
+    pop dx
+    pop bx
+    mov al, 1
     clc
     jmp int21_iret
 

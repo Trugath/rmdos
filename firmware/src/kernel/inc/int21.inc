@@ -56,6 +56,9 @@ int24_default:
     int 0x10
     jmp .i24_puts
 .i24_key:
+    mov ah, 0x01
+    int 0x16
+    jz .i24_fail_quiet          /* no key — Fail (headless / noninteractive) */
     xor ah, ah
     int 0x16
     call .i24_up
@@ -65,7 +68,11 @@ int24_default:
     je .i24_retry
     cmp al, 'I'
     je .i24_ignore
-    jmp .i24_key
+    /* unrecognized key → Fail (do not spin forever) */
+    jmp .i24_fail_quiet
+.i24_fail_quiet:
+    mov al, 3
+    jmp .i24_done
 .i24_abort:
     mov al, 2
     jmp .i24_done
@@ -159,18 +166,30 @@ int21_handler:
     je dos_ah11
     cmp ah, 0x12
     je dos_ah12
+    cmp ah, 0x13
+    je dos_ah13
     cmp ah, 0x14
     je dos_ah14
     cmp ah, 0x15
     je dos_ah15
     cmp ah, 0x16
     je dos_ah16
+    cmp ah, 0x17
+    je dos_ah17
     cmp ah, 0x19
     je dos_ah19
     cmp ah, 0x1A
     je dos_ah1a
+    cmp ah, 0x21
+    je dos_ah21
+    cmp ah, 0x22
+    je dos_ah22
     cmp ah, 0x25
     je dos_ah25
+    cmp ah, 0x27
+    je dos_ah27
+    cmp ah, 0x28
+    je dos_ah28
     cmp ah, 0x29
     je dos_ah29
     cmp ah, 0x2A
@@ -241,10 +260,28 @@ int21_handler:
     je dos_ah4e
     cmp ah, 0x4F
     je dos_ah4f
+    cmp ah, 0x50
+    je dos_ah50
+    cmp ah, 0x51
+    je dos_ah51
+    cmp ah, 0x52
+    je dos_ah52
     cmp ah, 0x56
     je dos_ah56
     cmp ah, 0x57
     je dos_ah57
+    cmp ah, 0x59
+    je dos_ah59
+    cmp ah, 0x5A
+    je dos_ah5a
+    cmp ah, 0x5B
+    je dos_ah5b
+    cmp ah, 0x5C
+    je dos_ah5c
+    cmp ah, 0x60
+    je dos_ah60
+    cmp ah, 0x62
+    je dos_ah62
     mov ax, 1
     stc
     jmp int21_iret_cf
@@ -594,12 +631,17 @@ dos_ah37:
     clc
     jmp int21_iret
 
-/* AH=38h — country info stub: copy defaults to DS:DX */
+/* AH=38h — get/set country info */
 dos_ah38:
+    cmp al, 0xFF
+    je .a38_set
+    cmp dx, 0xFFFF
+    je .a38_code_only
     push cx
     push si
     push di
     push es
+    push ds
     push ds
     pop es
     mov di, dx
@@ -608,12 +650,57 @@ dos_ah38:
     lea si, [country_info]
     mov cx, 34
     rep movsb
+    pop ds
     pop es
     pop di
     pop si
     pop cx
-    mov bx, 1                    /* country code US */
+.a38_code_only:
+    mov bx, word ptr cs:[dos_country_id]
     xor ax, ax
+    clc
+    jmp int21_iret
+.a38_set:
+    mov word ptr cs:[dos_country_id], bx
+    xor ax, ax
+    clc
+    jmp int21_iret
+
+/* AH=50h — set current PSP = BX */
+dos_ah50:
+    mov word ptr cs:[current_psp], bx
+    clc
+    jmp int21_iret
+
+/* AH=51h — get current PSP -> BX */
+dos_ah51:
+    mov bx, word ptr cs:[current_psp]
+    clc
+    jmp int21_iret
+
+/* AH=62h — get PSP (alias of 51h) */
+dos_ah62:
+    jmp dos_ah51
+
+/* AH=52h — get DOS list of lists -> ES:BX */
+dos_ah52:
+    mov ax, word ptr cs:[first_mcb]
+    mov word ptr cs:[dos_sysvars], ax
+    mov al, byte ptr cs:[cur_drive]
+    mov byte ptr cs:[dos_sysvars + 0x10], al
+    push cs
+    pop es
+    lea bx, [dos_sysvars]
+    clc
+    jmp int21_iret
+
+/* AH=59h — get extended error info */
+dos_ah59:
+    mov ax, word ptr cs:[dos_last_error]
+    mov bh, 8                    /* class: not found / unknown */
+    mov bl, 3                    /* action: abort */
+    mov ch, 2                    /* locus: block device */
+    xor cl, cl
     clc
     jmp int21_iret
 
@@ -625,6 +712,7 @@ int21_iret:
     iret
 
 int21_iret_cf:
+    mov word ptr cs:[dos_last_error], ax
     push bp
     mov bp, sp
     or word ptr [bp + 6], 0x0001

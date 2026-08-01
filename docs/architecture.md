@@ -147,12 +147,17 @@ Use C for DOS API + string/logic tools.
 
 
 Notable INT 21h areas: console I/O (including AH=00 terminate and AH=0Ch
-flush+dispatch), FCB open/close/create/seq I/O/find/parse (AH=0Fh–12h/14h–16h/29h),
-handle create/open/read/write/seek/delete, find-first/next, MCB alloc/free/resize
-(including grow), EXEC (AH=4Bh AL=0 load+run, AL=3 overlay), handle dup
-(AH=45h/46h), file datetime (AH=57h), INT 25h/26h absolute disk, minimal INT 2Fh,
-vectors (AH=25h/35h), Ctrl-C (INT 23h abort) / critical error (INT 24h
-Abort/Retry/Ignore), date/time, drive/cwd, mkdir/rmdir/chdir, attrs, rename,
+flush+dispatch), FCB open/close/create/delete/rename/seq+random I/O/find/parse
+(AH=0Fh–17h/21h–22h/27h–29h), handle create/open/read/write/seek/delete,
+temp create (AH=5Ah/5Bh), file lock stub (AH=5Ch), truename (AH=60h),
+find-first/next, MCB alloc/free/resize (including grow), EXEC (AH=4Bh AL=0
+load+run, AL=3 overlay), handle dup (AH=45h/46h), file datetime (AH=57h),
+PSP get/set (AH=50h/51h/62h), SysVars (AH=52h), extended error (AH=59h),
+IOCTL get/set info + input/output status (AH=44h AL=00/01/06/07/08/0Dh),
+INT 25h/26h absolute disk, INT 2Fh install-check stubs (DOS AH=12, SHARE,
+PRINT, APPEND, XMS; Windows AX=1600 absent), vectors (AH=25h/35h), Ctrl-C
+(INT 23h abort) / critical error (INT 24h Abort/Retry/Ignore), date/time,
+drive/cwd, mkdir/rmdir/chdir, attrs, rename, country get/set (AH=38h),
 **AH=31h TSR**. AH=30h reports DOS 3.31.
 
 After the FAT self-test, the kernel opens **`CONFIG.SYS`** if present (missing file
@@ -239,7 +244,7 @@ A:\
   BIN\     DIR TYPE COPY DEL ATTRIB LABEL MOVE XCOPY CHKDSK SYS PARTEDIT
            FORMAT FIND CHOICE MORE PING DHCP TELNET NET
            (os-net.img also: NETTEST)
-  DEMO\    HELLO.COM HELLO.EXE COMPAT.COM STAR.COM
+  DEMO\    HELLO.COM HELLO.EXE COMPAT.COM INT21X.COM STAR.COM
   TEST\    SAMPLE.TXT
 ```
 
