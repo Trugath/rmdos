@@ -27,6 +27,13 @@ TESTS = [
     "bt_modes_gfx",
     "bt_mode4",
     "bt_mode6",
+    "bt_serial",
+    "bt_int15",
+    "bt_pixel",
+    "bt_misc",
+    "bt_ctype",
+    "bt_gfx_scroll",
+    "bt_pixel6",
 ]
 
 

@@ -5,13 +5,14 @@
 
 /*
  * rmDOS clean-room XT system BIOS — miscellaneous services:
- * default ISR, equipment/memory/serial/printer stubs, no-BASIC INT 18h,
- * warm-boot entry, F1 error pause.
+ * default ISR, equipment/memory, COM1 INT 14h, INT 15h wait/no-ops,
+ * printer stub, no-BASIC INT 18h, warm-boot entry, F1 error pause.
  */
 
 .section .text
 .global isr_default
-.global int11_handler, int12_handler, int14_handler, int17_handler, int18_handler
+.global int11_handler, int12_handler, int14_handler, int15_handler
+.global int17_handler, int18_handler
 .global cad_main, f1_wait
 
 isr_default:
@@ -33,14 +34,355 @@ int12_handler:
     pop ds
     iret
 
+/*
+ * INT 14h — serial (COM1 @ BDA_COM1). DX = port index (0 = COM1).
+ * AH=00 init AL=params, AH=01 send AL, AH=02 recv → AL, AH=03 status.
+ * Timeout → AH bit7 set.
+ */
 int14_handler:
-    /* AH=00 init → AX=0; other: return timeout status in AH */
+    sti
+    cmp dx, 0
+    jne .i14_bad_port
     cmp ah, 0x00
-    je .i14_ok
+    je .i14_init
+    cmp ah, 0x01
+    je .i14_send
+    cmp ah, 0x02
+    je .i14_recv
+    cmp ah, 0x03
+    je .i14_status
+.i14_bad_port:
     mov ah, 0x80
     iret
-.i14_ok:
-    xor ax, ax
+
+.i14_init:
+    push bx
+    push cx
+    push dx
+    push ds
+    push ax                      /* save AL params in low byte */
+    mov bx, BDA_SEG
+    mov ds, bx
+    mov dx, [BDA_COM1]
+    test dx, dx
+    jz .i14_init_fail
+
+    /* baud index = AL bits 7-5 → divisor from table */
+    pop ax
+    push ax
+    push ds
+    push cs
+    pop ds
+    mov bl, al
+    mov cl, 5
+    shr bl, cl
+    and bx, 7
+    shl bx, 1
+    mov cx, [uart_divisors + bx]
+    pop ds
+
+    /* set DLAB, program divisor */
+    add dx, 3                    /* LCR */
+    mov al, 0x80
+    out dx, al
+    sub dx, 3                    /* divisor latch LSB */
+    mov al, cl
+    out dx, al
+    inc dx
+    mov al, ch
+    out dx, al
+
+    /* LCR from AL: word len / stop / parity (clear DLAB) */
+    pop ax
+    push ax
+    mov bl, al
+    and al, 0x1F                 /* keep bits 4-0 for LCR-ish */
+    /* map BIOS AL[4:0] → LCR: bits1-0 word, bit2 stop, bits4-3 parity → LCR 3-5 */
+    mov al, bl
+    and al, 0x03                 /* word length */
+    mov ah, bl
+    and ah, 0x04                 /* stop bits */
+    or al, ah
+    mov ah, bl
+    and ah, 0x18                 /* parity */
+    shl ah, 1                    /* → LCR bits 4-3... BIOS 4-3 → LCR 4-3: shift 0? */
+    /* BIOS bits 4-3 are already parity in LCR positions 4-3 if we map:
+       LCR: bit3=parity enable, bit4=even. BIOS: 00 none, 01 odd, 11 even.
+       odd: LCR=0x08, even: LCR=0x18, none: 0 */
+    mov ah, bl
+    and ah, 0x18
+    cmp ah, 0x08
+    je .i14_par_odd
+    cmp ah, 0x18
+    je .i14_par_even
+    jmp .i14_par_done
+.i14_par_odd:
+    or al, 0x08
+    jmp .i14_par_done
+.i14_par_even:
+    or al, 0x18
+.i14_par_done:
+    mov dx, [BDA_COM1]
+    add dx, 3
+    out dx, al                   /* LCR, DLAB clear */
+
+    /* MCR: DTR|RTS|OUT2 */
+    inc dx
+    mov al, 0x0B
+    out dx, al
+
+    /* disable UART interrupts */
+    mov dx, [BDA_COM1]
+    inc dx
+    xor al, al
+    out dx, al
+
+    /* clear pending by reading RBR/LSR/MSR */
+    dec dx
+    in al, dx
+    add dx, 5
+    in al, dx
+    inc dx
+    in al, dx
+
+    call uart_read_status        /* AH=LSR, AL=MSR */
+    pop bx                       /* discard saved params */
+    pop ds
+    pop dx
+    pop cx
+    pop bx
+    iret
+
+.i14_init_fail:
+    pop ax
+    pop ds
+    pop dx
+    pop cx
+    pop bx
+    mov ah, 0x80
+    xor al, al
+    iret
+
+.i14_send:
+    push bx
+    push cx
+    push dx
+    push ds
+    push ax                      /* AL = char */
+    mov bx, BDA_SEG
+    mov ds, bx
+    mov dx, [BDA_COM1]
+    test dx, dx
+    jz .i14_send_fail
+    add dx, 5                    /* LSR */
+    mov cx, 0xFFFF
+.i14_send_wait:
+    in al, dx
+    test al, 0x20                /* THRE */
+    jnz .i14_send_go
+    loop .i14_send_wait
+    mov ah, al
+    or ah, 0x80                  /* timeout + last LSR */
+    pop bx                       /* discard char */
+    jmp .i14_send_done
+.i14_send_go:
+    mov dx, [BDA_COM1]
+    pop ax
+    out dx, al
+    call uart_read_status
+.i14_send_done:
+    pop ds
+    pop dx
+    pop cx
+    pop bx
+    iret
+.i14_send_fail:
+    pop ax
+    pop ds
+    pop dx
+    pop cx
+    pop bx
+    mov ah, 0x80
+    iret
+
+.i14_recv:
+    push bx
+    push cx
+    push dx
+    push ds
+    mov bx, BDA_SEG
+    mov ds, bx
+    mov dx, [BDA_COM1]
+    test dx, dx
+    jz .i14_recv_fail
+    add dx, 5
+    mov cx, 0xFFFF
+.i14_recv_wait:
+    in al, dx
+    test al, 0x01                /* DR */
+    jnz .i14_recv_go
+    loop .i14_recv_wait
+    mov ah, 0x80
+    xor al, al
+    jmp .i14_recv_done
+.i14_recv_go:
+    mov dx, [BDA_COM1]
+    in al, dx
+    push ax
+    call uart_read_status        /* destroys AL */
+    pop bx
+    mov al, bl                   /* received char */
+.i14_recv_done:
+    pop ds
+    pop dx
+    pop cx
+    pop bx
+    iret
+.i14_recv_fail:
+    pop ds
+    pop dx
+    pop cx
+    pop bx
+    mov ah, 0x80
+    xor al, al
+    iret
+
+.i14_status:
+    push dx
+    push ds
+    mov ax, BDA_SEG
+    mov ds, ax
+    mov dx, [BDA_COM1]
+    test dx, dx
+    jz .i14_st_fail
+    call uart_read_status
+    pop ds
+    pop dx
+    iret
+.i14_st_fail:
+    pop ds
+    pop dx
+    mov ah, 0x80
+    xor al, al
+    iret
+
+/* DS = BDA, [BDA_COM1] valid. OUT: AH=LSR, AL=MSR. Clobbers DX. */
+uart_read_status:
+    mov dx, [BDA_COM1]
+    add dx, 5
+    in al, dx
+    mov ah, al
+    inc dx
+    in al, dx
+    ret
+
+/* Baud divisors for 1.8432 MHz (index = AL bits 7-5). */
+uart_divisors:
+    .word 1047                   /* 110 */
+    .word 768                    /* 150 */
+    .word 384                    /* 300 */
+    .word 192                    /* 600 */
+    .word 96                     /* 1200 */
+    .word 48                     /* 2400 */
+    .word 24                     /* 4800 */
+    .word 12                     /* 9600 */
+
+/*
+ * INT 15h — XT-safe: AH=86 wait, AH=80/81/82 succeed, else CF.
+ */
+int15_handler:
+    sti
+    cmp ah, 0x86
+    je .i15_wait
+    cmp ah, 0x80
+    je .i15_ok
+    cmp ah, 0x81
+    je .i15_ok
+    cmp ah, 0x82
+    je .i15_ok
+    cmp ah, 0x83
+    je .i15_fail
+    /* unsupported */
+.i15_fail:
+    mov ah, 0x86
+    push bp
+    mov bp, sp
+    or word ptr [bp + 6], 0x0001
+    pop bp
+    iret
+
+.i15_ok:
+    push bp
+    mov bp, sp
+    and word ptr [bp + 6], 0xFFFE
+    pop bp
+    iret
+
+.i15_wait:
+    /* CX:DX = microseconds → wait at least ceil(us/55000) ticks (min 1). */
+    push ax
+    push bx
+    push cx
+    push dx
+    push ds
+    push si
+    push di
+
+    mov ax, dx
+    mov dx, cx                   /* DX:AX = µs */
+    mov bx, 55000
+    cmp dx, 0
+    jne .i15_div32
+    cmp ax, 0
+    je .i15_wait_done            /* zero wait */
+    xor dx, dx
+    div bx                       /* AX = ticks */
+    jmp .i15_ticks
+.i15_div32:
+    /* DX:AX / BX with DX possibly >= BX — reduce high first */
+    push ax
+    mov ax, dx
+    xor dx, dx
+    div bx                       /* AX = high/BX, DX = rem */
+    mov si, ax                   /* high quotient (usually 0) */
+    pop ax
+    div bx                       /* DX:AX = rem:low / BX → AX quot */
+    add ax, si
+.i15_ticks:
+    test ax, ax
+    jnz .i15_have
+    mov ax, 1
+.i15_have:
+    mov di, ax                   /* ticks to wait */
+    mov ax, BDA_SEG
+    mov ds, ax
+    mov bx, [BDA_TIMER_LO]
+    mov cx, [BDA_TIMER_HI]
+.i15_spin:
+    mov ax, [BDA_TIMER_LO]
+    mov dx, [BDA_TIMER_HI]
+    sub ax, bx
+    sbb dx, cx
+    cmp ax, di
+    jae .i15_wait_done
+    /* also if high differed enough */
+    test dx, dx
+    jnz .i15_wait_done
+    hlt
+    jmp .i15_spin
+
+.i15_wait_done:
+    pop di
+    pop si
+    pop ds
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    push bp
+    mov bp, sp
+    and word ptr [bp + 6], 0xFFFE
+    pop bp
     iret
 
 int17_handler:

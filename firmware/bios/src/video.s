@@ -153,6 +153,10 @@ int10_handler:
     je .i10_write_char_only
     cmp ah, 0x0B
     je .i10_set_palette
+    cmp ah, 0x0C
+    je .i10_write_pixel
+    cmp ah, 0x0D
+    je .i10_read_pixel
     cmp ah, 0x0E
     je .i10_teletype
     cmp ah, 0x0F
@@ -180,22 +184,52 @@ int10_handler:
     iret
 
 .i10_set_ctype:
+    push ax
+    push dx
     push ds
     mov ax, BDA_SEG
     mov ds, ax
     mov [BDA_CURSOR_TYPE], cx
+    /* Program CRTC cursor start/end (0Ah/0Bh). */
+    mov dx, [BDA_CRT_PORT]
+    mov al, 0x0A
+    out dx, al
+    inc dx
+    mov al, ch
+    out dx, al
+    dec dx
+    mov al, 0x0B
+    out dx, al
+    inc dx
+    mov al, cl
+    out dx, al
     pop ds
+    pop dx
+    pop ax
     iret
 
 .i10_set_cursor:
+    push ax
+    push bx
+    push cx
+    push dx
     push ds
     mov ax, BDA_SEG
     mov ds, ax
+    mov cl, bh                   /* CL = requested page */
     mov bl, bh
     xor bh, bh
     shl bx, 1
     mov [BDA_CURSOR_POS + bx], dx
+    cmp cl, [BDA_CRT_PAGE]
+    jne .i10_sc_skip
+    call crtc_set_cursor_addr    /* DX = row/col, DS = BDA */
+.i10_sc_skip:
     pop ds
+    pop dx
+    pop cx
+    pop bx
+    pop ax
     iret
 
 .i10_get_cursor:
@@ -367,6 +401,68 @@ int10_handler:
     pop ds
     iret
 
+/* AH=0Ch write pixel: AL=color, CX=X, DX=Y */
+.i10_write_pixel:
+    push ax
+    push bx
+    push cx
+    push dx
+    push di
+    push es
+    push ds
+    mov bx, BDA_SEG
+    mov ds, bx
+    mov bl, [BDA_CRT_MODE]
+    cmp bl, 4
+    jb .i10_wp_done
+    mov bx, dx                   /* BX = Y */
+    mov dx, cx                   /* DX = X */
+    cmp byte ptr [BDA_CRT_MODE], 6
+    je .i10_wp_m6
+    call cga_plot_m4
+    jmp .i10_wp_done
+.i10_wp_m6:
+    call cga_plot_m6
+.i10_wp_done:
+    pop ds
+    pop es
+    pop di
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    iret
+
+/* AH=0Dh read pixel: CX=X, DX=Y → AL */
+.i10_read_pixel:
+    push bx
+    push cx
+    push dx
+    push di
+    push es
+    push ds
+    mov bx, BDA_SEG
+    mov ds, bx
+    xor al, al
+    cmp byte ptr [BDA_CRT_MODE], 4
+    jb .i10_rp_done
+    mov bx, dx
+    mov dx, cx
+    cmp byte ptr [BDA_CRT_MODE], 6
+    je .i10_rp_m6
+    call cga_read_m4
+    jmp .i10_rp_done
+.i10_rp_m6:
+    call cga_read_m6
+.i10_rp_done:
+    pop ds
+    pop es
+    pop di
+    pop dx
+    pop cx
+    pop bx
+    iret
+
 .i10_teletype:
     push ds
     push es
@@ -386,7 +482,7 @@ int10_handler:
     cmp al, 0x08
     je .i10_bs
     cmp al, 0x07
-    je .i10_tt_done
+    je .i10_bel
 
     cmp byte ptr [BDA_CRT_MODE], 4
     jb .i10_tt_text
@@ -418,9 +514,8 @@ int10_handler:
     cmp byte ptr [BDA_CURSOR_POS + 1], 25
     jb .i10_tt_done
     mov byte ptr [BDA_CURSOR_POS + 1], 24
-    /* scroll: text path only for now */
     cmp byte ptr [BDA_CRT_MODE], 4
-    jae .i10_tt_done
+    jae .i10_lf_gfx
     push ax
     push bx
     push cx
@@ -435,11 +530,23 @@ int10_handler:
     pop bx
     pop ax
     jmp .i10_tt_done
+.i10_lf_gfx:
+    call gfx_scroll_up_row
+    jmp .i10_tt_done
 .i10_bs:
     cmp byte ptr [BDA_CURSOR_POS], 0
     je .i10_tt_done
     dec byte ptr [BDA_CURSOR_POS]
+    jmp .i10_tt_done
+.i10_bel:
+    call speaker_beep
 .i10_tt_done:
+    /* Keep CRTC cursor in sync for text modes. */
+    cmp byte ptr [BDA_CRT_MODE], 4
+    jae .i10_tt_iret
+    mov dx, [BDA_CURSOR_POS]
+    call crtc_set_cursor_addr
+.i10_tt_iret:
     pop di
     pop si
     pop dx
@@ -705,6 +812,177 @@ cga_plot_m6:
     ret
 .cpm6_xor:
     xor es:[di], dl
+    ret
+
+/*
+ * Read mode-4/5 pixel. DX=X, BX=Y → AL=color 0..3.
+ * Clobbers BX,CX,DX,DI,ES.
+ */
+cga_read_m4:
+    push dx
+    mov di, bx
+    mov ax, CGA_SEG
+    mov es, ax
+    mov bx, di
+    and bx, 1
+    mov cl, 13
+    shl bx, cl
+    shr di, 1
+    mov ax, di
+    mov cl, 6
+    shl ax, cl
+    mov cl, 4
+    shl di, cl
+    add di, ax
+    add di, bx
+    pop bx
+    mov ax, bx
+    shr ax, 1
+    shr ax, 1
+    add di, ax
+    and bx, 3
+    xor bx, 3
+    shl bx, 1
+    mov al, es:[di]
+    mov cl, bl
+    shr al, cl
+    and al, 3
+    ret
+
+/*
+ * Read mode-6 pixel. DX=X, BX=Y → AL=0/1.
+ */
+cga_read_m6:
+    push dx
+    mov di, bx
+    mov ax, CGA_SEG
+    mov es, ax
+    mov bx, di
+    and bx, 1
+    mov cl, 13
+    shl bx, cl
+    shr di, 1
+    mov ax, di
+    mov cl, 6
+    shl ax, cl
+    mov cl, 4
+    shl di, cl
+    add di, ax
+    add di, bx
+    pop bx
+    mov ax, bx
+    shr ax, 1
+    shr ax, 1
+    shr ax, 1
+    add di, ax
+    and bl, 7
+    mov cl, 7
+    sub cl, bl
+    mov al, es:[di]
+    shr al, cl
+    and al, 1
+    ret
+
+/*
+ * Scroll CGA graphics up one glyph row (8 scanlines) in both banks.
+ * Clobbers AX,CX,SI,DI,ES,DS.
+ */
+gfx_scroll_up_row:
+    push ax
+    push cx
+    push si
+    push di
+    push ds
+    push es
+    mov ax, CGA_SEG
+    mov ds, ax
+    mov es, ax
+    /* even bank: move 96 lines * 80 bytes up by 4 even lines (320 bytes) */
+    mov si, 320
+    xor di, di
+    mov cx, 7680
+    rep movsb
+    xor ax, ax
+    mov cx, 320
+    rep stosb
+    /* odd bank at 0x2000 */
+    mov si, 0x2000 + 320
+    mov di, 0x2000
+    mov cx, 7680
+    rep movsb
+    xor ax, ax
+    mov cx, 320
+    rep stosb
+    pop es
+    pop ds
+    pop di
+    pop si
+    pop cx
+    pop ax
+    ret
+
+/*
+ * DS=BDA. DX=row/col. Program CRTC cursor address registers 0Eh/0Fh.
+ * Clobbers AX,BX,DX (port).
+ */
+crtc_set_cursor_addr:
+    push ax
+    push bx
+    push cx
+    push dx
+    push di
+    call cursor_to_offset        /* DI = byte offset in regen for page 0 cell */
+    shr di, 1                    /* character offset within page */
+    mov ax, [BDA_CRT_LEN]
+    shr ax, 1                    /* chars per page */
+    mov bl, [BDA_CRT_PAGE]
+    xor bh, bh
+    mul bx                       /* AX = page base (chars) */
+    add ax, di
+    mov bx, ax                   /* BX = CRTC cursor address */
+    mov dx, [BDA_CRT_PORT]
+    mov al, 0x0E
+    out dx, al
+    inc dx
+    mov al, bh
+    out dx, al
+    dec dx
+    mov al, 0x0F
+    out dx, al
+    inc dx
+    mov al, bl
+    out dx, al
+    pop di
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+/* Short PIT ch2 + PPI speaker beep (BEL). Clobbers AX,CX,DX. */
+speaker_beep:
+    push ax
+    push cx
+    push dx
+    mov al, 0xB6
+    out PORT_PIT_MODE, al
+    mov ax, 0x0533               /* ~880 Hz */
+    out PORT_PIT_CH2, al
+    mov al, ah
+    out PORT_PIT_CH2, al
+    in al, PORT_PPI_B
+    mov ah, al
+    or al, 0x03
+    out PORT_PPI_B, al
+    mov cx, 0x3000
+.spk_wait:
+    loop .spk_wait
+    mov al, ah
+    and al, 0xFC
+    out PORT_PPI_B, al
+    pop dx
+    pop cx
+    pop ax
     ret
 
 /*

@@ -61,8 +61,18 @@ isr_09:
     jmp .k09_eoi
 .k09_not_shift:
     cmp ah, 0x3A                      /* Caps Lock */
-    jne .k09_post_esc
+    jne .k09_not_caps
     xor byte ptr [BDA_KBD_FLAG0], 0x40
+    jmp .k09_eoi
+.k09_not_caps:
+    cmp ah, 0x45                      /* Num Lock */
+    jne .k09_not_num
+    xor byte ptr [BDA_KBD_FLAG0], 0x20
+    jmp .k09_eoi
+.k09_not_num:
+    cmp ah, 0x46                      /* Scroll Lock */
+    jne .k09_post_esc
+    xor byte ptr [BDA_KBD_FLAG0], 0x10
     jmp .k09_eoi
 
 .k09_post_esc:
@@ -104,6 +114,13 @@ isr_09:
     jmp .k09_eoi
 
 .k09_enqueue:
+    /* Keypad Ins (52h) with NumLock off: toggle Insert flag. */
+    cmp ah, 0x52
+    jne .k09_do_xlat
+    test byte ptr [BDA_KBD_FLAG0], 0x20
+    jnz .k09_do_xlat
+    xor byte ptr [BDA_KBD_FLAG0], 0x80
+.k09_do_xlat:
     call scancode_to_ascii
     call kbd_enqueue
 
@@ -125,6 +142,20 @@ scancode_to_ascii:
     push cs
     pop ds
     mov al, ah
+    /* Keypad 47h–53h: digits when NumLock, else AL=0 (extended). */
+    cmp al, 0x47
+    jb .sc_main
+    cmp al, 0x53
+    ja .sc_zero
+    mov dx, BDA_SEG
+    mov es, dx
+    test byte ptr es:[BDA_KBD_FLAG0], 0x20
+    jz .sc_zero
+    mov bx, offset keypad_num_table
+    sub al, 0x47
+    xlat
+    jmp .sc_done
+.sc_main:
     cmp al, 0x3A
     ja .sc_zero
     mov bx, offset scancode_table
@@ -291,3 +322,7 @@ scancode_table:
 /* shifted '1'..'9' */
 shift_digit_table:
     .byte '!','@','#','$','%','^','&','*','('
+
+/* keypad make 47h–53h ASCII when NumLock on */
+keypad_num_table:
+    .byte '7','8','9','-','4','5','6','+','1','2','3','0','.'

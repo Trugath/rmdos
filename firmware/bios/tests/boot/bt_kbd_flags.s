@@ -17,6 +17,16 @@ _start:
     int 0x16
     /* AL = shift flags; any value is fine if call returns */
 
+    /* AH=02 reflects BDA FLAG0 (Num/Scroll/Ins/Caps bits). */
+    mov ax, 0x0040
+    mov es, ax
+    mov byte ptr es:[0x17], 0x70     /* Caps|Num|Scroll */
+    mov ah, 0x02
+    int 0x16
+    cmp al, 0x70
+    jne .fail_flags
+    mov byte ptr es:[0x17], 0
+
     mov ah, 0x01
     int 0x16
     jnz .fail_not_empty
@@ -31,10 +41,17 @@ _start:
     pop ds
     mov si, offset msg_empty
     call fail_and_halt
+.fail_flags:
+    push cs
+    pop ds
+    mov si, offset msg_flags
+    call fail_and_halt
 
 name:
     .asciz "bt_kbd_flags"
 msg_empty:
     .asciz "bt_kbd_flags:empty"
+msg_flags:
+    .asciz "bt_kbd_flags:flags"
 
 .include "firmware/bios/tests/boot/common.inc"

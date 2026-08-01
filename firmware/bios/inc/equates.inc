@@ -45,6 +45,7 @@
 .equ PORT_PIC_CMD, 0x20
 .equ PORT_PIC_DATA, 0x21
 .equ PORT_PIT_CH0, 0x40
+.equ PORT_PIT_CH2, 0x42
 .equ PORT_PIT_MODE, 0x43
 .equ PORT_PPI_A, 0x60
 .equ PORT_PPI_B, 0x61

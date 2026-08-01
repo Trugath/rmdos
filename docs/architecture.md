@@ -71,7 +71,13 @@ Sources live under `firmware/bios/src/` (`post`, `init`, `video`, `keyboard`,
 
 - IVT + BIOS Data Area (`0040:0000`)
 - Equipment word (INT 11h) and conventional memory size (INT 12h)
-- INT 10h (text + CGA modes 0–6), 13h, 14h, 16h, 17h, 18h, 19h, 1Ah
+- INT 10h (text + CGA modes 0–6): AH=00–03,05–0F including pixel read/write
+  (`0Ch`/`0Dh`), CRTC cursor programming on set cursor/type, BEL beep, and
+  graphics teletype scroll
+- INT 13h (floppy geometry/reset stubs in ROM; R/W via k8086 host path), 14h
+  (COM1 8250 AH=00–03), 15h (AH=86h wait; AH=80h–82h succeed; else CF), 16h
+  (AH=00–02; Caps/Num/Scroll/Insert flags), 17h (printer timeout stub), 18h,
+  19h, 1Ah
 - IRQ0 timer (INT 08h → INT 1Ch) and IRQ1 keyboard (INT 09h)
 - Option ROM scan `C000–F400` (`AA55`, checksum, far call +3)
 - INT 18h prints a short “no BASIC” message (U19 is not an interpreter)
@@ -231,7 +237,10 @@ make run / make run-fd
 ```
 
 BIOS service units are boot-sector images under `firmware/bios/tests/boot/`; they
-print `PASS`/`FAIL` on COM1 and shut down via port `0x8900`.
+print `PASS`/`FAIL` on COM1 and shut down via port `0x8900`. Coverage includes
+equipment/BDA, INT 10h text/graphics (modes, scroll, pixels, CRTC cursor/type,
+graphics teletype scroll), INT 13h floppy smoke, timer/INT 1Ch, INT 14h COM1
+loopback, INT 15h wait/no-ops, INT 16h flags, and INT 17h stub edges.
 
 ## References
 

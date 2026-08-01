@@ -120,6 +120,8 @@ init_ivt:
     mov word ptr [0x13 * 4 + 2], BIOS_SEG
     mov word ptr [0x14 * 4], offset int14_handler
     mov word ptr [0x14 * 4 + 2], BIOS_SEG
+    mov word ptr [0x15 * 4], offset int15_handler
+    mov word ptr [0x15 * 4 + 2], BIOS_SEG
     mov word ptr [0x16 * 4], offset int16_handler
     mov word ptr [0x16 * 4 + 2], BIOS_SEG
     mov word ptr [0x17 * 4], offset int17_handler
