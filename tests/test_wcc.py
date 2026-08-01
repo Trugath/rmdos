@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from scripts.wcc import Compiler
 
 
@@ -125,6 +127,42 @@ void main(void) {
     assert any(ln.startswith("lea ax,") for ln in window), asm
 
 
+def test_continue_in_while_and_for() -> None:
+    asm_while = _compile(
+        """
+void main(void) {
+    int i;
+    i = 0;
+    while (i < 3) {
+        i = i + 1;
+        continue;
+        i = 99;
+    }
+}
+"""
+    )
+    assert "continue outside loop" not in asm_while
+    assert "jmp _L0" in asm_while  # while continue -> loop head
+
+    asm_for = _compile(
+        """
+void main(void) {
+    int i;
+    int a;
+    a = 0;
+    for (i = 0; i < 3; i = i + 1) {
+        if (i == 1) {
+            continue;
+        }
+        a = a + 1;
+    }
+}
+"""
+    )
+    # for continue jumps to incr label, not condition
+    assert re.search(r"jmp _L\d+", asm_for)
+
+
 def test_character_literals_compile_as_immediates() -> None:
     asm = _compile(
         """
@@ -142,5 +180,6 @@ if __name__ == "__main__":
     test_for_empty_clauses()
     test_for_with_call_in_increment()
     test_array_arg_decays_to_pointer()
+    test_continue_in_while_and_for()
     test_character_literals_compile_as_immediates()
     print("test_wcc: OK")

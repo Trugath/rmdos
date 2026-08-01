@@ -18,7 +18,9 @@ from scripts.wcc_preprocess import default_include_dirs, preprocess_includes
 
 # --- Token types ---
 T_INT, T_CHAR, T_VOID = "INT", "CHAR", "VOID"
-T_IF, T_ELSE, T_WHILE, T_FOR, T_RETURN, T_ASM, T_BREAK = "IF", "ELSE", "WHILE", "FOR", "RETURN", "ASM", "BREAK"
+T_IF, T_ELSE, T_WHILE, T_FOR, T_RETURN, T_ASM, T_BREAK, T_CONTINUE = (
+    "IF", "ELSE", "WHILE", "FOR", "RETURN", "ASM", "BREAK", "CONTINUE",
+)
 T_IDENT, T_NUMBER, T_STRING = "IDENT", "NUMBER", "STRING"
 T_LBRACE, T_RBRACE, T_LPAREN, T_RPAREN, T_LBRACKET, T_RBRACKET = "LBRACE", "RBRACE", "LPAREN", "RPAREN", "LBRACKET", "RBRACKET"
 T_SEMI, T_COMMA = "SEMI", "COMMA"
@@ -35,7 +37,7 @@ T_EOF = "EOF"
 KEYWORDS = {
     "int": T_INT, "char": T_CHAR, "void": T_VOID,
     "if": T_IF, "else": T_ELSE, "while": T_WHILE, "for": T_FOR,
-    "return": T_RETURN, "asm": T_ASM, "break": T_BREAK,
+    "return": T_RETURN, "asm": T_ASM, "break": T_BREAK, "continue": T_CONTINUE,
 }
 
 
@@ -317,6 +319,7 @@ class Compiler:
         self.last_primary_type = "int"
         self.include_paths: list[Path] = []
         self.break_labels: list[str] = []
+        self.continue_labels: list[str] = []
         self.arrays: set[str] = set()  # names that decay to pointers
 
     def _advance(self) -> Token:
@@ -638,6 +641,7 @@ class Compiler:
             lstart = self.gen.new_label()
             lend = self.gen.new_label()
             self.break_labels.append(lend)
+            self.continue_labels.append(lstart)
             self.gen.emit(f"{lstart}:")
             self._expr()
             self._expect(T_RPAREN)
@@ -647,18 +651,22 @@ class Compiler:
             self.gen.emit(f"    jmp {lstart}")
             self.gen.emit(f"{lend}:")
             self.break_labels.pop()
+            self.continue_labels.pop()
             return
         if self._at(T_FOR):
             self._advance()
             self._expect(T_LPAREN)
             # for (init; cond; incr) body
             # Emit order must be: init, cond-check, body, incr, jmp cond.
+            # continue jumps to the incr label (before increment runs).
             if not self._at(T_SEMI):
                 self._expr()
             self._expect(T_SEMI)
             lcond = self.gen.new_label()
+            lcont = self.gen.new_label()
             lend = self.gen.new_label()
             self.break_labels.append(lend)
+            self.continue_labels.append(lcont)
             self.gen.emit(f"{lcond}:")
             if not self._at(T_SEMI):
                 self._expr()
@@ -679,6 +687,7 @@ class Compiler:
                 self._advance()
             self._expect(T_RPAREN)
             self._parse_statement()
+            self.gen.emit(f"{lcont}:")
             if incr_tokens:
                 saved = self.cur_token
                 self.lexer._pending = list(incr_tokens) + self.lexer._pending
@@ -689,6 +698,7 @@ class Compiler:
             self.gen.emit(f"    jmp {lcond}")
             self.gen.emit(f"{lend}:")
             self.break_labels.pop()
+            self.continue_labels.pop()
             return
         if self._at(T_RETURN):
             self._advance()
@@ -704,6 +714,13 @@ class Compiler:
             if not self.break_labels:
                 raise CompileError("break outside loop", self.cur_token.line, self.cur_token.col)
             self.gen.emit(f"    jmp {self.break_labels[-1]}")
+            self._expect(T_SEMI)
+            return
+        if self._at(T_CONTINUE):
+            self._advance()
+            if not self.continue_labels:
+                raise CompileError("continue outside loop", self.cur_token.line, self.cur_token.col)
+            self.gen.emit(f"    jmp {self.continue_labels[-1]}")
             self._expect(T_SEMI)
             return
         if self._at(T_ASM):
