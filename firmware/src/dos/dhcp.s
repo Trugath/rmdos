@@ -10,10 +10,6 @@
  * Usage: DHCP
  */
 
-.set NE_BASE, 0x300
-.set TX_PAGE, 0x40
-.set RX_START, 0x46
-.set RX_STOP, 0x60
 .set BOOT_LEN, 240
 .set OPT_MAX, 64
 .set DHCP_LEN, (BOOT_LEN + OPT_MAX)
@@ -21,6 +17,8 @@
 .set IP_TOTAL, (20 + UDP_LEN)
 .set ETH_TOTAL, (14 + IP_TOTAL)
 .set LEASE_SIZE, 24
+
+.include "firmware/src/dos/inc/netlease_defs.inc"
 
 _start:
     push cs
@@ -100,75 +98,6 @@ _start:
     lea dx, [msg_nic]
     int 0x21
     jmp .exit_fail
-
-/* ---- Ctrl+C ---- */
-install_break:
-    push ax
-    push dx
-    mov ax, 0x2523
-    lea dx, [break_isr]
-    int 0x21
-    mov ax, 0x3301
-    mov dl, 1
-    int 0x21
-    pop dx
-    pop ax
-    ret
-
-break_isr:
-    mov byte ptr cs:[abort_flag], 1
-    iret
-
-check_abort:
-    cmp byte ptr [abort_flag], 0
-    jne .ca_yes
-    push ax
-    push bx
-    push ds
-    mov ah, 0x01
-    int 0x16
-    jz .ca_dos
-    cmp al, 0x03
-    je .ca_take
-    mov bl, al
-    mov ax, 0x40
-    mov ds, ax
-    test byte ptr [0x17], 0x04
-    jz .ca_dos_rest
-    push cs
-    pop ds
-    or bl, 0x20
-    cmp bl, 'c'
-    jne .ca_dos
-.ca_take:
-    push cs
-    pop ds
-    mov ah, 0x00
-    int 0x16
-    mov byte ptr [abort_flag], 1
-    jmp .ca_no
-.ca_dos_rest:
-    push cs
-    pop ds
-.ca_dos:
-    mov ah, 0x0B
-    int 0x21
-.ca_no:
-    pop ds
-    pop bx
-    pop ax
-    cmp byte ptr [abort_flag], 0
-    ret
-.ca_yes:
-    ret
-
-get_ticks:
-    push ds
-    mov ax, 0x40
-    mov ds, ax
-    mov ax, [0x6C]
-    pop ds
-    ret
 
 /* ---- DHCP state machine ---- */
 do_dhcp:
@@ -778,21 +707,17 @@ print_u32:
     pop ax
     ret
 
-/* Persist lease for PING: "DHCP" + ver1 + pad3 + yiaddr + gw + mask + dns. */
+/* Persist lease for PING (layout in netlease.inc). */
 save_lease:
     push ax
-    push bx
-    push cx
-    push dx
     push si
     push di
-
     lea di, [lease_buf]
-    mov ax, 0x4844              /* 'DH' */
+    mov ax, 0x4844
     stosw
-    mov ax, 0x5043              /* 'CP' */
+    mov ax, 0x5043
     stosw
-    mov al, 1
+    mov al, LEASE_VER
     stosb
     xor al, al
     stosb
@@ -810,64 +735,9 @@ save_lease:
     lea si, [dns_ip]
     movsw
     movsw
-
-    mov ah, 0x3C
-    xor cx, cx
-    lea dx, [lease_path]
-    int 0x21
-    jc .sl_fail
-    mov [lease_handle], ax
-
-    mov ah, 0x40
-    mov bx, [lease_handle]
-    mov cx, LEASE_SIZE
-    lea dx, [lease_buf]
-    int 0x21
-    jc .sl_close_fail
-    cmp ax, LEASE_SIZE
-    jne .sl_close_fail
-
-    mov ah, 0x3E
-    mov bx, [lease_handle]
-    int 0x21
-    clc
-    jmp .sl_done
-
-.sl_close_fail:
-    mov ah, 0x3E
-    mov bx, [lease_handle]
-    int 0x21
-.sl_fail:
-    stc
-.sl_done:
+    call lease_write_file
     pop di
     pop si
-    pop dx
-    pop cx
-    pop bx
-    pop ax
-    ret
-
-print_ip:
-    push ax
-    push bx
-    push cx
-    push dx
-    mov cx, 4
-.pi:
-    lodsb
-    mov ah, 0
-    call print_u16
-    dec cx
-    jz .pi_d
-    mov ah, 0x02
-    mov dl, '.'
-    int 0x21
-    jmp .pi
-.pi_d:
-    pop dx
-    pop cx
-    pop bx
     pop ax
     ret
 
@@ -883,398 +753,9 @@ print_crlf:
     pop ax
     ret
 
-print_u16:
-    push ax
-    push bx
-    push cx
-    push dx
-    mov bx, 10
-    xor cx, cx
-    test ax, ax
-    jnz .pu_div
-    mov ah, 0x02
-    mov dl, '0'
-    int 0x21
-    jmp .pu_done
-.pu_div:
-    xor dx, dx
-    div bx
-    push dx
-    inc cx
-    test ax, ax
-    jnz .pu_div
-.pu_out:
-    pop dx
-    add dl, '0'
-    mov ah, 0x02
-    int 0x21
-    loop .pu_out
-.pu_done:
-    pop dx
-    pop cx
-    pop bx
-    pop ax
-    ret
-
-/* ---- NE2000 (same pattern as PING.COM) ---- */
-outb_ne:
-    push dx
-    add dx, NE_BASE
-    out dx, al
-    pop dx
-    ret
-
-inb_ne:
-    push dx
-    add dx, NE_BASE
-    in al, dx
-    pop dx
-    ret
-
-nic_init:
-    push ax
-    push bx
-    push cx
-    push dx
-    push si
-    push di
-
-    mov dx, 0x1F
-    xor al, al
-    call outb_ne
-    mov dx, 0
-    mov al, 0x21
-    call outb_ne
-    mov dx, 0x0E
-    mov al, 0x48
-    call outb_ne
-    mov dx, 0x0A
-    xor al, al
-    call outb_ne
-    mov dx, 0x0B
-    call outb_ne
-    mov dx, 0x01
-    mov al, RX_START
-    call outb_ne
-    mov dx, 0x02
-    mov al, RX_STOP
-    call outb_ne
-    mov dx, 0x03
-    mov al, RX_START
-    call outb_ne
-    mov dx, 0x07
-    mov al, 0xFF
-    call outb_ne
-    mov dx, 0x0F
-    xor al, al
-    call outb_ne
-    mov dx, 0x0C
-    mov al, 0x04
-    call outb_ne
-    mov dx, 0x0D
-    xor al, al
-    call outb_ne
-    mov dx, 0
-    mov al, 0x61
-    call outb_ne
-    mov dx, 0x07
-    mov al, RX_START + 1
-    call outb_ne
-    mov dx, 0
-    mov al, 0x22
-    call outb_ne
-
-    mov dx, 0x0A
-    mov al, 12
-    call outb_ne
-    mov dx, 0x0B
-    xor al, al
-    call outb_ne
-    mov dx, 0x08
-    xor al, al
-    call outb_ne
-    mov dx, 0x09
-    xor al, al
-    call outb_ne
-    mov dx, 0
-    mov al, 0x0A
-    call outb_ne
-    lea di, [my_mac]
-    mov cx, 6
-.prom:
-    mov dx, 0x10
-    call inb_ne
-    stosb
-    mov dx, 0x10
-    call inb_ne
-    loop .prom
-
-    mov dx, 0
-    mov al, 0x61
-    call outb_ne
-    lea si, [my_mac]
-    mov bx, 1
-.par:
-    lodsb
-    mov dx, bx
-    call outb_ne
-    inc bx
-    cmp bx, 7
-    jb .par
-    mov dx, 0
-    mov al, 0x22
-    call outb_ne
-    clc
-    pop di
-    pop si
-    pop dx
-    pop cx
-    pop bx
-    pop ax
-    ret
-
-remote_write:
-    push ax
-    push cx
-    push dx
-    push si
-    mov dx, 0x0A
-    mov al, cl
-    call outb_ne
-    mov dx, 0x0B
-    mov al, ch
-    call outb_ne
-    mov dx, 0x08
-    mov al, bl
-    call outb_ne
-    mov dx, 0x09
-    mov al, bh
-    call outb_ne
-    mov dx, 0
-    mov al, 0x12
-    call outb_ne
-.rw:
-    lodsb
-    mov dx, 0x10
-    call outb_ne
-    loop .rw
-    mov cx, 0x4000
-.rw_rdc:
-    mov dx, 0x07
-    call inb_ne
-    test al, 0x40
-    jnz .rw_ok
-    loop .rw_rdc
-.rw_ok:
-    mov dx, 0x07
-    mov al, 0x40
-    call outb_ne
-    pop si
-    pop dx
-    pop cx
-    pop ax
-    ret
-
-nic_transmit:
-    push ax
-    push bx
-    push cx
-    push dx
-    push si
-    mov [tx_len], cx
-    mov bx, (TX_PAGE << 8)
-    call remote_write
-    mov dx, 0x04
-    mov al, TX_PAGE
-    call outb_ne
-    mov ax, [tx_len]
-    mov dx, 0x05
-    call outb_ne
-    mov dx, 0x06
-    mov al, ah
-    call outb_ne
-    mov dx, 0
-    mov al, 0x26
-    call outb_ne
-    mov cx, 0x8000
-.txw:
-    mov dx, 0x07
-    call inb_ne
-    test al, 0x02
-    jnz .txok
-    loop .txw
-.txok:
-    mov dx, 0x07
-    mov al, 0x02
-    call outb_ne
-    pop si
-    pop dx
-    pop cx
-    pop bx
-    pop ax
-    ret
-
-nic_rx:
-    push ax
-    push bx
-    push dx
-    push si
-    push di
-    mov word ptr [poll_left], 0x30
-.rx_poll:
-    call check_abort
-    jnz .rx_to
-    mov cx, 0x1000
-.rx_spin:
-    mov dx, 0x07
-    call inb_ne
-    test al, 0x01
-    jnz .rx_got
-    test cl, 0xFF
-    jnz .rx_spin_cont
-    call check_abort
-    jnz .rx_to
-.rx_spin_cont:
-    loop .rx_spin
-    dec word ptr [poll_left]
-    jnz .rx_poll
-.rx_to:
-    stc
-    jmp .rx_ret
-
-.rx_got:
-    mov dx, 0x07
-    mov al, 0x01
-    call outb_ne
-    mov dx, 0x03
-    call inb_ne
-    mov bl, al
-    inc bl
-    cmp bl, RX_STOP
-    jb .rx_pg
-    mov bl, RX_START
-.rx_pg:
-    mov dx, 0x0A
-    mov al, 4
-    call outb_ne
-    mov dx, 0x0B
-    xor al, al
-    call outb_ne
-    mov dx, 0x08
-    xor al, al
-    call outb_ne
-    mov dx, 0x09
-    mov al, bl
-    call outb_ne
-    mov dx, 0
-    mov al, 0x0A
-    call outb_ne
-    mov dx, 0x10
-    call inb_ne
-    mov dx, 0x10
-    call inb_ne
-    mov bh, al
-    mov dx, 0x10
-    call inb_ne
-    mov cl, al
-    mov dx, 0x10
-    call inb_ne
-    mov ch, al
-    cmp cx, 4
-    jbe .rx_bad
-    sub cx, 4
-    cmp cx, 1514
-    ja .rx_bad
-    mov [rx_len], cx
-    mov dx, 0x0A
-    mov al, cl
-    call outb_ne
-    mov dx, 0x0B
-    mov al, ch
-    call outb_ne
-    mov dx, 0x08
-    mov al, 4
-    call outb_ne
-    mov dx, 0x09
-    mov al, bl
-    call outb_ne
-    mov dx, 0
-    mov al, 0x0A
-    call outb_ne
-    lea di, [rx_buf]
-    mov cx, [rx_len]
-.rx_cp:
-    mov dx, 0x10
-    call inb_ne
-    stosb
-    loop .rx_cp
-    mov al, bh
-    dec al
-    cmp al, RX_START - 1
-    ja .bn_ok
-    mov al, RX_STOP - 1
-    jmp .bn_set
-.bn_ok:
-    cmp al, RX_START
-    jae .bn_set
-    mov al, RX_STOP - 1
-.bn_set:
-    mov dx, 0x03
-    call outb_ne
-    mov cx, [rx_len]
-    clc
-    jmp .rx_ret
-.rx_bad:
-    stc
-.rx_ret:
-    pop di
-    pop si
-    pop dx
-    pop bx
-    pop ax
-    ret
-
-inet_csum:
-    push bx
-    push cx
-    push dx
-    push si
-    xor bx, bx
-    xor dx, dx
-.cs1:
-    cmp cx, 2
-    jb .cs_odd
-    lodsb
-    mov dh, al
-    lodsb
-    mov dl, al
-    add bx, dx
-    adc bx, 0
-    sub cx, 2
-    jmp .cs1
-.cs_odd:
-    test cx, cx
-    jz .cs_fold
-    lodsb
-    mov dh, al
-    xor dl, dl
-    add bx, dx
-    adc bx, 0
-.cs_fold:
-    mov ax, bx
-    mov dx, ax
-    mov cl, 16
-    shr dx, cl
-    add ax, dx
-    mov dx, ax
-    shr dx, cl
-    add ax, dx
-    not ax
-    pop si
-    pop dx
-    pop cx
-    pop bx
-    ret
+.include "firmware/src/dos/inc/netlease.inc"
+.include "firmware/src/dos/inc/netutil.inc"
+.include "firmware/src/dos/inc/ne2000.inc"
 
 msg_help:
     .ascii "Usage: DHCP\r\n"

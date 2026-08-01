@@ -4,7 +4,7 @@
 .global _start
 
 /*
- * rmDOS FAT12 bootstrap.
+ * rmDOS bootstrap (FAT12 or FAT16 volumes).
  *
  * BIOS loads us at 0000:7C00. We relocate to 0000:0600, then load KERNEL at
  * 0070:0000 (phys 0x0700), which clobbers 0x0700-0x07FF. All code used after
@@ -12,6 +12,7 @@
  * cold entry (relocate stub) sits above 0x100 and is only run from 7C00.
  * CHS uses BPB SPT/heads at DS:0x18 / DS:0x1A with DS=0060 after relocate.
  * Drive number is kept in BPB BS_DrvNum (offset 0x24).
+ * Kernel load uses the RFAT1 reserved sector (absolute LBA), not a FAT walk.
  */
 
 .equ KERNEL_SEGMENT, 0x0070

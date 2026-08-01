@@ -2,7 +2,7 @@
  * INT 21h AH=1Ah / 4Eh / 4Fh — DTA + find.
  *
  * DTA: +00 dir_cluster, +02 sector_index, +04 entry_idx, +05 search_attr
- *      +15 attr … +1E name
+ *      +06 drive (0=A), +15 attr … +1E name
  * Pattern in CS:find_pat.
  *
  * AH=4Eh accepts cwd-relative or absolute paths with a final wildcard
@@ -37,10 +37,15 @@ dos_ah4e:
     mov byte ptr es:[di + 4], 0
     mov al, byte ptr cs:[find_attr]
     mov byte ptr es:[di + 5], al
+    mov al, byte ptr cs:[path_resolve_drive]
+    mov byte ptr es:[di + 6], al
 
     push cs
     pop ds
     call find_search
+    pushf
+    call dos_remount_current
+    popf
     jc .a4e_fail
 
     pop ds
@@ -55,6 +60,7 @@ dos_ah4e:
     jmp int21_iret
 
 .a4e_fail:
+    call dos_remount_current
     pop ds
     pop es
     pop di
@@ -74,9 +80,17 @@ dos_ah4f:
     push di
     push es
     push ds
+    mov es, word ptr cs:[dta_seg]
+    mov di, word ptr cs:[dta_off]
+    mov dl, es:[di + 6]
+    call dos_mount_drive
+    jc .a4f_fail
     push cs
     pop ds
     call find_search
+    pushf
+    call dos_remount_current
+    popf
     jc .a4f_fail
     pop ds
     pop es
@@ -89,6 +103,7 @@ dos_ah4f:
     clc
     jmp int21_iret
 .a4f_fail:
+    call dos_remount_current
     pop ds
     pop es
     pop di
@@ -299,7 +314,6 @@ find_search:
     push cs
     pop es
     lea bx, [sector_buf]
-    xor dx, dx
     call fat12_read_lba
     jc .fs_fail
 

@@ -1,4 +1,4 @@
-"""FAT12 layout helpers for 720 KB floppies (adapted from WispOS)."""
+"""FAT12 layout helpers for 720 KB floppies."""
 
 from __future__ import annotations
 
@@ -213,6 +213,18 @@ def find_directory_entry(image: bytes | bytearray, name: str) -> DirectoryEntry:
             entries = list_subdir_entries(image, found.start_cluster)
     assert current is not None
     return current
+
+
+def read_file(image: bytes | bytearray, name: str) -> bytes:
+    """Read a file from the floppy image by path (e.g. BIN\\TELNET.COM)."""
+    entry = find_directory_entry(image, name)
+    fat_off = FAT1_START * SECTOR_SIZE
+    fat = image[fat_off : fat_off + SECTORS_PER_FAT * SECTOR_SIZE]
+    out = bytearray()
+    for cluster in cluster_chain(fat, entry.start_cluster):
+        base = cluster_to_sector(cluster) * SECTOR_SIZE
+        out.extend(image[base : base + SECTOR_SIZE])
+    return bytes(out[: entry.size_bytes])
 
 
 def read_loader_info(image: bytes | bytearray) -> tuple[int, int]:

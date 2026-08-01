@@ -7,7 +7,7 @@
  *   +2  start_cluster
  *   +4  file_size_lo / +6 size_hi
  *   +8  file_pos_lo  / +10 pos_hi
- *   +12 dir_lba / +14 dir_idx
+ *   +12 dir_lba / +14 dir_idx (byte) / +15 drive (0=A)
  */
 
 .equ HANDLE_SIZE, 16
@@ -103,13 +103,16 @@ dos_ah3d:
     mov ax, word ptr cs:[last_dir_lba]
     mov word ptr es:[di + 12], ax
     mov ax, word ptr cs:[last_dir_idx]
-    mov word ptr es:[di + 14], ax
+    mov byte ptr es:[di + 14], al
+    mov al, byte ptr cs:[path_resolve_drive]
+    mov byte ptr es:[di + 15], al
     mov ax, word ptr cs:[xfer_cnt]
     jmp .a3d_ok
 
 .a3d_err_pop3:
     add sp, 6
 .a3d_err:
+    call dos_remount_current
     pop bp
     pop es
     pop ds
@@ -122,6 +125,7 @@ dos_ah3d:
     jmp int21_iret_cf
 
 .a3d_ok:
+    call dos_remount_current
     pop bp
     pop es
     pop ds
@@ -263,10 +267,13 @@ dos_ah3c:
     mov ax, word ptr cs:[last_dir_lba]
     mov word ptr es:[di + 12], ax
     mov ax, word ptr cs:[last_dir_idx]
-    mov word ptr es:[di + 14], ax
+    mov byte ptr es:[di + 14], al
+    mov al, byte ptr cs:[path_resolve_drive]
+    mov byte ptr es:[di + 15], al
     mov ax, word ptr cs:[xfer_cnt]
     mov bx, ax
 
+    call dos_remount_current
     pop es
     pop ds
     pop di
@@ -281,6 +288,7 @@ dos_ah3c:
     jmp .a3c_err
 
 .a3c_err:
+    call dos_remount_current
     pop es
     pop ds
     pop di
@@ -290,6 +298,17 @@ dos_ah3c:
     mov ax, 3
     stc
     jmp int21_iret_cf
+
+/* ES:DI = handle → mount its drive (file handles only). */
+handle_mount_drive:
+    push dx
+    cmp byte ptr es:[di], H_FILE
+    jne .hmd_ok
+    mov dl, es:[di + 15]
+    call dos_mount_drive
+.hmd_ok:
+    pop dx
+    ret
 
 dos_ah3e:
     push ax
@@ -305,9 +324,12 @@ dos_ah3e:
     je .a3e_err
     cmp byte ptr es:[di], H_FILE
     jne .a3e_clr
+    call handle_mount_drive
+    jc .a3e_err
     mov ax, word ptr es:[di + 12]
     mov word ptr cs:[last_dir_lba], ax
-    mov ax, word ptr es:[di + 14]
+    mov al, byte ptr es:[di + 14]
+    xor ah, ah
     mov word ptr cs:[last_dir_idx], ax
     mov ax, word ptr es:[di + 2]
     mov dx, word ptr es:[di + 4]
@@ -317,6 +339,7 @@ dos_ah3e:
     call fat12_flush_fat
 .a3e_clr:
     mov byte ptr es:[di], 0
+    call dos_remount_current
     pop es
     pop di
     pop dx
@@ -325,6 +348,7 @@ dos_ah3e:
     clc
     jmp int21_iret
 .a3e_err:
+    call dos_remount_current
     pop es
     pop di
     pop dx
@@ -360,6 +384,8 @@ dos_ah3f:
     je .a3f_con
     cmp al, H_FILE
     jne .a3f_fail
+    call handle_mount_drive
+    jc .a3f_fail
     mov si, di
 
     mov ax, es:[si + 4]
@@ -384,6 +410,8 @@ dos_ah3f:
     mov word ptr cs:[xfer_soff], cx
     push ax
     call fat12_cluster_to_lba
+    add ax, cs:[xfer_sec]
+    adc dx, 0
     push es
     push cs
     pop es
@@ -500,6 +528,8 @@ dos_ah40:
     jne .a40_fail
     cmp byte ptr es:[di + 1], 0
     je .a40_fail
+    call handle_mount_drive
+    jc .a40_fail
     mov si, di
     cmp word ptr cs:[xfer_want], 0
     je .a40_empty
@@ -513,6 +543,8 @@ dos_ah40:
     mov word ptr cs:[xfer_soff], cx
     push ax
     call fat12_cluster_to_lba
+    add ax, cs:[xfer_sec]
+    adc dx, 0
     push es
     push cs
     pop es
@@ -554,6 +586,8 @@ dos_ah40:
 
     push ax
     call fat12_cluster_to_lba
+    add ax, cs:[xfer_sec]
+    adc dx, 0
     push es
     push cs
     pop es
@@ -623,7 +657,7 @@ dos_ah40:
     stc
     jmp int21_iret_cf
 
-/* ES:SI handle → AX=cluster, CX=byte offset in sector */
+/* ES:SI handle → AX=cluster, CX=byte offset in sector; CS:xfer_sec = sector in cluster */
 file_cluster_at_pos:
     push bx
     push dx
@@ -638,8 +672,13 @@ file_cluster_at_pos:
     mov ax, es:[si + 8]
     mov dx, es:[si + 10]
     mov cx, 512
-    div cx
+    div cx                       /* AX = sector index, DX = byte in sector */
     mov word ptr cs:[xfer_soff], dx
+    mov bl, cs:[bpb_spc]
+    xor bh, bh
+    xor dx, dx
+    div bx                       /* AX = cluster index, DX = sector in cluster */
+    mov word ptr cs:[xfer_sec], dx
     mov di, ax
     mov ax, es:[si + 2]
     xor bx, bx
@@ -722,6 +761,7 @@ dos_ah41:
     call fat12_flush_fat
     jc .a41_err
 
+    call dos_remount_current
     pop es
     pop ds
     pop di
@@ -734,6 +774,7 @@ dos_ah41:
     jmp int21_iret
 
 .a41_err:
+    call dos_remount_current
     pop es
     pop ds
     pop di
@@ -974,8 +1015,12 @@ dos_ah57:
     jc .a57_err
     cmp byte ptr es:[di], H_FILE
     jne .a57_err
+    call handle_mount_drive
+    jc .a57_err
     mov ax, word ptr es:[di + 12]
-    mov si, word ptr es:[di + 14]
+    mov bl, byte ptr es:[di + 14]
+    xor bh, bh
+    mov si, bx
     lea bx, [sector_buf]
     xor dx, dx
     call fat12_read_lba
@@ -989,6 +1034,7 @@ dos_ah57:
     pop ds
     mov cx, [si + 22]
     mov dx, [si + 24]
+    call dos_remount_current
     pop ds
     pop es
     pop di
@@ -1014,9 +1060,13 @@ dos_ah57:
     jc .a57_serr
     cmp byte ptr es:[di], H_FILE
     jne .a57_serr
+    call handle_mount_drive
+    jc .a57_serr
     mov ax, word ptr es:[di + 12]
     mov word ptr cs:[a57_lba], ax
-    mov si, word ptr es:[di + 14]
+    mov bl, byte ptr es:[di + 14]
+    xor bh, bh
+    mov si, bx
     lea bx, [sector_buf]
     xor dx, dx
     call fat12_read_lba
@@ -1037,6 +1087,7 @@ dos_ah57:
     xor dx, dx
     call fat12_write_lba
     jc .a57_serr
+    call dos_remount_current
     pop ds
     pop es
     pop di
@@ -1049,6 +1100,7 @@ dos_ah57:
     jmp int21_iret
 
 .a57_err:
+    call dos_remount_current
     pop ds
     pop es
     pop di
@@ -1059,6 +1111,7 @@ dos_ah57:
     jmp int21_iret_cf
 
 .a57_serr:
+    call dos_remount_current
     pop ds
     pop es
     pop di

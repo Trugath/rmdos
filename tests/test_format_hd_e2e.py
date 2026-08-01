@@ -120,9 +120,11 @@ def _assert_fat_volume(img: bytes, *, expect_fat16: bool, size_bytes: int) -> No
     data_lba = reserved + fats * spf + root_secs
     clusters = (tot - data_lba) // max(spc, 1)
     if expect_fat16:
-        assert clusters > 4085
+        assert clusters >= 4085
+        assert img[54:62] == b"FAT16   "
     else:
-        assert clusters <= 4085
+        assert clusters < 4085
+        assert img[54:62] == b"FAT12   "
 
 
 def test_format_hd_10m_fat12() -> None:

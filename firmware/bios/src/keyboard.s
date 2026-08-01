@@ -225,6 +225,7 @@ int16_handler:
     iret
 
 .i16_read:
+    push bx
     push ds
     mov ax, BDA_SEG
     mov ds, ax
@@ -243,9 +244,11 @@ int16_handler:
 .i16_nowrap:
     mov [BDA_KBD_BUF_HEAD], bx
     pop ds
+    pop bx
     iret
 
 .i16_status:
+    push bx
     push ds
     mov ax, BDA_SEG
     mov ds, ax
@@ -255,14 +258,20 @@ int16_handler:
     pop ds
     push bp
     mov bp, sp
+    /* flags at [bp+8] after push bp; BX already pushed below return frame —
+     * stack: [bp]=saved bp, [bp+2]=ip, [bp+4]=cs, [bp+6]=flags from INT.
+     * We also pushed BX before DS; after pop ds, SP points at saved BX.
+     * After push bp: [bp+0]=old bp, [bp+2]=saved bx, [bp+4]=ip, [bp+6]=cs, [bp+8]=flags
+     */
     je .i16_empty
-    and word ptr [bp + 6], 0xFFBF
+    and word ptr [bp + 8], 0xFFBF
     jmp .i16_st_done
 .i16_empty:
-    or word ptr [bp + 6], 0x0040
+    or word ptr [bp + 8], 0x0040
     xor ax, ax
 .i16_st_done:
     pop bp
+    pop bx
     iret
 
 .i16_shift:

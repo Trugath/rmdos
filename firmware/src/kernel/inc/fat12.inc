@@ -1,6 +1,7 @@
 /*
  * BPB-driven FAT12/FAT16 I/O for the current volume (CS:boot_drive).
  * Call fat12_init_bpb once at mount before fat12_load_fat.
+ * File and directory paths honour BPB sectors-per-cluster.
  */
 
 .equ FAT12_EOC, 0x0FF8
@@ -10,8 +11,8 @@
 /*
  * Read the VBR and fill CS:bpb_* and derived absolute LBAs.
  *
- * A valid MBR with a primary DOS partition (01h/04h/06h) is mounted through
- * its first such partition.  Otherwise sector zero remains a whole-disk VBR.
+ * Mounts CS:vol_want_base on CS:boot_drive (0 = sector-zero VBR / floppy /
+ * whole-disk). The drive map selects which base each letter uses.
  * OUT: CF set on failure.
  */
 fat12_init_bpb:
@@ -28,6 +29,10 @@ fat12_init_bpb:
     pop es
     push cs
     pop ds
+    mov ax, [vol_want_base]
+    mov [vol_base_lba], ax
+    test ax, ax
+    jnz .fib_at_base
     lea bx, [sector_buf]
     mov ax, 0x0201
     mov cx, 0x0001
@@ -35,40 +40,47 @@ fat12_init_bpb:
     mov dl, cs:[boot_drive]
     int 0x13
     jc .fib_fail
+    jmp .fib_vbr
 
-    mov word ptr [vol_base_lba], 0
-    cmp word ptr [sector_buf + 510], 0xAA55
-    jne .fib_vbr
-    mov si, 0x1BE
-    mov cx, 4
-.fib_part:
-    mov al, [sector_buf + si + 4]
-    cmp al, 0x01
-    je .fib_dos_part
-    cmp al, 0x04
-    je .fib_dos_part
-    cmp al, 0x06
-    jne .fib_next_part
-.fib_dos_part:
-    cmp word ptr [sector_buf + si + 10], 0
-    jne .fib_fail                /* rmDOS supports era-sized LBAs only */
-    mov ax, [sector_buf + si + 8]
-    test ax, ax
-    jz .fib_next_part
-    mov [vol_base_lba], ax
-    /* Read the VBR at the partition's recorded CHS start. */
-    mov bx, 0x0000
-    mov dh, [sector_buf + si + 1]
-    mov cl, [sector_buf + si + 2]
-    mov ch, [sector_buf + si + 3]
+.fib_at_base:
+    /* Convert vol_want_base → CHS via INT 13h AH=08 geometry. */
+    push ax
+    mov ah, 0x08
+    mov dl, cs:[boot_drive]
+    int 0x13
+    jc .fib_at_fail_pop
+    mov al, cl
+    and ax, 0x003F
+    jz .fib_at_fail_pop
+    mov si, ax                   /* SPT */
+    mov al, dh
+    xor ah, ah
+    inc ax
+    mov di, ax                   /* heads */
+    pop ax                       /* LBA */
+    xor dx, dx
+    div si
+    mov cl, dl
+    inc cl                       /* sector */
+    xor dx, dx
+    div di
+    mov dh, dl                   /* head */
+    mov ch, al
+    mov al, ah
+    mov ah, cl
+    mov cl, 6
+    shl al, cl
+    or al, ah
+    mov cl, al
+    lea bx, [sector_buf]
     mov dl, cs:[boot_drive]
     mov ax, 0x0201
     int 0x13
     jc .fib_fail
     jmp .fib_vbr
-.fib_next_part:
-    add si, 16
-    loop .fib_part
+.fib_at_fail_pop:
+    pop ax
+    jmp .fib_fail
 .fib_vbr:
     /* Require 512 BPS */
     cmp word ptr [sector_buf + 11], 512
@@ -143,12 +155,13 @@ fat12_init_bpb:
     add [bpb_root_lba], ax
     add [bpb_data_lba], ax
 
-    /* FAT12 if clusters <= 4085, else FAT16 */
+    /* FAT12 if CountOfClusters < 4085, else FAT16 */
     mov byte ptr [bpb_fat_type], 12
     mov word ptr [fat_eoc], FAT12_EOC
     mov bx, [bpb_max_clust]
+    sub bx, 2                    /* CountOfClusters */
     cmp bx, 4085
-    jbe .fib_type_ok
+    jb .fib_type_ok
     mov byte ptr [bpb_fat_type], 16
     mov word ptr [fat_eoc], FAT16_EOC
 .fib_type_ok:
@@ -1001,23 +1014,32 @@ fat12_delete_dirent:
 /*
  * Map directory sector index to LBA.
  * IN:  DX = dir_cluster (0 = root), BX = sector_index within dir
- * OUT: AX = LBA; CF set if past end of directory
+ * OUT: DX:AX = LBA; CF set if past end of directory
  */
 fat12_dir_sector:
     push bx
     push cx
-    push dx
+    push si
+    push bp
     test dx, dx
     jnz .fds_sub
     cmp bx, cs:[bpb_root_secs]
     jae .fds_err
     mov ax, cs:[bpb_root_lba]
     add ax, bx
+    xor dx, dx
     clc
     jmp .fds_done
 .fds_sub:
-    mov ax, dx
-    mov cx, bx
+    mov bp, dx                   /* dir start cluster */
+    mov ax, bx                   /* sector_index */
+    mov bl, cs:[bpb_spc]
+    xor bh, bh
+    xor dx, dx
+    div bx                       /* AX = clust_off, DX = sec_off */
+    mov si, dx                   /* sec_off */
+    mov cx, ax                   /* walk count */
+    mov ax, bp
 .fds_walk:
     jcxz .fds_got
     call fat12_next_cluster
@@ -1029,14 +1051,67 @@ fat12_dir_sector:
     jmp .fds_walk
 .fds_got:
     call fat12_cluster_to_lba
+    add ax, si
+    adc dx, 0
     clc
     jmp .fds_done
 .fds_err:
     stc
 .fds_done:
+    pop bp
+    pop si
+    pop cx
+    pop bx
+    ret
+
+/*
+ * Zero all sectors of cluster AX (uses sector_buf).
+ * OUT: CF on I/O error.
+ */
+fat12_zero_cluster:
+    push ax
+    push bx
+    push cx
+    push dx
+    push di
+    push es
+    push cs
+    pop es
+    call fat12_cluster_to_lba
+    mov cl, cs:[bpb_spc]
+    xor ch, ch
+    lea di, [sector_buf]
+    push ax
+    push cx
+    xor ax, ax
+    mov cx, 256
+    rep stosw
+    pop cx
+    pop ax
+.fzc_loop:
+    push ax
+    push cx
+    push dx
+    lea bx, [sector_buf]
+    call fat12_write_lba
+    pop dx
+    pop cx
+    pop ax
+    jc .fzc_err
+    add ax, 1
+    adc dx, 0
+    loop .fzc_loop
+    clc
+    jmp .fzc_done
+.fzc_err:
+    stc
+.fzc_done:
+    pop es
+    pop di
     pop dx
     pop cx
     pop bx
+    pop ax
     ret
 
 /*
@@ -1062,15 +1137,12 @@ fat12_find_in_dir:
     push dx
     mov dx, bp
     call fat12_dir_sector
-    pop dx
-    jc .fid_nf
+    jc .fid_nf_pop
 
-    push dx                      /* sector index */
-    xor dx, dx                   /* LBA high */
     lea bx, [sector_buf]
     call fat12_read_lba
     pop dx                       /* restore sector index */
-    mov bx, ax                   /* LBA (read preserves AX) */
+    mov bx, ax                   /* LBA low (read preserves AX) */
     jc .fid_nf
 
     xor si, si
@@ -1123,6 +1195,8 @@ fat12_find_in_dir:
     inc dx
     jmp .fid_sec
 
+.fid_nf_pop:
+    pop dx
 .fid_nf:
     stc
 .fid_done:
@@ -1159,14 +1233,13 @@ fat12_find_free_in_dir:
     push dx
     mov dx, bp
     call fat12_dir_sector
-    pop dx
-    jc .ffid_extend
+    jc .ffid_extend_pop
 
     push ax
     lea bx, [sector_buf]
-    xor dx, dx
     call fat12_read_lba
-    pop bx                       /* LBA */
+    pop bx                       /* LBA low */
+    pop dx                       /* sector index */
     jc .ffid_fail
 
     xor si, si
@@ -1198,6 +1271,8 @@ fat12_find_free_in_dir:
     clc
     jmp .ffid_done
 
+.ffid_extend_pop:
+    pop dx                       /* discard sector index */
 .ffid_extend:
     /* root cannot grow */
     test bp, bp
@@ -1225,19 +1300,10 @@ fat12_find_free_in_dir:
     call fat12_cluster_to_lba
     mov word ptr cs:[last_dir_lba], ax
     mov word ptr cs:[last_dir_idx], 0
-    /* zero sector_buf and write */
-    push dx
-    push ax
-    lea di, [sector_buf]
-    xor ax, ax
-    mov cx, 256
-    rep stosw
-    pop ax
-    pop dx
-    lea bx, [sector_buf]
-    call fat12_write_lba
-    pop ax                       /* new cluster (discard) */
+    pop ax                       /* new cluster */
+    call fat12_zero_cluster
     jc .ffid_fail
+    /* leave sector_buf zeroed for create_dirent */
     clc
     jmp .ffid_done
 

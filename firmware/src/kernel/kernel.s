@@ -4,7 +4,7 @@
 .global _start
 
 /*
- * rmDOS KERNEL.SYS — INT 21h + writable FAT12 + tools.
+ * rmDOS KERNEL.SYS — INT 21h + writable FAT12/FAT16 + tools.
  * Boot leaves DL = drive; entered at 0070:0000.
  */
 
@@ -16,24 +16,8 @@ _start:
     mov sp, 0xFFFE
     mov [boot_drive], dl
     mov byte ptr [cur_drive], 0
-    mov byte ptr [num_drives], 1
-    /* Probe hard disk presence via INT 13h AH=08 */
-    push ax
-    push bx
-    push cx
-    push dx
-    push es
-    mov ah, 0x08
-    mov dl, 0x80
-    int 0x13
-    jc .no_hd
-    mov byte ptr [num_drives], 3 /* A: B: C: */
-.no_hd:
-    pop es
-    pop dx
-    pop cx
-    pop bx
-    pop ax
+    mov byte ptr [num_drives], 2
+    mov word ptr [vol_want_base], 0
     mov byte ptr [com_active], 0
     mov byte ptr [com_depth], 0
     mov word ptr [current_psp], cs
@@ -44,6 +28,8 @@ _start:
     mov word ptr [dta_off], ax
     sti
 
+    call dos_rebuild_drivemap
+    call dos_bind_boot_drive
     call fat12_init_bpb
     jc .fat_fail
     call fat12_load_fat
@@ -157,6 +143,7 @@ _start:
     jmp .echo
 
 .include "firmware/src/kernel/inc/console.inc"
+.include "firmware/src/kernel/inc/drivemap.inc"
 .include "firmware/src/kernel/inc/int21.inc"
 .include "firmware/src/kernel/inc/fat12.inc"
 .include "firmware/src/kernel/inc/path.inc"
@@ -263,6 +250,8 @@ cwd_cluster:
     .word 0
 path_resolve_cluster:
     .word 0
+path_resolve_drive:
+    .byte 0
 xfer_buf_off:
     .word 0
 xfer_buf_seg:
@@ -272,6 +261,8 @@ xfer_want:
 xfer_cnt:
     .word 0
 xfer_soff:
+    .word 0
+xfer_sec:
     .word 0
 find_path_off:
     .word 0
@@ -322,6 +313,12 @@ env_path:
     .asciz "PATH=A:\\BIN"
 vol_base_lba:
     .word 0
+vol_want_base:
+    .word 0
+drive_map_bios:
+    .space DRIVEMAP_MAX, 0
+drive_map_base:
+    .space DRIVEMAP_MAX * 2, 0
 abs_write:
     .byte 0
 abs_saved_drv:

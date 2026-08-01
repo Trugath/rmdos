@@ -161,7 +161,9 @@ dos_ah0a:
     xor bx, bx
     mov byte ptr [di + 1], 0     /* clear length up front */
 .ah0a_loop:
+    push bx
     call check_break
+    pop bx
     cmp bl, cl
     jae .ah0a_wait_cr
     mov ah, 0x00

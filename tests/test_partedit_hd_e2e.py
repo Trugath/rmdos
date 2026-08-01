@@ -1,4 +1,4 @@
-"""E2E: FDISK /AUTO followed by FORMAT C: /S creates a bootable partition."""
+"""E2E: PARTEDIT /CREATE followed by FORMAT C: /S creates a bootable partition."""
 
 from __future__ import annotations
 
@@ -14,8 +14,8 @@ from tests.k8086_util import launcher_argv, terminate_emulator, unlink_retry
 
 ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "firmware" / "build"
-FLOPPY = BUILD / "os-fdisk-hd.img"
-SERIAL = BUILD / "serial-fdisk-hd.log"
+FLOPPY = BUILD / "os-partedit-hd.img"
+SERIAL = BUILD / "serial-partedit-hd.log"
 HD_SIZE = 306 * 4 * 17 * 512
 
 
@@ -44,14 +44,16 @@ def _run() -> bytes:
             deadline = time.time() + 240
             while time.time() < deadline:
                 text = SERIAL.read_text(errors="replace") if SERIAL.is_file() else ""
-                if "FDISK OK" in text and "FDISKFMT OK" in text:
+                if "PARTEDIT OK" in text and "PARTEDITFMT OK" in text and "HD 80" in text:
                     break
                 if proc.poll() is not None:
                     break
                 time.sleep(0.25)
             else:
-                raise AssertionError(f"FDISK/FORMAT timed out:\n{text}")
-            assert "FDISK OK" in text and "FDISKFMT OK" in text, text
+                raise AssertionError(f"PARTEDIT/FORMAT timed out:\n{text}")
+            assert "PARTEDIT OK" in text and "PARTEDITFMT OK" in text, text
+            assert "HD 80" in text, text
+            assert "C:" in text, text
         finally:
             terminate_emulator(proc)
         # k8086's @ prefix selects the fixed disk as INT 19h boot media.
@@ -81,12 +83,12 @@ def _run() -> bytes:
         unlink_retry(hd)
 
 
-def test_fdisk_then_format_partition() -> None:
+def test_partedit_then_format_partition() -> None:
     image = _run()
     assert image[510:512] == b"\x55\xaa"
     part = image[0x1BE : 0x1CE]
     assert part[0] == 0x80
-    assert part[4] in (0x01, 0x04, 0x06)
+    assert part[4] == 0x01, f"10MB partition type should be FAT12 (01h), got {part[4]:#x}"
     start, sectors = struct.unpack_from("<II", part, 8)
     assert start == 17 and sectors > 0
     vbr = image[start * 512 : (start + 1) * 512]
@@ -101,5 +103,5 @@ def test_fdisk_then_format_partition() -> None:
 
 if __name__ == "__main__":
     assert FLOPPY.is_file(), f"missing {FLOPPY}; build it first"
-    test_fdisk_then_format_partition()
-    print("test_fdisk_hd_e2e: OK")
+    test_partedit_then_format_partition()
+    print("test_partedit_hd_e2e: OK")

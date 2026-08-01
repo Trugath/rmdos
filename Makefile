@@ -27,100 +27,30 @@ HELLO_OBJ := $(BUILD_DIR)/hello.o
 HELLO_ELF := $(BUILD_DIR)/hello.elf
 HELLO_COM := $(BUILD_DIR)/hello.com
 
-DIR_SRC := $(SRC_DIR)/dos/dir.s
-DIR_OBJ := $(BUILD_DIR)/dir.o
-DIR_ELF := $(BUILD_DIR)/dir.elf
-DIR_COM := $(BUILD_DIR)/dir.com
-
-TYPE_SRC := $(SRC_DIR)/dos/type.s
-TYPE_OBJ := $(BUILD_DIR)/type.o
-TYPE_ELF := $(BUILD_DIR)/type.elf
-TYPE_COM := $(BUILD_DIR)/type.com
-
-COMMAND_SRC := $(SRC_DIR)/dos/command.s
-COMMAND_OBJ := $(BUILD_DIR)/command.o
-COMMAND_ELF := $(BUILD_DIR)/command.elf
-COMMAND_COM := $(BUILD_DIR)/command.com
-
-COPY_SRC := $(SRC_DIR)/dos/copy.s
-COPY_OBJ := $(BUILD_DIR)/copy.o
-COPY_ELF := $(BUILD_DIR)/copy.elf
-COPY_COM := $(BUILD_DIR)/copy.com
-
-DEL_SRC := $(SRC_DIR)/dos/del.s
-DEL_OBJ := $(BUILD_DIR)/del.o
-DEL_ELF := $(BUILD_DIR)/del.elf
-DEL_COM := $(BUILD_DIR)/del.com
-
-ATTRIB_SRC := $(SRC_DIR)/dos/attrib.s
-ATTRIB_OBJ := $(BUILD_DIR)/attrib.o
-ATTRIB_ELF := $(BUILD_DIR)/attrib.elf
-ATTRIB_COM := $(BUILD_DIR)/attrib.com
-
-LABEL_SRC := $(SRC_DIR)/dos/label.s
-LABEL_OBJ := $(BUILD_DIR)/label.o
-LABEL_ELF := $(BUILD_DIR)/label.elf
-LABEL_COM := $(BUILD_DIR)/label.com
-
-MOVE_SRC := $(SRC_DIR)/dos/move.s
-MOVE_OBJ := $(BUILD_DIR)/move.o
-MOVE_ELF := $(BUILD_DIR)/move.elf
-MOVE_COM := $(BUILD_DIR)/move.com
-
-XCOPY_SRC := $(SRC_DIR)/dos/xcopy.s
-XCOPY_OBJ := $(BUILD_DIR)/xcopy.o
-XCOPY_ELF := $(BUILD_DIR)/xcopy.elf
-XCOPY_COM := $(BUILD_DIR)/xcopy.com
-
-CHKDSK_SRC := $(SRC_DIR)/dos/chkdsk.s
-CHKDSK_OBJ := $(BUILD_DIR)/chkdsk.o
-CHKDSK_ELF := $(BUILD_DIR)/chkdsk.elf
-CHKDSK_COM := $(BUILD_DIR)/chkdsk.com
-
-SYS_SRC := $(SRC_DIR)/dos/sys.s
-SYS_OBJ := $(BUILD_DIR)/sys.o
-SYS_ELF := $(BUILD_DIR)/sys.elf
+# Asm-only COM tools (hardware / smoke)
 SYS_COM := $(BUILD_DIR)/sys.com
-
-FDISK_SRC := $(SRC_DIR)/dos/fdisk.s
-FDISK_OBJ := $(BUILD_DIR)/fdisk.o
-FDISK_ELF := $(BUILD_DIR)/fdisk.elf
-FDISK_COM := $(BUILD_DIR)/fdisk.com
-
-FORMAT_SRC := $(SRC_DIR)/dos/format.s
-FORMAT_OBJ := $(BUILD_DIR)/format.o
-FORMAT_ELF := $(BUILD_DIR)/format.elf
+PARTEDIT_COM := $(BUILD_DIR)/partedit.com
 FORMAT_COM := $(BUILD_DIR)/format.com
-
-FIND_SRC := $(SRC_DIR)/dos/find.s
-FIND_OBJ := $(BUILD_DIR)/find.o
-FIND_ELF := $(BUILD_DIR)/find.elf
-FIND_COM := $(BUILD_DIR)/find.com
-
-CHOICE_SRC := $(SRC_DIR)/dos/choice.s
-CHOICE_OBJ := $(BUILD_DIR)/choice.o
-CHOICE_ELF := $(BUILD_DIR)/choice.elf
-CHOICE_COM := $(BUILD_DIR)/choice.com
-
-MORE_SRC := $(SRC_DIR)/dos/more.s
-MORE_OBJ := $(BUILD_DIR)/more.o
-MORE_ELF := $(BUILD_DIR)/more.elf
-MORE_COM := $(BUILD_DIR)/more.com
-
-COMPAT_SRC := $(SRC_DIR)/dos/compat.s
-COMPAT_OBJ := $(BUILD_DIR)/compat.o
-COMPAT_ELF := $(BUILD_DIR)/compat.elf
 COMPAT_COM := $(BUILD_DIR)/compat.com
-
-PING_SRC := $(SRC_DIR)/dos/ping.s
-PING_OBJ := $(BUILD_DIR)/ping.o
-PING_ELF := $(BUILD_DIR)/ping.elf
 PING_COM := $(BUILD_DIR)/ping.com
-
-DHCP_SRC := $(SRC_DIR)/dos/dhcp.s
-DHCP_OBJ := $(BUILD_DIR)/dhcp.o
-DHCP_ELF := $(BUILD_DIR)/dhcp.elf
 DHCP_COM := $(BUILD_DIR)/dhcp.com
+TELNET_COM := $(BUILD_DIR)/telnet.com
+
+# wcc C COM tools (same basename: foo.c -> foo.com), plus starfield.c -> star.com
+DOS_C_TOOLS := command dir type copy del attrib label move xcopy chkdsk find choice more
+COMMAND_COM := $(BUILD_DIR)/command.com
+DIR_COM := $(BUILD_DIR)/dir.com
+TYPE_COM := $(BUILD_DIR)/type.com
+COPY_COM := $(BUILD_DIR)/copy.com
+DEL_COM := $(BUILD_DIR)/del.com
+ATTRIB_COM := $(BUILD_DIR)/attrib.com
+LABEL_COM := $(BUILD_DIR)/label.com
+MOVE_COM := $(BUILD_DIR)/move.com
+XCOPY_COM := $(BUILD_DIR)/xcopy.com
+CHKDSK_COM := $(BUILD_DIR)/chkdsk.com
+FIND_COM := $(BUILD_DIR)/find.com
+CHOICE_COM := $(BUILD_DIR)/choice.com
+MORE_COM := $(BUILD_DIR)/more.com
 
 STAR_C := $(SRC_DIR)/dos/starfield.c
 STAR_ASM := $(BUILD_DIR)/starfield.s
@@ -129,6 +59,8 @@ STAR_ELF := $(BUILD_DIR)/starfield.elf
 STAR_COM := $(BUILD_DIR)/star.com
 DOS_INC := $(SRC_DIR)/dos/inc
 WCC := $(PYTHON) -m scripts.wcc
+WCC_DEPS := $(DOS_INC)/dos.h scripts/wcc.py scripts/wcc_preprocess.py
+
 
 SAMPLE_TXT := fixtures/guest/SAMPLE.TXT
 EMPTY_AUTOEXEC := fixtures/guest/AUTOEXEC.BAT
@@ -142,6 +74,8 @@ PING_IMAGE := $(BUILD_DIR)/os-ping.img
 PING_AUTOEXEC := fixtures/guest/AUTOEXEC.PING.BAT
 DHCP_IMAGE := $(BUILD_DIR)/os-dhcp.img
 DHCP_AUTOEXEC := fixtures/guest/AUTOEXEC.DHCP.BAT
+TELNET_IMAGE := $(BUILD_DIR)/os-telnet.img
+TELNET_AUTOEXEC := fixtures/guest/AUTOEXEC.TELNET.BAT
 STAR_IMAGE := $(BUILD_DIR)/os-star.img
 STAR_AUTOEXEC := fixtures/guest/AUTOEXEC.STAR.BAT
 DIR_IMAGE := $(BUILD_DIR)/os-dir.img
@@ -150,12 +84,19 @@ FORMAT_IMAGE := $(BUILD_DIR)/os-format.img
 FORMAT_AUTOEXEC := fixtures/guest/AUTOEXEC.FORMAT.BAT
 FORMAT_HD_IMAGE := $(BUILD_DIR)/os-format-hd.img
 FORMAT_HD_AUTOEXEC := fixtures/guest/AUTOEXEC.FORMAT.HD.BAT
-FDISK_HD_IMAGE := $(BUILD_DIR)/os-fdisk-hd.img
-FDISK_HD_AUTOEXEC := fixtures/guest/AUTOEXEC.FDISK.BAT
+FAT16_HD_IMAGE := $(BUILD_DIR)/os-fat16-hd.img
+FAT16_HD_AUTOEXEC := fixtures/guest/AUTOEXEC.FAT16.HD.BAT
+PARTEDIT_HD_IMAGE := $(BUILD_DIR)/os-partedit-hd.img
+PARTEDIT_HD_AUTOEXEC := fixtures/guest/AUTOEXEC.PARTEDIT.BAT
+MULTILET_HD_IMAGE := $(BUILD_DIR)/os-multilet-hd.img
+MULTILET_HD_AUTOEXEC := fixtures/guest/AUTOEXEC.MULTILET.BAT
 BATCH_IMAGE := $(BUILD_DIR)/os-batch.img
 BATCH_AUTOEXEC := fixtures/guest/AUTOEXEC.BATCH.BAT
 DISK_IMAGE := $(BUILD_DIR)/os-disk.img
 DISK_AUTOEXEC := fixtures/guest/AUTOEXEC.DISK.BAT
+INSTALL_BAT := fixtures/guest/INSTALL.BAT
+INSTALL_IMAGE := $(BUILD_DIR)/os-install.img
+INSTALL_AUTOEXEC := fixtures/guest/AUTOEXEC.INSTALL.BAT
 
 BIOS_MODULES := post init video keyboard timer disk misc bios_entries bios_font
 BIOS_OBJS := $(addprefix $(BUILD_DIR)/,$(addsuffix .o,$(BIOS_MODULES)))
@@ -173,7 +114,7 @@ FD_IMG := emulator/k8086/disks/fd.img
 
 K8086_ROMS_DIR := emulator/k8086/roms
 
-.PHONY: all bios os os-disk.img bios-tests clean run run-fd setup test test-fd-img test-dos-compat test-ping test-dhcp test-star test-dir test-format test-format-hd test-batch test-disk install-roms install-floppy
+.PHONY: all bios os os-disk.img bios-tests clean run run-fd setup test test-fd-img test-dos-compat test-ping test-dhcp test-telnet test-star test-dir test-format test-format-hd test-fat16-hd test-partedit-hd test-multilet-hd test-batch test-disk test-install-hd install-roms install-floppy
 
 all: bios os
 
@@ -234,134 +175,31 @@ $(HELLO_ELF): $(HELLO_OBJ) $(LINK_DIR)/com.ld
 $(HELLO_COM): $(HELLO_ELF)
 	$(OBJCOPY) -O binary $< $@
 
-$(DIR_OBJ): $(DIR_SRC) | $(BUILD_DIR)
-	$(AS8086) --32 -o $@ $(DIR_SRC)
-
-$(DIR_ELF): $(DIR_OBJ) $(LINK_DIR)/com.ld
-	$(LD) -m elf_i386 -T $(LINK_DIR)/com.ld -o $@ $<
-
-$(DIR_COM): $(DIR_ELF)
-	$(OBJCOPY) -O binary $< $@
-
-$(TYPE_OBJ): $(TYPE_SRC) | $(BUILD_DIR)
-	$(AS8086) --32 -o $@ $(TYPE_SRC)
-
-$(TYPE_ELF): $(TYPE_OBJ) $(LINK_DIR)/com.ld
-	$(LD) -m elf_i386 -T $(LINK_DIR)/com.ld -o $@ $<
-
-$(TYPE_COM): $(TYPE_ELF)
-	$(OBJCOPY) -O binary $< $@
-
-$(COMMAND_OBJ): $(COMMAND_SRC) | $(BUILD_DIR)
-	$(AS8086) --32 -o $@ $(COMMAND_SRC)
-
-$(COMMAND_ELF): $(COMMAND_OBJ) $(LINK_DIR)/com.ld
-	$(LD) -m elf_i386 -T $(LINK_DIR)/com.ld -o $@ $<
-
-$(COMMAND_COM): $(COMMAND_ELF)
-	$(OBJCOPY) -O binary $< $@
-
-$(COPY_OBJ): $(COPY_SRC) | $(BUILD_DIR)
-	$(AS8086) --32 -o $@ $(COPY_SRC)
-
-$(COPY_ELF): $(COPY_OBJ) $(LINK_DIR)/com.ld
-	$(LD) -m elf_i386 -T $(LINK_DIR)/com.ld -o $@ $<
-
-$(COPY_COM): $(COPY_ELF)
-	$(OBJCOPY) -O binary $< $@
-
-$(DEL_OBJ): $(DEL_SRC) | $(BUILD_DIR)
-	$(AS8086) --32 -o $@ $(DEL_SRC)
-
-$(DEL_ELF): $(DEL_OBJ) $(LINK_DIR)/com.ld
-	$(LD) -m elf_i386 -T $(LINK_DIR)/com.ld -o $@ $<
-
-$(DEL_COM): $(DEL_ELF)
-	$(OBJCOPY) -O binary $< $@
-
-define DOS_TOOL_RULE
-$(BUILD_DIR)/$(1).o: $(SRC_DIR)/dos/$(1).s | $(BUILD_DIR)
+# Asm COM pattern (hardware / smoke tools)
+define DOS_ASM_COM_RULE
+$(BUILD_DIR)/$(1).o: $(SRC_DIR)/dos/$(1).s $(wildcard $(SRC_DIR)/dos/inc/*.inc) | $(BUILD_DIR)
 	$$(AS8086) --32 -o $$@ $$<
 $(BUILD_DIR)/$(1).elf: $(BUILD_DIR)/$(1).o $(LINK_DIR)/com.ld
 	$$(LD) -m elf_i386 -T $(LINK_DIR)/com.ld -o $$@ $$<
 $(BUILD_DIR)/$(1).com: $(BUILD_DIR)/$(1).elf
 	$$(OBJCOPY) -O binary $$< $$@
 endef
-$(foreach t,attrib label move xcopy chkdsk sys,$(eval $(call DOS_TOOL_RULE,$(t))))
+$(foreach t,sys partedit format compat ping dhcp telnet,$(eval $(call DOS_ASM_COM_RULE,$(t))))
 
-$(FDISK_OBJ): $(FDISK_SRC) | $(BUILD_DIR)
-	$(AS8086) --32 -o $@ $(FDISK_SRC)
+# C COM pattern: foo.c -> build/foo.s -> .o -> .elf -> .com
+define DOS_C_COM_RULE
+$(BUILD_DIR)/$(1).s: $(SRC_DIR)/dos/$(1).c $$(WCC_DEPS) | $(BUILD_DIR)
+	$$(WCC) $$< -o $$@ --com -I $$(DOS_INC)
+$(BUILD_DIR)/$(1).o: $(BUILD_DIR)/$(1).s | $(BUILD_DIR)
+	$$(AS8086) --32 -o $$@ $$<
+$(BUILD_DIR)/$(1).elf: $(BUILD_DIR)/$(1).o $(LINK_DIR)/com.ld
+	$$(LD) -m elf_i386 -T $(LINK_DIR)/com.ld -o $$@ $$<
+$(BUILD_DIR)/$(1).com: $(BUILD_DIR)/$(1).elf
+	$$(OBJCOPY) -O binary $$< $$@
+endef
+$(foreach t,$(DOS_C_TOOLS),$(eval $(call DOS_C_COM_RULE,$(t))))
 
-$(FDISK_ELF): $(FDISK_OBJ) $(LINK_DIR)/com.ld
-	$(LD) -m elf_i386 -T $(LINK_DIR)/com.ld -o $@ $<
-
-$(FDISK_COM): $(FDISK_ELF)
-	$(OBJCOPY) -O binary $< $@
-
-$(FORMAT_OBJ): $(FORMAT_SRC) | $(BUILD_DIR)
-	$(AS8086) --32 -o $@ $(FORMAT_SRC)
-
-$(FORMAT_ELF): $(FORMAT_OBJ) $(LINK_DIR)/com.ld
-	$(LD) -m elf_i386 -T $(LINK_DIR)/com.ld -o $@ $<
-
-$(FORMAT_COM): $(FORMAT_ELF)
-	$(OBJCOPY) -O binary $< $@
-
-$(FIND_OBJ): $(FIND_SRC) | $(BUILD_DIR)
-	$(AS8086) --32 -o $@ $(FIND_SRC)
-
-$(FIND_ELF): $(FIND_OBJ) $(LINK_DIR)/com.ld
-	$(LD) -m elf_i386 -T $(LINK_DIR)/com.ld -o $@ $<
-
-$(FIND_COM): $(FIND_ELF)
-	$(OBJCOPY) -O binary $< $@
-
-$(CHOICE_OBJ): $(CHOICE_SRC) | $(BUILD_DIR)
-	$(AS8086) --32 -o $@ $(CHOICE_SRC)
-
-$(CHOICE_ELF): $(CHOICE_OBJ) $(LINK_DIR)/com.ld
-	$(LD) -m elf_i386 -T $(LINK_DIR)/com.ld -o $@ $<
-
-$(CHOICE_COM): $(CHOICE_ELF)
-	$(OBJCOPY) -O binary $< $@
-
-$(MORE_OBJ): $(MORE_SRC) | $(BUILD_DIR)
-	$(AS8086) --32 -o $@ $(MORE_SRC)
-
-$(MORE_ELF): $(MORE_OBJ) $(LINK_DIR)/com.ld
-	$(LD) -m elf_i386 -T $(LINK_DIR)/com.ld -o $@ $<
-
-$(MORE_COM): $(MORE_ELF)
-	$(OBJCOPY) -O binary $< $@
-
-$(COMPAT_OBJ): $(COMPAT_SRC) | $(BUILD_DIR)
-	$(AS8086) --32 -o $@ $(COMPAT_SRC)
-
-$(COMPAT_ELF): $(COMPAT_OBJ) $(LINK_DIR)/com.ld
-	$(LD) -m elf_i386 -T $(LINK_DIR)/com.ld -o $@ $<
-
-$(COMPAT_COM): $(COMPAT_ELF)
-	$(OBJCOPY) -O binary $< $@
-
-$(PING_OBJ): $(PING_SRC) | $(BUILD_DIR)
-	$(AS8086) --32 -o $@ $(PING_SRC)
-
-$(PING_ELF): $(PING_OBJ) $(LINK_DIR)/com.ld
-	$(LD) -m elf_i386 -T $(LINK_DIR)/com.ld -o $@ $<
-
-$(PING_COM): $(PING_ELF)
-	$(OBJCOPY) -O binary $< $@
-
-$(DHCP_OBJ): $(DHCP_SRC) | $(BUILD_DIR)
-	$(AS8086) --32 -o $@ $(DHCP_SRC)
-
-$(DHCP_ELF): $(DHCP_OBJ) $(LINK_DIR)/com.ld
-	$(LD) -m elf_i386 -T $(LINK_DIR)/com.ld -o $@ $<
-
-$(DHCP_COM): $(DHCP_ELF)
-	$(OBJCOPY) -O binary $< $@
-
-$(STAR_ASM): $(STAR_C) $(DOS_INC)/dos.h scripts/wcc.py scripts/wcc_preprocess.py | $(BUILD_DIR)
+$(STAR_ASM): $(STAR_C) $(WCC_DEPS) | $(BUILD_DIR)
 	$(WCC) $< -o $@ --com -I $(DOS_INC)
 
 $(STAR_OBJ): $(STAR_ASM) | $(BUILD_DIR)
@@ -388,14 +226,15 @@ $(BOOT_BIN): $(BOOT_ELF)
 # Shared FAT12 contents: root = COMMAND + AUTOEXEC; tools in BIN/; demos; SAMPLE in TEST/.
 OS_IMAGE_COMMON_DEPS := $(BOOT_BIN) $(KERNEL_BIN) $(HELLO_COM) $(HELLO_EXE) \
 	$(DIR_COM) $(TYPE_COM) $(COMMAND_COM) $(COPY_COM) $(DEL_COM) $(ATTRIB_COM) $(LABEL_COM) \
-	$(MOVE_COM) $(XCOPY_COM) $(CHKDSK_COM) $(SYS_COM) $(FDISK_COM) $(FORMAT_COM) \
+	$(MOVE_COM) $(XCOPY_COM) $(CHKDSK_COM) $(SYS_COM) $(PARTEDIT_COM) $(FORMAT_COM) \
 	$(FIND_COM) $(CHOICE_COM) $(MORE_COM) \
-	$(COMPAT_COM) $(PING_COM) $(DHCP_COM) $(STAR_COM) $(SAMPLE_TXT) $(EMPTY_AUTOEXEC) \
-	scripts/mkfs_fat12.py scripts/fat12.py scripts/disk.py
+	$(COMPAT_COM) $(PING_COM) $(DHCP_COM) $(TELNET_COM) $(STAR_COM) $(SAMPLE_TXT) $(INSTALL_BAT) \
+	$(EMPTY_AUTOEXEC) scripts/mkfs_fat12.py scripts/fat12.py scripts/disk.py
 
 define PACK_OS_IMAGE
 	$(PYTHON) -m scripts.mkfs_fat12 --output $(1) --boot $(BOOT_BIN) --kernel $(KERNEL_BIN) \
 		--file COMMAND.COM=$(COMMAND_COM) \
+		--file INSTALL.BAT=$(INSTALL_BAT) \
 		--file BIN/DIR.COM=$(DIR_COM) \
 		--file BIN/TYPE.COM=$(TYPE_COM) \
 		--file BIN/COPY.COM=$(COPY_COM) \
@@ -406,13 +245,14 @@ define PACK_OS_IMAGE
 		--file BIN/XCOPY.COM=$(XCOPY_COM) \
 		--file BIN/CHKDSK.COM=$(CHKDSK_COM) \
 		--file BIN/SYS.COM=$(SYS_COM) \
-		--file BIN/FDISK.COM=$(FDISK_COM) \
+		--file BIN/PARTEDIT.COM=$(PARTEDIT_COM) \
 		--file BIN/FORMAT.COM=$(FORMAT_COM) \
 		--file BIN/FIND.COM=$(FIND_COM) \
 		--file BIN/CHOICE.COM=$(CHOICE_COM) \
 		--file BIN/MORE.COM=$(MORE_COM) \
 		--file BIN/PING.COM=$(PING_COM) \
 		--file BIN/DHCP.COM=$(DHCP_COM) \
+		--file BIN/TELNET.COM=$(TELNET_COM) \
 		--file DEMO/HELLO.COM=$(HELLO_COM) \
 		--file DEMO/HELLO.EXE=$(HELLO_EXE) \
 		--file DEMO/COMPAT.COM=$(COMPAT_COM) \
@@ -433,6 +273,9 @@ $(PING_IMAGE): $(OS_IMAGE_COMMON_DEPS) $(PING_AUTOEXEC)
 $(DHCP_IMAGE): $(OS_IMAGE_COMMON_DEPS) $(DHCP_AUTOEXEC)
 	$(call PACK_OS_IMAGE,$@,$(DHCP_AUTOEXEC))
 
+$(TELNET_IMAGE): $(OS_IMAGE_COMMON_DEPS) $(TELNET_AUTOEXEC)
+	$(call PACK_OS_IMAGE,$@,$(TELNET_AUTOEXEC))
+
 $(STAR_IMAGE): $(OS_IMAGE_COMMON_DEPS) $(STAR_AUTOEXEC)
 	$(call PACK_OS_IMAGE,$@,$(STAR_AUTOEXEC))
 
@@ -445,14 +288,23 @@ $(FORMAT_IMAGE): $(OS_IMAGE_COMMON_DEPS) $(FORMAT_AUTOEXEC)
 $(FORMAT_HD_IMAGE): $(OS_IMAGE_COMMON_DEPS) $(FORMAT_HD_AUTOEXEC)
 	$(call PACK_OS_IMAGE,$@,$(FORMAT_HD_AUTOEXEC))
 
-$(FDISK_HD_IMAGE): $(OS_IMAGE_COMMON_DEPS) $(FDISK_HD_AUTOEXEC)
-	$(call PACK_OS_IMAGE,$@,$(FDISK_HD_AUTOEXEC))
+$(FAT16_HD_IMAGE): $(OS_IMAGE_COMMON_DEPS) $(FAT16_HD_AUTOEXEC)
+	$(call PACK_OS_IMAGE,$@,$(FAT16_HD_AUTOEXEC))
+
+$(PARTEDIT_HD_IMAGE): $(OS_IMAGE_COMMON_DEPS) $(PARTEDIT_HD_AUTOEXEC)
+	$(call PACK_OS_IMAGE,$@,$(PARTEDIT_HD_AUTOEXEC))
+
+$(MULTILET_HD_IMAGE): $(OS_IMAGE_COMMON_DEPS) $(MULTILET_HD_AUTOEXEC)
+	$(call PACK_OS_IMAGE,$@,$(MULTILET_HD_AUTOEXEC))
 
 $(BATCH_IMAGE): $(OS_IMAGE_COMMON_DEPS) $(BATCH_AUTOEXEC)
 	$(call PACK_OS_IMAGE,$@,$(BATCH_AUTOEXEC))
 
 $(DISK_IMAGE): $(OS_IMAGE_COMMON_DEPS) $(DISK_AUTOEXEC)
 	$(call PACK_OS_IMAGE,$@,$(DISK_AUTOEXEC))
+
+$(INSTALL_IMAGE): $(OS_IMAGE_COMMON_DEPS) $(INSTALL_AUTOEXEC)
+	$(call PACK_OS_IMAGE,$@,$(INSTALL_AUTOEXEC))
 
 # --- BIOS boot-sector unit-test images ---------------------------------------
 
@@ -485,20 +337,25 @@ run-fd: bios $(FD_IMG)
 setup:
 	./setup.sh
 
-test: all bios-tests $(COMPAT_IMAGE) $(PING_IMAGE) $(DHCP_IMAGE) $(STAR_IMAGE) $(DIR_IMAGE) $(FORMAT_IMAGE) $(FORMAT_HD_IMAGE) $(FDISK_HD_IMAGE) $(BATCH_IMAGE) $(DISK_IMAGE)
+test: all bios-tests $(COMPAT_IMAGE) $(PING_IMAGE) $(DHCP_IMAGE) $(TELNET_IMAGE) $(STAR_IMAGE) $(DIR_IMAGE) $(FORMAT_IMAGE) $(FORMAT_HD_IMAGE) $(FAT16_HD_IMAGE) $(PARTEDIT_HD_IMAGE) $(MULTILET_HD_IMAGE) $(BATCH_IMAGE) $(DISK_IMAGE) $(INSTALL_IMAGE)
+	$(PYTHON) -m tests.test_wcc
 	$(PYTHON) -m tests.test_bios_roms
 	$(PYTHON) -m tests.test_bios_services
 	$(PYTHON) -m tests.test_boot_e2e
 	$(PYTHON) -m tests.test_dos_compat
 	$(PYTHON) -m tests.test_ping_e2e
 	$(PYTHON) -m tests.test_dhcp_e2e
+	$(PYTHON) -m tests.test_telnet_e2e
 	$(PYTHON) -m tests.test_star_e2e
 	$(PYTHON) -m tests.test_dir_e2e
 	$(PYTHON) -m tests.test_format_e2e
 	$(PYTHON) -m tests.test_format_hd_e2e
-	$(PYTHON) -m tests.test_fdisk_hd_e2e
+	$(PYTHON) -m tests.test_fat16_hd_e2e
+	$(PYTHON) -m tests.test_partedit_hd_e2e
+	$(PYTHON) -m tests.test_multilet_hd_e2e
 	$(PYTHON) -m tests.test_batch_e2e
 	$(PYTHON) -m tests.test_disk_tools_e2e
+	$(PYTHON) -m tests.test_install_hd_e2e
 	$(PYTHON) -m tests.starfield_alg_test
 
 test-dos-compat: $(COMPAT_IMAGE)
@@ -509,6 +366,9 @@ test-ping: $(PING_IMAGE)
 
 test-dhcp: $(DHCP_IMAGE)
 	$(PYTHON) -m tests.test_dhcp_e2e
+
+test-telnet: $(TELNET_IMAGE)
+	$(PYTHON) -m tests.test_telnet_e2e
 
 test-star: $(STAR_IMAGE)
 	$(PYTHON) -m tests.test_star_e2e
@@ -522,14 +382,23 @@ test-format: $(FORMAT_IMAGE)
 test-format-hd: $(FORMAT_HD_IMAGE)
 	$(PYTHON) -m tests.test_format_hd_e2e
 
-test-fdisk-hd: $(FDISK_HD_IMAGE)
-	$(PYTHON) -m tests.test_fdisk_hd_e2e
+test-fat16-hd: $(FAT16_HD_IMAGE)
+	$(PYTHON) -m tests.test_fat16_hd_e2e
+
+test-partedit-hd: $(PARTEDIT_HD_IMAGE)
+	$(PYTHON) -m tests.test_partedit_hd_e2e
+
+test-multilet-hd: $(MULTILET_HD_IMAGE)
+	$(PYTHON) -m tests.test_multilet_hd_e2e
 
 test-batch: $(BATCH_IMAGE)
 	$(PYTHON) -m tests.test_batch_e2e
 
 test-disk: $(DISK_IMAGE)
 	$(PYTHON) -m tests.test_disk_tools_e2e
+
+test-install-hd: $(INSTALL_IMAGE)
+	$(PYTHON) -m tests.test_install_hd_e2e
 
 test-fd-img: bios $(FD_IMG)
 	$(PYTHON) -m tests.test_fd_img_e2e

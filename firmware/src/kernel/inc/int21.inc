@@ -181,6 +181,7 @@ int21_handler:
 /* AH=0Dh — disk reset / flush buffers */
 dos_ah0d:
     call fat12_flush_fat
+    call dos_rebuild_drivemap
     clc
     jmp int21_iret
 
@@ -282,6 +283,7 @@ dos_ah19:
 /* AH=0Eh — select drive DL; AL = number of logical drives */
 dos_ah0e:
     push dx
+    call dos_rebuild_drivemap
     call dos_select_drive
     pop dx
     mov al, byte ptr cs:[num_drives]
@@ -289,39 +291,86 @@ dos_ah0e:
     jmp int21_iret
 
 /*
- * Select logical drive DL (0=A). Remounts volume. CF if unavailable.
+ * Mount logical drive DL (0=A) for filesystem I/O without changing cur_drive
+ * or cwd. Rebuilds the map if the letter is not yet known (e.g. after
+ * PARTEDIT/FORMAT). CF if unavailable.
+ */
+dos_mount_drive:
+    push ax
+    push bx
+    push dx
+    push ds
+    push cs
+    pop ds
+    cmp dl, byte ptr [num_drives]
+    jb .dmd_have
+    push dx
+    call dos_rebuild_drivemap
+    pop dx
+    cmp dl, byte ptr [num_drives]
+    jae .dmd_bad
+.dmd_have:
+    mov bl, dl
+    xor bh, bh
+    mov al, [drive_map_bios + bx]
+    cmp al, [boot_drive]
+    jne .dmd_switch
+    add bx, bx
+    mov ax, [drive_map_base + bx]
+    cmp ax, [vol_want_base]
+    je .dmd_ok
+    mov bl, dl
+.dmd_switch:
+    call fat12_flush_fat
+    xor bh, bh
+    mov bl, dl
+    mov al, [drive_map_bios + bx]
+    mov [boot_drive], al
+    add bx, bx
+    mov ax, [drive_map_base + bx]
+    mov [vol_want_base], ax
+    call fat12_init_bpb
+    jc .dmd_bad
+    call fat12_load_fat
+    jc .dmd_bad
+.dmd_ok:
+    clc
+    jmp .dmd_done
+.dmd_bad:
+    stc
+.dmd_done:
+    pop ds
+    pop dx
+    pop bx
+    pop ax
+    ret
+
+/* Remount cur_drive volume (after a path op on another letter). */
+dos_remount_current:
+    push dx
+    mov dl, byte ptr cs:[cur_drive]
+    call dos_mount_drive
+    pop dx
+    ret
+
+/*
+ * Select logical drive DL (0=A): mount it and make it current (AH=0Eh).
+ * Resets cwd to root. CF if unavailable.
  */
 dos_select_drive:
     push ax
-    push bx
-    cmp dl, byte ptr cs:[num_drives]
-    jae .dsd_bad
-    cmp dl, byte ptr cs:[cur_drive]
-    je .dsd_ok
-    call fat12_flush_fat
-    /* map logical → BIOS DL */
-    mov bl, dl
-    cmp bl, 2
-    jb .dsd_bios
-    mov bl, 0x80
-    add bl, dl
-    sub bl, 2                    /* C:→80h D:→81h */
-.dsd_bios:
-    mov byte ptr cs:[boot_drive], bl
+    push dx
+    call dos_mount_drive
+    jc .dsd_bad
     mov byte ptr cs:[cur_drive], dl
-    call fat12_init_bpb
-    jc .dsd_bad
-    call fat12_load_fat
-    jc .dsd_bad
     mov word ptr cs:[cwd_cluster], 0
     mov byte ptr cs:[cwd_path], 0
-.dsd_ok:
     clc
     jmp .dsd_done
 .dsd_bad:
     stc
 .dsd_done:
-    pop bx
+    pop dx
     pop ax
     ret
 
@@ -493,6 +542,7 @@ int21_iret_cf:
  */
 check_break:
     push ax
+    push bx
     cmp byte ptr cs:[break_flag], 0
     je .cb_done
     mov ah, 0x01
@@ -505,5 +555,6 @@ check_break:
     int 0x16
     int 0x23
 .cb_done:
+    pop bx
     pop ax
     ret

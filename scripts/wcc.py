@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-WCC: Small-C compiler for rmDOS (ported from WispOS).
+WCC: Small-C compiler for rmDOS.
 Compiles a C subset to 8088 GAS assembly.
 Usage: python3 -m scripts.wcc [options] input.c -o output.s
 """
@@ -209,8 +209,16 @@ class Lexer:
             val, _ = self._read_number()
             return Token(T_NUMBER, val, line, col)
 
-        # String
-        if c == '"' or c == "'":
+        # String and character constants.  A character constant is an integer
+        # expression in C, while a double-quoted literal decays to a pointer.
+        # Treating both as T_STRING made comparisons such as c == ' ' compare
+        # against the address of a generated string, breaking tokenization.
+        if c == "'":
+            s = self._read_string()
+            if len(s) != 1:
+                raise CompileError("character constant must contain one character", line, col)
+            return Token(T_NUMBER, ord(s), line, col)
+        if c == '"':
             s = self._read_string()
             return Token(T_STRING, s, line, col)
 
@@ -309,6 +317,7 @@ class Compiler:
         self.last_primary_type = "int"
         self.include_paths: list[Path] = []
         self.break_labels: list[str] = []
+        self.arrays: set[str] = set()  # names that decay to pointers
 
     def _advance(self) -> Token:
         self.cur_token = self.lexer.next_token()
@@ -435,6 +444,8 @@ class Compiler:
                 if has_init:
                     self._advance()  # consume =
                 self.globals[name] = (t, size)
+                if size > 0:
+                    self.arrays.add(name)
                 self.gen.emit(".section .data")
                 self.gen.emit(f".global {name}")
                 self.gen.emit(f"{name}:")
@@ -538,6 +549,8 @@ class Compiler:
             self.params = params
             self.locals = {}
             self.local_offset = 0
+            # Drop previous function's local arrays; keep global arrays.
+            self.arrays = {n for n, (_t, sz) in self.globals.items() if sz > 0}
             # Args pushed left-to-right: last arg at [bp+4], first at [bp+4+2*(n-1)]
             for i, (pname, _) in enumerate(params):
                 self.locals[pname] = ("int", 4 + 2 * (len(params) - 1 - i))
@@ -589,6 +602,7 @@ class Compiler:
                     self.gen.emit(f"    sub sp, {size}")
                     self.local_offset += size
                     self.locals[name] = (t, -self.local_offset)
+                    self.arrays.add(name)
                 else:
                     sz = 2 if t == "int" else 1
                     self.gen.emit(f"    sub sp, {sz}")
@@ -637,6 +651,8 @@ class Compiler:
         if self._at(T_FOR):
             self._advance()
             self._expect(T_LPAREN)
+            # for (init; cond; incr) body
+            # Emit order must be: init, cond-check, body, incr, jmp cond.
             if not self._at(T_SEMI):
                 self._expr()
             self._expect(T_SEMI)
@@ -649,10 +665,27 @@ class Compiler:
                 self.gen.emit("    cmp ax, 0")
                 self.gen.emit(f"    je {lend}")
             self._expect(T_SEMI)
-            if not self._at(T_RPAREN):
-                self._expr()
+            # Capture increment tokens without emitting; replay after the body.
+            incr_tokens: list[Token] = []
+            depth = 0
+            while not self._at(T_EOF):
+                if self._at(T_RPAREN) and depth == 0:
+                    break
+                if self._at(T_LPAREN) or self._at(T_LBRACKET):
+                    depth += 1
+                elif self._at(T_RPAREN) or self._at(T_RBRACKET):
+                    depth -= 1
+                incr_tokens.append(self.cur_token)
+                self._advance()
             self._expect(T_RPAREN)
             self._parse_statement()
+            if incr_tokens:
+                saved = self.cur_token
+                self.lexer._pending = list(incr_tokens) + self.lexer._pending
+                self._advance()
+                self._expr()
+                self.lexer.push_back(saved)
+                self._advance()
             self.gen.emit(f"    jmp {lcond}")
             self.gen.emit(f"{lend}:")
             self.break_labels.pop()
@@ -1116,7 +1149,13 @@ class Compiler:
                 else:
                     self.gen.emit(f"    lea ax, [{name}]")
             else:
-                if self._is_local(name):
+                # Array names decay to pointers (address); scalars load value.
+                if name in self.arrays:
+                    if self._is_local(name):
+                        self.gen.emit(f"    lea ax, [bp{off:+d}]")
+                    else:
+                        self.gen.emit(f"    lea ax, [{name}]")
+                elif self._is_local(name):
                     self.gen.emit(f"    mov ax, [bp{off:+d}]")
                 else:
                     self.gen.emit(f"    mov ax, [{name}]")

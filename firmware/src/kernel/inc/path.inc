@@ -241,17 +241,27 @@ path_resolve:
     sub al, 0x20
 .pr_drv_up:
     sub al, 'A'
+    mov byte ptr cs:[path_resolve_drive], al
     push si
     mov dl, al
-    call dos_select_drive
+    call dos_mount_drive           /* access drive; do not change cur_drive */
     pop si
     jc .pr_err
     add si, 2
-    jmp .pr_no_drv
+    jmp .pr_after_drv
 /* legacy label kept for fallthrough */
 .pr_drv:
     jmp .pr_drv_chk
 .pr_no_drv:
+    /* Relative/default path: ensure current drive volume is mounted. */
+    mov al, byte ptr cs:[cur_drive]
+    mov byte ptr cs:[path_resolve_drive], al
+    push si
+    mov dl, al
+    call dos_mount_drive
+    pop si
+    jc .pr_err
+.pr_after_drv:
 
     mov al, [si]
     cmp al, '\\'
@@ -475,13 +485,10 @@ path_dir_is_empty:
     push dx
     mov dx, bp
     call fat12_dir_sector
-    pop dx
-    jc .pde_ok
-    push ax
+    jc .pde_ok_pop
     lea bx, [sector_buf]
-    xor dx, dx
     call fat12_read_lba
-    pop bx
+    pop dx
     jc .pde_bad
     xor si, si
 .pde_ent:
@@ -514,6 +521,8 @@ path_dir_is_empty:
 .pde_next:
     inc dx
     jmp .pde_sec
+.pde_ok_pop:
+    pop dx
 .pde_ok:
     clc
     jmp .pde_done
@@ -540,6 +549,8 @@ path_write_dot_entries:
     push bp
     mov bp, ax
     push dx
+    call fat12_zero_cluster
+    jc .pwd_fail
     push cs
     pop es
     lea di, [sector_buf]
@@ -570,6 +581,11 @@ path_write_dot_entries:
     call fat12_cluster_to_lba
     lea bx, [sector_buf]
     call fat12_write_lba
+    jmp .pwd_done
+.pwd_fail:
+    pop ax                       /* discard parent cluster */
+    stc
+.pwd_done:
     pop bp
     pop es
     pop di
@@ -805,6 +821,7 @@ dos_ah39:
     call fat12_flush_fat
     jc .a39_err
 
+    call dos_remount_current
     pop bp
     pop es
     pop ds
@@ -818,6 +835,7 @@ dos_ah39:
     jmp int21_iret
 
 .a39_err:
+    call dos_remount_current
     pop bp
     pop es
     pop ds
@@ -863,6 +881,7 @@ dos_ah3a:
     call fat12_flush_fat
     jc .a3a_err
 
+    call dos_remount_current
     pop bp
     pop es
     pop ds
@@ -876,6 +895,7 @@ dos_ah3a:
     jmp int21_iret
 
 .a3a_err:
+    call dos_remount_current
     pop bp
     pop es
     pop ds
@@ -930,6 +950,9 @@ dos_ah3b:
 .a3b_root:
     mov word ptr cs:[cwd_cluster], dx
 .a3b_path:
+    /* CD with drive letter adopts that drive (unlike MD/COPY). */
+    mov al, byte ptr cs:[path_resolve_drive]
+    mov byte ptr cs:[cur_drive], al
     mov dx, bp
     call path_rebuild_cwd
 .a3b_noop:
@@ -946,6 +969,7 @@ dos_ah3b:
     jmp int21_iret
 
 .a3b_err:
+    call dos_remount_current
     pop bp
     pop es
     pop ds
@@ -1027,6 +1051,7 @@ dos_ah43:
     jc .a43_err
 
 .a43_ok:
+    call dos_remount_current
     pop bp
     pop es
     pop ds
@@ -1041,6 +1066,7 @@ dos_ah43:
 .a43_err_pop:
     pop cx
 .a43_err:
+    call dos_remount_current
     pop bp
     pop es
     pop ds
@@ -1126,6 +1152,7 @@ dos_ah56:
     call fat12_write_lba
     jc .a56_err
 
+    call dos_remount_current
     pop bp
     pop es
     pop ds
@@ -1141,6 +1168,7 @@ dos_ah56:
 .a56_fail_pop2:
     add sp, 4
 .a56_err:
+    call dos_remount_current
     pop bp
     pop es
     pop ds

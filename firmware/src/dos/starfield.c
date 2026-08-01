@@ -3,10 +3,6 @@
  * CGA mode 4 (320x200, 4 colors). Stars move toward center (tunnel effect).
  * Bresenham in pixel space so each step = 1 pixel.
  * Direct VRAM updates (no BIOS AH=0Ch).
- *
- * IMPORTANT: do not use C `for (i=0; i<N; i=i+1)` - wcc emits the increment
- * BEFORE the body, so the loop runs i=1..N and writes one past array ends
- * (silent corruption, crash after a while). Use while + trailing increment.
  */
 
 #include "dos.h"
@@ -51,12 +47,6 @@ static int pix_color = 0;
 
 static int border_x[N_BORDER_ANGLES] = { 0 };
 static int border_y[N_BORDER_ANGLES] = { 0 };
-
-static void reload_ds(void)
-{
-    asm("push cs");
-    asm("pop ds");
-}
 
 static void init_border_circle(void)
 {
@@ -266,7 +256,7 @@ static int on_frame_border(int x, int y)
 void cga_set_mode_4(void);
 void cga_clear_screen(void);
 void cga_put_pixel(int x, int y, int color);
-int  key_ready(void);
+int  kbd_ready(void);
 int  key_get(void);
 void cga_vsync(void);
 int  get_bios_tick(void);
@@ -375,7 +365,7 @@ static void draw_white_border(void)
     }
 }
 
-int key_ready(void)
+int kbd_ready(void)
 {
     asm("push ds");
     asm("mov ah, 0x01");
@@ -407,7 +397,7 @@ int key_get(void)
 
 static void flush_keyboard(void)
 {
-    while (key_ready())
+    while (kbd_ready())
         key_get();
 }
 
@@ -516,7 +506,7 @@ int main(void)
             i = i + 1;
         }
 
-        if (key_ready()) {
+        if (kbd_ready()) {
             key_get();
             break;
         }

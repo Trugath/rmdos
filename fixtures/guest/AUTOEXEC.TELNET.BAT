@@ -1,0 +1,2 @@
+BIN\DHCP
+BIN\TELNET localhost 2323

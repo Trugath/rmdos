@@ -20,6 +20,7 @@ _start:
     mov byte ptr [flag_s], 0
     mov byte ptr [drive_dl], 0
     mov byte ptr [drive_let], 'A'
+    mov byte ptr [drive_idx], 0
     mov word ptr [kern_seg], 0
     mov word ptr [cmd_seg], 0
     mov word ptr [fat_seg], 0
@@ -60,6 +61,7 @@ do_fmt:
     int 0x21
     call format_disk
     jc do_err
+    call update_part_type
     cmp byte ptr [flag_s], 0
     je done_ok
     call write_system
@@ -167,13 +169,11 @@ pa_tok:
     jne pa_skip
     mov [drive_let], bl
     sub bl, 'A'
+    mov [drive_idx], bl
     cmp bl, 2
     jb pa_setdl
-    /* C: → 80h, D: → 81h */
-    mov al, bl
-    sub al, 2
-    add al, 0x80
-    mov bl, al
+    /* HD letters share BIOS 80h; get_geometry picks Nth DOS primary. */
+    mov bl, 0x80
 pa_setdl:
     mov [drive_dl], bl
     add si, 2
@@ -233,9 +233,13 @@ get_geometry:
     lea bx, [secbuf]
     call read_raw_lba
     jc gg_bios
-    /* A DOS primary partition makes FORMAT operate on that volume only. */
+    /* Nth DOS primary (C:=0, D:=1, …) makes FORMAT operate on that volume. */
     cmp word ptr [secbuf + 510], 0xAA55
     jne gg_vbr
+    mov dl, [drive_idx]
+    cmp dl, 2
+    jb gg_vbr
+    sub dl, 2
     mov si, 0x1BE
     mov cx, 4
 gg_part:
@@ -252,12 +256,16 @@ gg_dos_part:
     mov ax, [secbuf + si + 8]
     test ax, ax
     jz gg_part_next
+    test dl, dl
+    jnz gg_part_skip
     mov [vol_base_lba], ax
     mov ax, [secbuf + si + 12]
     mov dx, [secbuf + si + 14]
     mov [bpb_totsec], ax
     mov [bpb_totsec_hi], dx
-    jmp gg_bios
+    jmp gg_chs_only
+gg_part_skip:
+    dec dl
 gg_part_next:
     add si, 16
     loop gg_part
@@ -283,6 +291,26 @@ gg_tot_chk:
     test ax, ax
     jz gg_bios
     mov [bpb_heads], ax
+    jmp gg_cap
+gg_chs_only:
+    /* Partition size already set; only fetch SPT/heads from BIOS. */
+    mov ah, 0x08
+    mov dl, [drive_dl]
+    int 0x13
+    jc gg_chs_fb
+    mov al, cl
+    and ax, 0x3F
+    test ax, ax
+    jz gg_chs_fb
+    mov [bpb_spt], ax
+    mov al, dh
+    inc ax
+    and ax, 0x00FF
+    mov [bpb_heads], ax
+    jmp gg_cap
+gg_chs_fb:
+    mov word ptr [bpb_spt], 17
+    mov word ptr [bpb_heads], 4
     jmp gg_cap
 gg_bios:
     mov ah, 0x08
@@ -400,7 +428,7 @@ cl_spf:
     div bx                       /* AX = cluster count for era sizes */
     mov [clust_cnt], ax
     cmp ax, 4085
-    jbe cl_fat12
+    jb cl_fat12
     /* Prefer FAT12 by growing SPC up to 8; then FAT16 */
     cmp byte ptr [bpb_spc], 8
     jb cl_bump
@@ -510,12 +538,20 @@ rl_hd:
     pop ax
     ret
 
-/* AX = volume-relative LBA, ES:BX = buffer. */
+/* AX = volume-relative LBA, ES:BX = buffer. Preserves relative AX. */
 read_lba:
     add ax, [vol_base_lba]
     jmp read_raw_lba
 
 write_lba:
+    push ax
+    add ax, [vol_base_lba]
+    call write_raw_lba
+    pop ax
+    ret
+
+/* AX = absolute LBA, ES:BX = buffer. */
+write_raw_lba:
     push ax
     push bx
     push cx
@@ -524,7 +560,6 @@ write_lba:
     push es
     push ds
     pop es
-    add ax, [vol_base_lba]
     mov si, bx
     xor dx, dx
     mov cx, [bpb_spt]
@@ -564,6 +599,7 @@ wl_hd:
     ret
 
 apply_bpb:
+    push di
     mov word ptr [secbuf + 11], 512
     mov al, [bpb_spc]
     mov [secbuf + 13], al
@@ -604,6 +640,97 @@ ab_ts_done:
     mov al, [drive_dl]
     mov [secbuf + 36], al
     mov byte ptr [secbuf + 38], 0x29
+    /* OEM "rmDOS   " at +3 */
+    mov word ptr [secbuf + 3], 0x6D72        /* "rm" */
+    mov word ptr [secbuf + 5], 0x4F44        /* "DO" */
+    mov word ptr [secbuf + 7], 0x2053        /* "S " */
+    mov word ptr [secbuf + 9], 0x2020        /* "  " */
+    /* Volume label (spaces) at +43; FS type at +54 */
+    push es
+    push cx
+    push ax
+    push ds
+    pop es
+    lea di, [secbuf + 43]
+    mov cx, 11
+    mov al, ' '
+    rep stosb
+    pop ax
+    pop cx
+    pop es
+    cmp byte ptr [fat_type], 16
+    je ab_fat16
+    mov word ptr [secbuf + 54], 0x4146       /* "FA" */
+    mov word ptr [secbuf + 56], 0x3154       /* "T1" */
+    mov word ptr [secbuf + 58], 0x2032       /* "2 " */
+    mov word ptr [secbuf + 60], 0x2020       /* "  " */
+    jmp ab_fs_done
+ab_fat16:
+    mov word ptr [secbuf + 54], 0x4146       /* "FA" */
+    mov word ptr [secbuf + 56], 0x3154       /* "T1" */
+    mov word ptr [secbuf + 58], 0x2036       /* "6 " */
+    mov word ptr [secbuf + 60], 0x2020       /* "  " */
+ab_fs_done:
+    pop di
+    ret
+
+/*
+ * If formatting a DOS primary (vol_base_lba != 0), set MBR type from FS:
+ * FAT12→01h, FAT16 <32MB→04h, else→06h.
+ */
+update_part_type:
+    push ax
+    push bx
+    push cx
+    push dx
+    push si
+    push es
+    mov ax, [vol_base_lba]
+    test ax, ax
+    jz upt_done
+    push ds
+    pop es
+    xor ax, ax
+    lea bx, [secbuf]
+    call read_raw_lba
+    jc upt_done
+    cmp word ptr [secbuf + 510], 0xAA55
+    jne upt_done
+    mov si, 0x1BE
+    mov cx, 4
+    mov dx, [vol_base_lba]
+upt_scan:
+    cmp word ptr [secbuf + si + 10], 0
+    jne upt_next
+    cmp [secbuf + si + 8], dx
+    jne upt_next
+    mov al, 0x01
+    cmp byte ptr [fat_type], 16
+    jne upt_set
+    mov al, 0x04
+    mov bx, [bpb_totsec_hi]
+    test bx, bx
+    jnz upt_t6
+    cmp word ptr [bpb_totsec], 65535
+    jbe upt_set
+upt_t6:
+    mov al, 0x06
+upt_set:
+    mov [secbuf + si + 4], al
+    xor ax, ax
+    lea bx, [secbuf]
+    call write_raw_lba
+    jmp upt_done
+upt_next:
+    add si, 16
+    loop upt_scan
+upt_done:
+    pop es
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
     ret
 
 format_disk:
@@ -1215,6 +1342,8 @@ drive_dl:
     .byte 0
 drive_let:
     .byte 'A'
+drive_idx:
+    .byte 0
 vol_base_lba:
     .word 0
 bpb_spc:

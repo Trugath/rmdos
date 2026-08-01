@@ -32,6 +32,7 @@ def test_fat12_image_layout() -> None:
     assert sectors == fat12.sectors_for_size(entry.size_bytes)
     for name in (
         "COMMAND.COM",
+        "INSTALL.BAT",
         "BIN\\DIR.COM",
         "BIN\\TYPE.COM",
         "BIN\\COPY.COM",
@@ -42,7 +43,7 @@ def test_fat12_image_layout() -> None:
         "BIN\\XCOPY.COM",
         "BIN\\CHKDSK.COM",
         "BIN\\SYS.COM",
-        "BIN\\FDISK.COM",
+        "BIN\\PARTEDIT.COM",
         "BIN\\FORMAT.COM",
         "BIN\\FIND.COM",
         "BIN\\CHOICE.COM",
