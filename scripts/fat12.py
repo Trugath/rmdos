@@ -234,3 +234,76 @@ def read_loader_info(image: bytes | bytearray) -> tuple[int, int]:
         raise ValueError("missing RFAT1 loader sector")
     start, count = struct.unpack_from("<HH", sector, LOADER_BOOT_KERNEL_START)
     return start, count
+
+
+def read_fat(image: bytes | bytearray) -> bytearray:
+    """Return a mutable copy of FAT1."""
+    off = FAT1_START * SECTOR_SIZE
+    return bytearray(image[off : off + SECTORS_PER_FAT * SECTOR_SIZE])
+
+
+def write_fat_both(image: bytearray, fat: bytes | bytearray) -> None:
+    """Write FAT bytes to both FAT copies."""
+    if len(fat) != SECTORS_PER_FAT * SECTOR_SIZE:
+        raise ValueError("FAT size mismatch")
+    for start in (FAT1_START, FAT2_START):
+        off = start * SECTOR_SIZE
+        image[off : off + len(fat)] = fat
+
+
+def find_free_cluster(fat: bytes | bytearray, *, max_cluster: int = 0x800) -> int:
+    """Return the first free data cluster (2..), or raise."""
+    for c in range(2, max_cluster):
+        if get_fat_entry(fat, c) == 0:
+            return c
+    raise RuntimeError("no free cluster")
+
+
+def inject_orphan_cluster(image: bytearray, value: int = 0xFFF) -> int:
+    """Mark one free cluster as an orphan (non-zero FAT, not referenced). Returns cluster."""
+    fat = read_fat(image)
+    c = find_free_cluster(fat)
+    set_fat_entry(fat, c, value & 0x0FFF)
+    write_fat_both(image, fat)
+    return c
+
+
+def inject_fat_mirror_mismatch(image: bytearray, byte_off: int = 16) -> None:
+    """Corrupt one byte in FAT2 so the copies differ."""
+    off = FAT2_START * SECTOR_SIZE + byte_off
+    image[off] = (image[off] + 1) & 0xFF
+
+
+def inject_truncated_chain(image: bytearray, path: str) -> None:
+    """Truncate a file's FAT chain after the first cluster (force short chain)."""
+    entry = find_directory_entry(image, path)
+    if entry.start_cluster < 2:
+        raise ValueError(f"{path} has no cluster chain")
+    fat = read_fat(image)
+    chain = cluster_chain(fat, entry.start_cluster)
+    if len(chain) < 2 and entry.size_bytes <= SECTOR_SIZE:
+        # Force size larger than one cluster so CHKDSK sees a short chain.
+        assert entry.offset is not None
+        struct.pack_into("<I", image, entry.offset + 28, entry.size_bytes + SECTOR_SIZE * 2)
+    set_fat_entry(fat, entry.start_cluster, 0xFFF)
+    # Free any following clusters so they become orphans or free.
+    for c in chain[1:]:
+        set_fat_entry(fat, c, 0)
+    write_fat_both(image, fat)
+
+
+def patch_root_file(image: bytearray, name: str, content: bytes) -> None:
+    """Overwrite an existing root file's data and size (must fit in existing chain)."""
+    entry = find_directory_entry(image, name)
+    if entry.offset is None:
+        raise ValueError(f"{name}: missing directory offset")
+    fat = read_fat(image)
+    chain = cluster_chain(fat, entry.start_cluster)
+    capacity = len(chain) * SECTOR_SIZE
+    if len(content) > capacity:
+        raise ValueError(f"{name}: content {len(content)} exceeds chain capacity {capacity}")
+    data = content.ljust(capacity, b"\x00")
+    for i, c in enumerate(chain):
+        base = cluster_to_sector(c) * SECTOR_SIZE
+        image[base : base + SECTOR_SIZE] = data[i * SECTOR_SIZE : (i + 1) * SECTOR_SIZE]
+    struct.pack_into("<I", image, entry.offset + 28, len(content))
