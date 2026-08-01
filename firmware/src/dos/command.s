@@ -61,9 +61,269 @@ _start:
     jmp .repl
 
 /*
- * Dispatch ASCIZ command in [cmd]. Returns after one command.
+ * Dispatch ASCIZ command in [cmd].  The wrapper handles the shell syntax
+ * which applies to both interactive and batch input before the old builtin
+ * dispatcher sees the command.
  */
 dispatch:
+    call pipe_command
+    jc .no_pipe
+    ret
+.no_pipe:
+    call parse_redirection
+    call setup_redirection
+    jc .redirection_done
+    call dispatch_plain
+    call restore_redirection
+.redirection_done:
+    ret
+
+/* Split one pipe, run its left side into PIPE.$$$, then feed its right side. */
+pipe_command:
+    push ax
+    push si
+    push di
+    lea si, [cmd]
+.pc_find:
+    mov al, [si]
+    test al, al
+    jz .pc_none
+    cmp al, '|'
+    je .pc_found
+    inc si
+    jmp .pc_find
+.pc_found:
+    mov byte ptr [si], 0
+    inc si
+    lea di, [pipe_rhs]
+.pc_copy:
+    lodsb
+    stosb
+    test al, al
+    jnz .pc_copy
+    lea dx, [path_pipe]
+    call run_with_stdout
+    lea si, [pipe_rhs]
+    lea di, [cmd]
+.pc_rhs_copy:
+    lodsb
+    stosb
+    test al, al
+    jnz .pc_rhs_copy
+    lea dx, [path_pipe]
+    call run_with_stdin
+    mov ah, 0x41
+    lea dx, [path_pipe]
+    int 0x21
+    clc
+    jmp .pc_done
+.pc_none:
+    stc
+.pc_done:
+    pop di
+    pop si
+    pop ax
+    ret
+
+/* Run current cmd with stdout/stdin forced to DS:DX, restoring it after. */
+run_with_stdout:
+    push dx
+    mov ah, 0x3C
+    xor cx, cx
+    int 0x21
+    jc .rwso_done
+    mov [redir_handle], bx
+    mov bx, 1
+    mov ah, 0x45
+    int 0x21
+    jc .rwso_close
+    mov [saved_stdout], ax
+    mov bx, [redir_handle]
+    mov cx, 1
+    mov ah, 0x46
+    int 0x21
+    call dispatch_plain
+    call restore_stdout
+.rwso_close:
+    mov bx, [redir_handle]
+    mov ah, 0x3E
+    int 0x21
+.rwso_done:
+    pop dx
+    ret
+
+run_with_stdin:
+    push dx
+    mov ax, 0x3D00
+    int 0x21
+    jc .rwsi_done
+    mov [redir_handle], bx
+    xor bx, bx
+    mov ah, 0x45
+    int 0x21
+    jc .rwsi_close
+    mov [saved_stdin], ax
+    mov bx, [redir_handle]
+    xor cx, cx
+    mov ah, 0x46
+    int 0x21
+    call dispatch_plain
+    call restore_stdin
+.rwsi_close:
+    mov bx, [redir_handle]
+    mov ah, 0x3E
+    int 0x21
+.rwsi_done:
+    pop dx
+    ret
+
+/* Detect a final <, >, or >> clause.  The command is truncated in place. */
+parse_redirection:
+    mov byte ptr [redir_kind], 0
+    lea si, [cmd]
+.pr_scan:
+    mov al, [si]
+    test al, al
+    jz .pr_done
+    cmp al, '>'
+    je .pr_out
+    cmp al, '<'
+    je .pr_in
+    inc si
+    jmp .pr_scan
+.pr_out:
+    mov byte ptr [si], 0
+    mov byte ptr [redir_kind], 1
+    inc si
+    cmp byte ptr [si], '>'
+    jne .pr_out_name
+    mov byte ptr [redir_kind], 2
+    inc si
+.pr_out_name:
+    call skip_spaces
+    lea di, [redir_name]
+    jmp .pr_copy
+.pr_in:
+    mov byte ptr [si], 0
+    mov byte ptr [redir_kind], 3
+    inc si
+    call skip_spaces
+    lea di, [redir_name]
+.pr_copy:
+    lodsb
+    test al, al
+    jz .pr_term
+    cmp al, ' '
+    je .pr_term
+    stosb
+    jmp .pr_copy
+.pr_term:
+    mov byte ptr [di], 0
+.pr_done:
+    ret
+
+setup_redirection:
+    cmp byte ptr [redir_kind], 0
+    je .sr_ok
+    cmp byte ptr [redir_kind], 3
+    je .sr_input
+    mov ax, 0x3C00
+    cmp byte ptr [redir_kind], 2
+    jne .sr_create
+    mov ax, 0x3D01                 /* >>: append after seeking EOF */
+.sr_create:
+    xor cx, cx
+    lea dx, [redir_name]
+    int 0x21
+    jc .sr_fail
+    mov [redir_handle], bx
+    cmp byte ptr [redir_kind], 2
+    jne .sr_out_dup
+    mov bx, [redir_handle]
+    mov ax, 0x4202
+    xor cx, cx
+    xor dx, dx
+    int 0x21
+    jnc .sr_out_dup
+    mov ax, 0x3C00                /* absent >> target: create it */
+    xor cx, cx
+    lea dx, [redir_name]
+    int 0x21
+    jc .sr_fail
+    mov [redir_handle], bx
+.sr_out_dup:
+    mov bx, 1
+    mov ah, 0x45
+    int 0x21
+    jc .sr_fail
+    mov [saved_stdout], ax
+    mov bx, [redir_handle]
+    mov cx, 1
+    mov ah, 0x46
+    int 0x21
+    clc
+    ret
+.sr_input:
+    mov ax, 0x3D00
+    lea dx, [redir_name]
+    int 0x21
+    jc .sr_fail
+    mov [redir_handle], bx
+    xor bx, bx
+    mov ah, 0x45
+    int 0x21
+    jc .sr_fail
+    mov [saved_stdin], ax
+    mov bx, [redir_handle]
+    xor cx, cx
+    mov ah, 0x46
+    int 0x21
+.sr_ok:
+    clc
+    ret
+.sr_fail:
+    stc
+    ret
+
+restore_redirection:
+    cmp byte ptr [redir_kind], 1
+    je .rr_out
+    cmp byte ptr [redir_kind], 2
+    je .rr_out
+    cmp byte ptr [redir_kind], 3
+    jne .rr_done
+    call restore_stdin
+    jmp .rr_close
+.rr_out:
+    call restore_stdout
+.rr_close:
+    mov bx, [redir_handle]
+    mov ah, 0x3E
+    int 0x21
+.rr_done:
+    ret
+
+restore_stdout:
+    mov bx, [saved_stdout]
+    mov cx, 1
+    mov ah, 0x46
+    int 0x21
+    mov bx, [saved_stdout]
+    mov ah, 0x3E
+    int 0x21
+    ret
+restore_stdin:
+    mov bx, [saved_stdin]
+    xor cx, cx
+    mov ah, 0x46
+    int 0x21
+    mov bx, [saved_stdin]
+    mov ah, 0x3E
+    int 0x21
+    ret
+
+/* Builtins and program execution, after shell syntax was stripped. */
+dispatch_plain:
     lea si, [cmd]
     call skip_spaces
     cmp byte ptr [si], 0
@@ -72,6 +332,27 @@ dispatch:
     lea di, [kw_if]
     call cmd_eq
     jnc .do_if
+    lea di, [kw_set]
+    call cmd_eq
+    jnc .do_set
+    lea di, [kw_pause]
+    call cmd_eq
+    jnc .do_pause
+    lea di, [kw_ren]
+    call cmd_eq
+    jnc .do_ren
+    lea di, [kw_rename]
+    call cmd_eq
+    jnc .do_ren
+    lea di, [kw_ver]
+    call cmd_eq
+    jnc .do_ver
+    lea di, [kw_call]
+    call cmd_eq
+    jnc .do_call
+    lea di, [kw_goto]
+    call cmd_eq
+    jnc .do_goto
     lea di, [kw_echo]
     call cmd_eq
     jnc .do_echo
@@ -110,6 +391,8 @@ dispatch:
     jnc .do_rd
 
     call copy_token_to_prog
+    call is_batch_name
+    jnc .do_batch_file
     call build_exec_tail
     call try_exec
     jnc .disp_ret
@@ -119,6 +402,10 @@ dispatch:
 .disp_ret:
     ret
 
+.do_batch_file:
+    call batch_run
+    ret
+
 .do_echo:
     call skip_token
     call skip_spaces
@@ -126,13 +413,18 @@ dispatch:
     lodsb
     test al, al
     jz .echo_nl
-    mov dl, al
-    mov ah, 0x02
+    mov [tch], al
+    mov bx, 1
+    mov cx, 1
+    lea dx, [tch]
+    mov ah, 0x40
     int 0x21
     jmp .echo_ch
 .echo_nl:
-    mov ah, 0x09
+    mov bx, 1
+    mov cx, 2
     lea dx, [msg_crlf]
+    mov ah, 0x40
     int 0x21
     ret
 
@@ -141,7 +433,7 @@ dispatch:
     call skip_spaces
     lea di, [kw_errorlevel]
     call cmd_eq
-    jc .disp_ret
+    jc .if_exist
     call skip_token
     call skip_spaces
     call parse_u8
@@ -156,6 +448,157 @@ dispatch:
     test al, al
     jnz .if_copy
     jmp dispatch
+
+.if_exist:
+    lea di, [kw_not]
+    call cmd_eq
+    jc .if_have_exist
+    mov byte ptr [if_not], 1
+    call skip_token
+    call skip_spaces
+    jmp .if_check_exist
+.if_have_exist:
+    mov byte ptr [if_not], 0
+.if_check_exist:
+    lea di, [kw_exist]
+    call cmd_eq
+    jc .disp_ret
+    call skip_token
+    call skip_spaces
+    call copy_token_to_prog
+    mov ax, 0x3D00
+    lea dx, [prog]
+    int 0x21
+    mov al, 0
+    jc .if_exists_done
+    mov [if_open], bx
+    mov ah, 0x3E
+    int 0x21
+    mov al, 1
+.if_exists_done:
+    xor al, [if_not]
+    test al, al
+    jz .disp_ret
+    call skip_spaces
+    lea di, [cmd]
+.if_exist_copy:
+    lodsb
+    stosb
+    test al, al
+    jnz .if_exist_copy
+    jmp dispatch
+
+.do_pause:
+    mov ah, 0x09
+    lea dx, [msg_pause]
+    int 0x21
+    mov ah, 0x01
+    int 0x21
+    mov ah, 0x09
+    lea dx, [msg_crlf]
+    int 0x21
+    ret
+
+.do_ver:
+    mov ah, 0x09
+    lea dx, [msg_ver]
+    int 0x21
+    mov ah, 0x30
+    int 0x21
+    mov [ver_major], al
+    mov [ver_minor], ah
+    xor ah, ah
+    xor dx, dx
+    call print_u32
+    mov dl, '.'
+    mov ah, 0x02
+    int 0x21
+    mov al, [ver_minor]
+    xor ah, ah
+    xor dx, dx
+    call print_u32
+    mov ah, 0x09
+    lea dx, [msg_crlf]
+    int 0x21
+    ret
+
+.do_ren:
+    call skip_token
+    call skip_spaces
+    call copy_token_to_prog
+    mov [arg_after], si
+    lea di, [srcbuf]
+    lea si, [prog]
+.ren_old:
+    lodsb
+    stosb
+    test al, al
+    jnz .ren_old
+    mov si, [arg_after]
+    call skip_spaces
+    cmp byte ptr [si], 0
+    je .ren_err
+    call copy_token_to_prog
+    lea di, [dstbuf]
+    lea si, [prog]
+.ren_new:
+    lodsb
+    stosb
+    test al, al
+    jnz .ren_new
+    lea dx, [srcbuf]
+    lea di, [dstbuf]
+    push ds
+    pop es
+    mov ah, 0x56
+    int 0x21
+    jnc .disp_ret
+.ren_err:
+    mov ah, 0x09
+    lea dx, [msg_ren_e]
+    int 0x21
+    ret
+
+.do_call:
+    call skip_token
+    call skip_spaces
+    cmp byte ptr [si], 0
+    je .disp_ret
+    call copy_token_to_prog
+    call batch_run
+    ret
+
+.do_goto:
+    call skip_token
+    call skip_spaces
+    call copy_token_to_prog
+    lea si, [prog]
+    lea di, [goto_target]
+.gt_save:
+    lodsb
+    stosb
+    test al, al
+    jnz .gt_save
+    /* Skip subsequent lines until :label (forward GOTO). */
+    mov byte ptr [goto_active], 1
+    ret
+
+.do_set:
+    call skip_token
+    call skip_spaces
+    cmp byte ptr [si], 0
+    jne .set_assign
+    call env_show
+    ret
+.set_assign:
+    call env_set
+    jc .set_err
+    ret
+.set_err:
+    mov ah, 0x09
+    lea dx, [msg_set_e]
+    int 0x21
+    ret
 
 parse_u8:
     xor ax, ax
@@ -175,24 +618,82 @@ parse_u8:
     ret
 
 run_autoexec:
+    lea si, [path_auto]
+    lea di, [prog]
+.rae_copy_path:
+    lodsb
+    stosb
+    test al, al
+    jnz .rae_copy_path
+    lea si, [empty_args]
+    call batch_run
+    ret
+
+/*
+ * Synchronous batch runner.  The frame arrays are indexed by batch_depth;
+ * CALL simply enters another frame and returns here when it reaches EOF.
+ */
+batch_run:
     push ax
     push bx
     push cx
     push dx
     push si
     push di
+    mov [batch_arg_ptr], si
+    cmp byte ptr [batch_depth], 4
+    jae .rae_done
+    lea dx, [prog]
     mov ax, 0x3D00
-    lea dx, [path_auto]
     int 0x21
     jc .rae_done
-    mov [ahandle], bx
+    xor ah, ah
+    mov al, [batch_depth]
+    shl ax, 1
+    mov [batch_index], ax
+    mov si, ax
+    mov [batch_handles + si], bx
+    mov di, [batch_name_base + si]
+    lea si, [prog]
+    call copy_asciz
+    /* %0 is the invoked batch filename; remaining words are its arguments. */
+    mov ax, [batch_index]
+    mov si, ax
+    mov bx, [batch_arg_base + si]
+    lea di, [bx]
+    lea si, [prog]
+    call copy_asciz
+    mov si, [batch_arg_ptr]
+    add bx, 32
+    mov cx, 9
+.br_args:
+    call skip_spaces
+    cmp byte ptr [si], 0
+    je .br_arg_zero
+    push cx
+    mov di, bx
+    call copy_token_to_di
+    pop cx
+    add bx, 32
+    loop .br_args
+    jmp .br_args_done
+.br_arg_zero:
+    mov byte ptr [bx], 0
+    add bx, 32
+    loop .br_arg_zero
+.br_args_done:
+    inc byte ptr [batch_depth]
 .rae_line:
     lea di, [cmd]
     xor cx, cx
 .rae_byte:
     push cx
     mov ah, 0x3F
-    mov bx, [ahandle]
+    xor bh, bh
+    mov bl, [batch_depth]
+    dec bl
+    shl bx, 1
+    mov bx, [batch_handles + bx]
     mov cx, 1
     lea dx, [tch]
     int 0x21
@@ -218,11 +719,17 @@ run_autoexec:
     mov byte ptr [di], 0
     test cx, cx
     jz .rae_line
+    call batch_prepare_line
+    jc .rae_line
     call dispatch
     jmp .rae_line
 .rae_close:
+    dec byte ptr [batch_depth]
+    xor bh, bh
+    mov bl, [batch_depth]
+    shl bx, 1
+    mov bx, [batch_handles + bx]
     mov ah, 0x3E
-    mov bx, [ahandle]
     int 0x21
 .rae_done:
     pop di
@@ -825,7 +1332,8 @@ build_exec_tail:
     xor al, al
     rep stosb
     /* param block */
-    mov word ptr [exec_pb], 0            /* env = inherit/build */
+    mov ax, cs:[0x2C]                   /* preserve COMMAND's SET environment */
+    mov word ptr [exec_pb], ax
     lea ax, [exec_tail]
     mov word ptr [exec_pb + 2], ax
     mov word ptr [exec_pb + 4], ds
@@ -1092,6 +1600,480 @@ up_al_cs:
 .uacs:
     ret
 
+copy_asciz:
+.ca:
+    lodsb
+    stosb
+    test al, al
+    jnz .ca
+    ret
+
+/* Copy one word from SI to DI, uppercasing it, and leave SI at its delimiter. */
+copy_token_to_di:
+.ctd:
+    mov al, [si]
+    test al, al
+    jz .ctd_done
+    cmp al, ' '
+    je .ctd_done
+    call up_al
+    stosb
+    inc si
+    jmp .ctd
+.ctd_done:
+    mov byte ptr [di], 0
+    ret
+
+/* CF clear iff prog ends in .BAT (case insensitive; copy routine uppercases). */
+is_batch_name:
+    push si
+    lea si, [prog]
+.ibn_scan:
+    cmp byte ptr [si], 0
+    je .ibn_end
+    inc si
+    jmp .ibn_scan
+.ibn_end:
+    cmp si, offset prog + 4
+    jb .ibn_no
+    cmp byte ptr [si - 4], '.'
+    jne .ibn_no
+    cmp byte ptr [si - 3], 'B'
+    jne .ibn_no
+    cmp byte ptr [si - 2], 'A'
+    jne .ibn_no
+    cmp byte ptr [si - 1], 'T'
+    jne .ibn_no
+    pop si
+    clc
+    ret
+.ibn_no:
+    pop si
+    stc
+    ret
+
+/*
+ * Filter batch comments/labels and expand %n / %NAME%.  CF set means skip.
+ * Expansion is deliberately bounded to cmd's 80-byte command-line limit.
+ */
+batch_prepare_line:
+    lea si, [cmd]
+    call skip_spaces
+    cmp byte ptr [si], 0
+    je .bpl_skip
+    /* GOTO skip mode: ignore lines until matching :label */
+    cmp byte ptr [goto_active], 0
+    je .bpl_norm
+    cmp byte ptr [si], ':'
+    jne .bpl_skip
+    inc si
+    lea di, [prog_base]
+    call copy_token_to_di
+    lea si, [prog_base]
+    lea di, [goto_target]
+    call strings_equal
+    jc .bpl_skip
+    mov byte ptr [goto_active], 0
+    jmp .bpl_skip
+.bpl_norm:
+    cmp byte ptr [si], '@'
+    jne .bpl_noat
+    inc si
+    call skip_spaces
+.bpl_noat:
+    cmp byte ptr [si], ':'
+    je .bpl_skip
+    lea di, [kw_rem]
+    call cmd_eq
+    jnc .bpl_skip
+    lea di, [expandbuf]
+    xor cx, cx
+.bpl_loop:
+    lodsb
+    test al, al
+    jz .bpl_done
+    cmp al, '%'
+    jne .bpl_put
+    mov al, [si]
+    test al, al
+    jz .bpl_put_pct
+    cmp al, '0'
+    jb .bpl_env
+    cmp al, '9'
+    ja .bpl_env
+    sub al, '0'
+    inc si
+    call batch_arg_expand
+    jmp .bpl_loop
+.bpl_env:
+    call env_expand
+    jmp .bpl_loop
+.bpl_put_pct:
+    mov al, '%'
+.bpl_put:
+    cmp cx, 80
+    jae .bpl_loop
+    stosb
+    inc cx
+    jmp .bpl_loop
+.bpl_done:
+    mov byte ptr [di], 0
+    lea si, [expandbuf]
+    lea di, [cmd]
+    push ds
+    pop es
+    call copy_asciz
+    clc
+    ret
+.bpl_skip:
+    stc
+    ret
+
+batch_arg_expand:
+    push bx
+    push si
+    push di
+    push cx
+    xor ah, ah
+    shl ax, 5
+    mov bx, ax
+    xor ah, ah
+    mov al, [batch_depth]
+    dec al
+    shl ax, 1
+    mov si, ax
+    add bx, [batch_arg_base + si]
+    mov si, bx
+.bae_copy:
+    lodsb
+    test al, al
+    jz .bae_done
+    cmp cx, 80
+    jae .bae_copy
+    stosb
+    inc cx
+    jmp .bae_copy
+.bae_done:
+    pop cx
+    pop di
+    pop si
+    pop bx
+    ret
+
+/* SI points just after first %, scans NAME% and appends its environment value. */
+env_expand:
+    push bx
+    push dx
+    push bp
+    mov bp, si
+    lea bx, [env_name]
+    mov dx, bx
+.ee_name:
+    mov al, [si]
+    test al, al
+    jz .ee_literal
+    cmp al, '%'
+    je .ee_found
+    cmp bx, offset env_name + 31
+    jae .ee_literal
+    mov [bx], al
+    inc bx
+    inc si
+    jmp .ee_name
+.ee_found:
+    mov byte ptr [bx], 0
+    inc si
+    call env_find
+    jc .ee_local
+.ee_val:
+    mov al, es:[bx]
+    test al, al
+    jz .envexp_done
+    cmp cx, 80
+    jae .ee_val_next
+    mov [di], al
+    inc di
+    inc cx
+.ee_val_next:
+    inc bx
+    jmp .ee_val
+.ee_local:
+    call last_set_expand
+    jmp .envexp_done
+.ee_literal:
+    mov si, bp
+    mov al, '%'
+    cmp cx, 80
+    jae .envexp_done
+    stosb
+    inc cx
+.envexp_done:
+    pop bp
+    pop dx
+    pop bx
+    ret
+
+/* Fallback cache also keeps expansion reliable if a legacy env block is full. */
+last_set_expand:
+    push si
+    push bx
+    lea si, [env_name]
+    lea bx, [last_set]
+.lse_cmp:
+    mov al, [si]
+    test al, al
+    jz .lse_eq
+    mov ah, [bx]
+    call up_al
+    call up_ah
+    cmp al, ah
+    jne .lse_done
+    inc si
+    inc bx
+    jmp .lse_cmp
+.lse_eq:
+    cmp byte ptr [bx], '='
+    jne .lse_done
+    inc bx
+.lse_copy:
+    mov al, [bx]
+    test al, al
+    jz .lse_done
+    cmp cx, 80
+    jae .lse_next
+    mov [di], al
+    inc di
+    inc cx
+.lse_next:
+    inc bx
+    jmp .lse_copy
+.lse_done:
+    pop bx
+    pop si
+    ret
+
+/* Find env_name in the COMMAND PSP environment.  ES:BX -> value, CF on miss. */
+env_find:
+    push ax
+    push si
+    push di
+    mov ax, cs:[0x2C]
+    mov es, ax
+    xor bx, bx
+.ef_entry:
+    cmp byte ptr es:[bx], 0
+    je .ef_miss
+    lea si, [env_name]
+    mov di, bx
+.ef_cmp:
+    mov al, [si]
+    test al, al
+    jz .ef_eq
+    mov ah, es:[di]
+    cmp ah, '='
+    je .ef_next
+    call up_al
+    call up_ah
+    cmp al, ah
+    jne .ef_next
+    inc si
+    inc di
+    jmp .ef_cmp
+.ef_eq:
+    cmp byte ptr es:[di], '='
+    jne .ef_next
+    lea bx, [di + 1]
+    pop di
+    pop si
+    pop ax
+    clc
+    ret
+.ef_next:
+    inc bx
+    cmp byte ptr es:[bx], 0
+    jne .ef_next
+    inc bx
+    jmp .ef_entry
+.ef_miss:
+    pop di
+    pop si
+    pop ax
+    stc
+    ret
+
+env_show:
+    push ax
+    push bx
+    push dx
+    push es
+    mov ax, cs:[0x2C]
+    mov es, ax
+    xor bx, bx
+.es_c:
+    mov dl, es:[bx]
+    test dl, dl
+    jz .es_end
+    mov ah, 0x02
+    int 0x21
+    inc bx
+    jmp .es_c
+.es_end:
+    mov ah, 0x09
+    lea dx, [msg_crlf]
+    int 0x21
+    inc bx
+    cmp byte ptr es:[bx], 0
+    jne .es_c
+    pop es
+    pop dx
+    pop bx
+    pop ax
+    ret
+
+/* Append NAME=VALUE at the environment double-NUL (up to byte 239). */
+env_set:
+    push ax
+    push bx
+    push dx
+    push di
+    push es
+    push si
+    lea di, [last_set]
+.set_cache:
+    lodsb
+    stosb
+    test al, al
+    jnz .set_cache
+    pop si
+    mov ax, cs:[0x2C]
+    mov es, ax
+    xor bx, bx
+.set_end:
+    cmp byte ptr es:[bx], 0
+    jne .set_next
+    cmp byte ptr es:[bx + 1], 0
+    je .set_here
+.set_next:
+    inc bx
+    jmp .set_end
+.set_here:
+    mov di, bx
+    mov dx, si
+.set_copy:
+    mov al, [si]
+    test al, al
+    jz .set_finish
+    cmp di, 238
+    jae .set_fail
+    mov es:[di], al
+    inc di
+    inc si
+    jmp .set_copy
+.set_finish:
+    mov byte ptr es:[di], 0
+    mov byte ptr es:[di + 1], 0
+    clc
+    jmp .set_done
+.set_fail:
+    stc
+.set_done:
+    pop es
+    pop di
+    pop dx
+    pop bx
+    pop ax
+    ret
+
+/* Seek current frame to zero and scan for :label. */
+batch_goto:
+    cmp byte ptr [batch_depth], 0
+    je .bg_done
+    xor bh, bh
+    mov bl, [batch_depth]
+    dec bl
+    shl bx, 1
+    mov bx, [batch_handles + bx]
+    mov ax, 0x4200
+    xor cx, cx
+    xor dx, dx
+    int 0x21
+.bg_line:
+    call batch_read_line
+    jc .bg_done
+    lea si, [cmd]
+    call skip_spaces
+    cmp byte ptr [si], ':'
+    jne .bg_line
+    inc si
+    lea di, [prog_base]
+    call copy_token_to_di
+    lea si, [prog_base]
+    lea di, [goto_target]
+    call strings_equal
+    jnc .bg_done
+    jmp .bg_line
+.bg_done:
+    ret
+
+strings_equal:
+    push ax
+.seq_loop:
+    mov al, [si]
+    cmp al, [di]
+    jne .seq_no
+    test al, al
+    jz .seq_yes
+    inc si
+    inc di
+    jmp .seq_loop
+.seq_no:
+    pop ax
+    stc
+    ret
+.seq_yes:
+    pop ax
+    clc
+    ret
+
+/* Read a raw line from the active batch frame. CF signals EOF. */
+batch_read_line:
+    lea di, [cmd]
+    xor cx, cx
+.brl_byte:
+    push cx
+    xor bh, bh
+    mov bl, [batch_depth]
+    dec bl
+    shl bx, 1
+    mov bx, [batch_handles + bx]
+    mov ah, 0x3F
+    mov cx, 1
+    lea dx, [tch]
+    int 0x21
+    pop cx
+    jc .brl_eof
+    test ax, ax
+    jz .brl_eof
+    mov al, [tch]
+    cmp al, 0x0D
+    je .brl_byte
+    cmp al, 0x0A
+    je .brl_done
+    cmp cx, 80
+    jae .brl_byte
+    mov [di], al
+    inc di
+    inc cx
+    jmp .brl_byte
+.brl_done:
+    mov byte ptr [di], 0
+    clc
+    ret
+.brl_eof:
+    mov byte ptr [di], 0
+    stc
+    ret
+
 skip_spaces:
 .ss:
     cmp byte ptr [si], ' '
@@ -1273,8 +2255,32 @@ kw_if:
     .asciz "IF"
 kw_errorlevel:
     .asciz "ERRORLEVEL"
+kw_exist:
+    .asciz "EXIST"
+kw_not:
+    .asciz "NOT"
+kw_set:
+    .asciz "SET"
+kw_pause:
+    .asciz "PAUSE"
+kw_ren:
+    .asciz "REN"
+kw_rename:
+    .asciz "RENAME"
+kw_ver:
+    .asciz "VER"
+kw_call:
+    .asciz "CALL"
+kw_goto:
+    .asciz "GOTO"
+kw_rem:
+    .asciz "REM"
 path_auto:
     .asciz "AUTOEXEC.BAT"
+path_pipe:
+    .asciz "A:\\PIPE.$$$"
+empty_args:
+    .byte 0
 msg_dir_hdr:
     .ascii " Directory of A:\\$"
 msg_dir_tag:
@@ -1309,6 +2315,14 @@ msg_rd_e:
     .ascii "Invalid path, not directory,\r\nor directory not empty\r\n$"
 msg_bad:
     .ascii "Bad command\r\n$"
+msg_pause:
+    .ascii "Press any key to continue . . .$"
+msg_ren_e:
+    .ascii "RENAME old new\r\n$"
+msg_set_e:
+    .ascii "SET: environment full\r\n$"
+msg_ver:
+    .ascii "rmDOS DOS $"
 line:
     .space 82, 0
 cmd:
@@ -1317,6 +2331,10 @@ prog:
     .space 80, 0
 prog_base:
     .space 64, 0
+goto_target:
+    .space 64, 0
+goto_active:
+    .byte 0
 srcbuf:
     .space 64, 0
 dstbuf:
@@ -1349,6 +2367,62 @@ th2:
     .word 0
 ahandle:
     .word 0
+batch_handles:
+    .word 0, 0, 0, 0
+batch_name_base:
+    .word batch_name0, batch_name1, batch_name2, batch_name3
+batch_arg_base:
+    .word batch_args0, batch_args1, batch_args2, batch_args3
+batch_depth:
+    .byte 0
+batch_index:
+    .word 0
+batch_arg_ptr:
+    .word 0
+arg_after:
+    .word 0
+batch_name0:
+    .space 64, 0
+batch_name1:
+    .space 64, 0
+batch_name2:
+    .space 64, 0
+batch_name3:
+    .space 64, 0
+batch_args0:
+    .space 320, 0
+batch_args1:
+    .space 320, 0
+batch_args2:
+    .space 320, 0
+batch_args3:
+    .space 320, 0
+expandbuf:
+    .space 82, 0
+pipe_rhs:
+    .space 82, 0
+redir_name:
+    .space 64, 0
+env_name:
+    .space 32, 0
+last_set:
+    .space 80, 0
+redir_kind:
+    .byte 0
+redir_handle:
+    .word 0
+saved_stdin:
+    .word 0
+saved_stdout:
+    .word 0
+if_not:
+    .byte 0
+if_open:
+    .word 0
+ver_major:
+    .byte 0
+ver_minor:
+    .byte 0
 tch:
     .byte 0
 last_errorlevel:
