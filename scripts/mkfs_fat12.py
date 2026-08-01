@@ -123,41 +123,52 @@ def main() -> int:
 
     dir_clusters: dict[str, int] = {}
     for dname in sorted(dirs):
-        # allocate cluster for directory
+        # allocate first cluster for directory
         dclust = next_cluster
         next_cluster += 1
         if fat12.cluster_to_sector(dclust) >= fat12.TOTAL_SECTORS:
             raise SystemExit("out of space for directories")
         fat12.set_fat_entry(fat, dclust, 0x0FFF)
-        sector = fat12.cluster_to_sector(dclust)
-        off = sector * fat12.SECTOR_SIZE
-        # . and ..
-        image[off : off + 32] = _dirent_raw(
-            b".          ", attr=ATTR_DIRECTORY, cluster=dclust
-        )
-        image[off + 32 : off + 64] = _dirent_raw(
-            b"..         ", attr=ATTR_DIRECTORY, cluster=0
-        )
         directory[dir_i : dir_i + 32] = fat12.build_dir_entry(
             dname, attributes=ATTR_DIRECTORY, size_bytes=0, start_cluster=dclust
         )
         dir_i += 32
         dir_clusters[dname] = dclust
 
-        # files inside this dir
-        sub_i = 64
+        # Build full directory stream (. .. + files), then write across clusters.
+        dir_blob = bytearray()
+        dir_blob += _dirent_raw(b".          ", attr=ATTR_DIRECTORY, cluster=dclust)
+        dir_blob += _dirent_raw(b"..         ", attr=ATTR_DIRECTORY, cluster=0)
         for fname, content in sub_files.get(dname, []):
             if content:
                 sc, next_cluster = _allocate_file(image, fat, content, next_cluster)
             else:
                 sc = 0
-            image[off + sub_i : off + sub_i + 32] = fat12.build_dir_entry(
+            dir_blob += fat12.build_dir_entry(
                 fname,
                 attributes=fat12.ATTR_READONLY,
                 size_bytes=len(content),
                 start_cluster=sc,
             )
-            sub_i += 32
+
+        # Pad to whole sectors and allocate a chain if needed.
+        while len(dir_blob) % fat12.SECTOR_SIZE:
+            dir_blob += b"\0" * (fat12.SECTOR_SIZE - (len(dir_blob) % fat12.SECTOR_SIZE))
+        need = max(1, len(dir_blob) // fat12.SECTOR_SIZE)
+        clusters = [dclust]
+        while len(clusters) < need:
+            c = next_cluster
+            next_cluster += 1
+            if fat12.cluster_to_sector(c) >= fat12.TOTAL_SECTORS:
+                raise SystemExit("out of space for directory growth")
+            clusters.append(c)
+        for i, c in enumerate(clusters):
+            nxt = clusters[i + 1] if i + 1 < len(clusters) else 0x0FFF
+            fat12.set_fat_entry(fat, c, nxt)
+            sector = fat12.cluster_to_sector(c)
+            off = sector * fat12.SECTOR_SIZE
+            chunk = dir_blob[i * fat12.SECTOR_SIZE : (i + 1) * fat12.SECTOR_SIZE]
+            image[off : off + fat12.SECTOR_SIZE] = chunk.ljust(fat12.SECTOR_SIZE, b"\0")
 
     for name, content in root_files:
         if content:
