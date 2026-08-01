@@ -184,7 +184,7 @@ dos_ah4a:
     mov es, ax
     mov cx, es:[3]
     cmp bx, cx
-    ja .a4a_fail
+    ja .a4a_grow
     je .a4a_ok
     mov dx, bx
     mov si, es
@@ -211,7 +211,21 @@ dos_ah4a:
     pop ax
     clc
     jmp int21_iret
+
+.a4a_grow:
+    /* Grow only if this is the last MCB and mem_top has room */
+    cmp byte ptr es:[0], 'Z'
+    jne .a4a_fail
+    mov ax, es
+    inc ax
+    add ax, bx
+    cmp ax, word ptr cs:[mem_top]
+    ja .a4a_fail
+    mov word ptr es:[3], bx
+    jmp .a4a_ok
+
 .a4a_fail:
+    mov bx, cx
     pop es
     pop si
     pop dx

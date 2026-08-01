@@ -10,7 +10,7 @@
  */
 
 .equ PSP_SIZE, 0x0100
-.equ COM_MAX, 0x4000
+.equ COM_MAX, 0x6000
 .equ COM_NEST_MAX, 4
 
 /*
@@ -183,8 +183,20 @@ psp_fill_common:
     mov word ptr es:[0x14], ax
     pop ds
 
-    /* environment */
+    /* environment: use caller's env seg if non-zero, else build default */
+    xor ax, ax
+    cmp byte ptr cs:[exec_pb_valid], 0
+    je .pfc_build_env
+    push ds
+    mov ds, word ptr cs:[exec_pb_seg]
+    mov bx, word ptr cs:[exec_pb_off]
+    mov ax, word ptr [bx]
+    pop ds
+    test ax, ax
+    jnz .pfc_env_set
+.pfc_build_env:
     call build_env_block
+.pfc_env_set:
     mov word ptr es:[0x2C], ax
 
     /* command tail + FCBs from param block or empty */

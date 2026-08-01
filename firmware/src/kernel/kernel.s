@@ -164,6 +164,8 @@ _start:
 .include "firmware/src/kernel/inc/find.inc"
 .include "firmware/src/kernel/inc/memory.inc"
 .include "firmware/src/kernel/inc/loader.inc"
+.include "firmware/src/kernel/inc/absdisk.inc"
+.include "firmware/src/kernel/inc/int2f.inc"
 
 .section .data
 
@@ -299,7 +301,7 @@ mem_top:
     .word 0
 
 msg_banner:
-    .ascii "rmDOS 0.7\r\n$"
+    .ascii "rmDOS 0.8\r\n$"
 msg_fat_bad:
     .ascii "fat fail\r\n$"
 msg_rw_bad:
@@ -318,6 +320,20 @@ env_comspec:
     .asciz "COMSPEC=A:\\COMMAND.COM"
 env_path:
     .asciz "PATH=A:\\BIN"
+vol_base_lba:
+    .word 0
+abs_write:
+    .byte 0
+abs_saved_drv:
+    .byte 0xFF
+a57_time:
+    .word 0
+a57_date:
+    .word 0
+a57_lba:
+    .word 0
+wsa_ch:
+    .byte 0
 country_info:
     .word 0x002E                /* date format */
     .ascii "$"                  /* currency */
@@ -350,7 +366,7 @@ default_dta:
     .space 128, 0
 
 handles:
-    .space 128, 0
+    .space 320, 0
 
 sector_buf:
     .space 512, 0
@@ -368,7 +384,7 @@ exe_ss:
 exe_sp:
     .word 0
 com_buf:
-    .space 16384, 0
+    .space 24576, 0
 
 fat_buf:
     .space 1024, 0

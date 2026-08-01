@@ -134,6 +134,52 @@ _start:
     int 0x21
     jc .fail
 
+    /* AH=45 dup handle */
+    mov ah, 0x3C
+    xor cx, cx
+    lea dx, [dupname]
+    int 0x21
+    jc .fail
+    mov [handle], bx
+    mov ah, 0x45
+    int 0x21
+    jc .fail
+    mov [handle2], ax
+    mov ah, 0x40
+    mov bx, [handle2]
+    mov cx, 3
+    lea dx, [dupay]
+    int 0x21
+    jc .fail
+    mov ah, 0x3E
+    mov bx, [handle]
+    int 0x21
+    mov ah, 0x3E
+    mov bx, [handle2]
+    int 0x21
+    mov ah, 0x41
+    lea dx, [dupname]
+    int 0x21
+
+    /* INT 25h absolute read sector 0 */
+    push ds
+    mov al, 0
+    mov cx, 1
+    xor dx, dx
+    lea bx, [secbuf]
+    int 0x25
+    pop dx                       /* discard leftover flags */
+    pop ds
+    jc .fail
+    cmp word ptr [secbuf + 510], 0xAA55
+    jne .fail
+
+    /* INT 2Fh DOS multiplex present */
+    mov ax, 0x1200
+    int 0x2F
+    cmp al, 0xFF
+    jne .fail
+
     /* print command tail if any */
     mov si, 0x80
     mov cl, [si]
@@ -172,13 +218,21 @@ findpat:
     .asciz "TMPDIR\\*.*"
 rootpath:
     .asciz "\\"
+dupname:
+    .asciz "DUP.TXT"
+dupay:
+    .ascii "dup"
 payload:
     .ascii "ok!\n"
 rdbuf:
     .space 8, 0
 dta:
     .space 128, 0
+secbuf:
+    .space 512, 0
 handle:
+    .word 0
+handle2:
     .word 0
 msg_ok:
     .ascii "COMPAT OK\r\n$"

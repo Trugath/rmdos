@@ -11,7 +11,7 @@
  */
 
 .equ HANDLE_SIZE, 16
-.equ MAX_HANDLES, 8
+.equ MAX_HANDLES, 20
 .equ H_FILE, 1
 .equ H_CON, 2
 .equ H_NUL, 3
@@ -799,7 +799,14 @@ dos_ah42:
 
 dos_ah44:
     cmp al, 0
-    jne .a44_bad
+    je .a44_getinfo
+    cmp al, 8
+    je .a44_remov
+    cmp al, 0x0D
+    je .a44_block
+    jmp .a44_bad
+
+.a44_getinfo:
     push di
     push es
     push cs
@@ -826,6 +833,34 @@ dos_ah44:
     xor ax, ax
     clc
     jmp int21_iret
+
+/* AL=08 — is drive removable? BL=drive (0=default) → AL=0 removable / 1 fixed */
+.a44_remov:
+    push bx
+    mov bl, bl
+    test bl, bl
+    jnz .a44_rm_drv
+    mov bl, byte ptr cs:[cur_drive]
+    inc bl
+.a44_rm_drv:
+    dec bl
+    cmp bl, 2
+    jae .a44_fixed
+    mov al, 0
+    jmp .a44_rm_ok
+.a44_fixed:
+    mov al, 1
+.a44_rm_ok:
+    pop bx
+    clc
+    jmp int21_iret
+
+/* AL=0D — block generic IOCTL stub: succeed with no-op */
+.a44_block:
+    xor ax, ax
+    clc
+    jmp int21_iret
+
 .a44_err:
     pop es
     pop di
@@ -834,15 +869,224 @@ dos_ah44:
     stc
     jmp int21_iret_cf
 
+/* AH=45h — duplicate handle BX → AX */
+dos_ah45:
+    push cx
+    push si
+    push di
+    push es
+    push cs
+    pop es
+    call handle_index
+    jc .a45_err
+    cmp byte ptr es:[di], 0
+    je .a45_err
+    mov si, di
+    call dos_open_slot
+    jc .a45_err
+    push ds
+    push cs
+    pop ds
+    mov cx, HANDLE_SIZE
+    rep movsb
+    pop ds
+    mov ax, bx
+    pop es
+    pop di
+    pop si
+    pop cx
+    clc
+    jmp int21_iret
+.a45_err:
+    pop es
+    pop di
+    pop si
+    pop cx
+    mov ax, 6
+    stc
+    jmp int21_iret_cf
+
+/* AH=46h — force dup: make CX a copy of BX (close CX first) */
+dos_ah46:
+    push ax
+    push bx
+    push cx
+    push si
+    push di
+    push es
+    push cs
+    pop es
+    call handle_index
+    jc .a46_err
+    cmp byte ptr es:[di], 0
+    je .a46_err
+    mov si, di                   /* SI = source entry */
+    push bx
+    mov bx, cx
+    call handle_index
+    pop bx
+    jc .a46_err
+    mov byte ptr es:[di], 0
+    mov cx, HANDLE_SIZE
+    push ds
+    push cs
+    pop ds
+    rep movsb
+    pop ds
+    pop es
+    pop di
+    pop si
+    pop cx
+    pop bx
+    pop ax
+    clc
+    jmp int21_iret
+.a46_err:
+    pop es
+    pop di
+    pop si
+    pop cx
+    pop bx
+    pop ax
+    mov ax, 6
+    stc
+    jmp int21_iret_cf
+
+/* AH=57h — get/set file date/time */
+dos_ah57:
+    cmp al, 0
+    je .a57_get
+    cmp al, 1
+    je .a57_set
+    mov ax, 1
+    stc
+    jmp int21_iret_cf
+
+.a57_get:
+    push bx
+    push si
+    push di
+    push es
+    push ds
+    push cs
+    pop es
+    call handle_index
+    jc .a57_err
+    cmp byte ptr es:[di], H_FILE
+    jne .a57_err
+    mov ax, word ptr es:[di + 12]
+    mov si, word ptr es:[di + 14]
+    lea bx, [sector_buf]
+    xor dx, dx
+    call fat12_read_lba
+    jc .a57_err
+    mov ax, si
+    mov cl, 5
+    shl ax, cl
+    lea si, [sector_buf]
+    add si, ax
+    push cs
+    pop ds
+    mov cx, [si + 22]
+    mov dx, [si + 24]
+    pop ds
+    pop es
+    pop di
+    pop si
+    pop bx
+    xor ax, ax
+    clc
+    jmp int21_iret
+
+.a57_set:
+    push bx
+    push cx
+    push dx
+    push si
+    push di
+    push es
+    push ds
+    mov word ptr cs:[a57_time], cx
+    mov word ptr cs:[a57_date], dx
+    push cs
+    pop es
+    call handle_index
+    jc .a57_serr
+    cmp byte ptr es:[di], H_FILE
+    jne .a57_serr
+    mov ax, word ptr es:[di + 12]
+    mov word ptr cs:[a57_lba], ax
+    mov si, word ptr es:[di + 14]
+    lea bx, [sector_buf]
+    xor dx, dx
+    call fat12_read_lba
+    jc .a57_serr
+    mov ax, si
+    mov cl, 5
+    shl ax, cl
+    lea si, [sector_buf]
+    add si, ax
+    push cs
+    pop ds
+    mov ax, word ptr cs:[a57_time]
+    mov [si + 22], ax
+    mov ax, word ptr cs:[a57_date]
+    mov [si + 24], ax
+    mov ax, word ptr cs:[a57_lba]
+    lea bx, [sector_buf]
+    xor dx, dx
+    call fat12_write_lba
+    jc .a57_serr
+    pop ds
+    pop es
+    pop di
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    xor ax, ax
+    clc
+    jmp int21_iret
+
+.a57_err:
+    pop ds
+    pop es
+    pop di
+    pop si
+    pop bx
+    mov ax, 6
+    stc
+    jmp int21_iret_cf
+
+.a57_serr:
+    pop ds
+    pop es
+    pop di
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    mov ax, 6
+    stc
+    jmp int21_iret_cf
+
 init_std_handles:
     push es
     push di
+    push cx
     push cs
     pop es
+    lea di, [handles]
+    mov cx, MAX_HANDLES
+.ish_clr:
+    mov byte ptr es:[di], 0
+    add di, HANDLE_SIZE
+    loop .ish_clr
     lea di, [handles]
     mov byte ptr es:[di], H_CON
     mov byte ptr es:[di + HANDLE_SIZE], H_CON
     mov byte ptr es:[di + HANDLE_SIZE * 2], H_CON
+    pop cx
     pop di
     pop es
     ret

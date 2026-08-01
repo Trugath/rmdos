@@ -21,6 +21,8 @@ install_dos_vectors:
     lea bx, [int24_default]
     mov word ptr es:[0x24 * 4], bx
     mov word ptr es:[0x24 * 4 + 2], cs
+    call install_absdisk_vectors
+    call install_int2f_vector
     pop es
     pop bx
     pop ax
@@ -92,6 +94,8 @@ int21_handler:
     je dos_ah0a
     cmp ah, 0x0B
     je dos_ah0b
+    cmp ah, 0x0D
+    je dos_ah0d
     cmp ah, 0x0E
     je dos_ah0e
     cmp ah, 0x19
@@ -144,6 +148,10 @@ int21_handler:
     je dos_ah43
     cmp ah, 0x44
     je dos_ah44
+    cmp ah, 0x45
+    je dos_ah45
+    cmp ah, 0x46
+    je dos_ah46
     cmp ah, 0x47
     je dos_ah47
     cmp ah, 0x48
@@ -164,9 +172,17 @@ int21_handler:
     je dos_ah4f
     cmp ah, 0x56
     je dos_ah56
+    cmp ah, 0x57
+    je dos_ah57
     mov ax, 1
     stc
     jmp int21_iret_cf
+
+/* AH=0Dh — disk reset / flush buffers */
+dos_ah0d:
+    call fat12_flush_fat
+    clc
+    jmp int21_iret
 
 /* AH=30h — DOS version 3.31 */
 dos_ah30:
