@@ -5,7 +5,7 @@
 
 /*
  * rmDOS XT floppy FDC helpers + INT 0Eh (IRQ6).
- * 720K DD via disk_base_table in disk.s.
+ * Diskette geometry/gaps come from the INT 1Eh DPT (disk.s).
  */
 
 .section .text
@@ -13,6 +13,16 @@
 .global fdc_reset, fdc_motor_on, fdc_seek
 .global fdc_setup_dma, fdc_do_rw, fdc_do_format
 .global fdc_read_dir, fdc_store_status
+.global fdc_dpt_ptr
+
+/* DS:BX â†’ current INT 1Eh diskette parameter table. Clobbers AX, ES. */
+fdc_dpt_ptr:
+    xor ax, ax
+    mov es, ax
+    mov bx, es:[0x1E * 4]
+    mov ax, es:[0x1E * 4 + 2]
+    mov ds, ax
+    ret
 
 isr_0e:
     push ax
@@ -203,11 +213,11 @@ fdc_reset:
     call fdc_clear_irq
     mov al, 0x03
     call fdc_send_byte
-    push cs
-    pop ds
-    mov al, [disk_base_table]
+    /* Specify from INT 1Eh DPT (DS currently BDA; fdc_dpt_ptr replaces it). */
+    call fdc_dpt_ptr
+    mov al, [bx]
     call fdc_send_byte
-    mov al, [disk_base_table + 1]
+    mov al, [bx + 1]
     call fdc_send_byte
     pop ds
     pop dx
@@ -238,11 +248,14 @@ fdc_motor_on:
     mov cl, bl
     shl ah, cl
     or [BDA_FLOPPY_MOTOR], ah
-    push cs
-    pop es
-    mov al, es:[disk_base_table + 2]
+    push ds
+    push bx
+    call fdc_dpt_ptr
+    mov al, [bx + 2]
+    mov cl, [bx + 10]
+    pop bx
+    pop ds
     mov [BDA_FLOPPY_TIMEOUT], al
-    mov cl, es:[disk_base_table + 10]
     test cl, cl
     jz .fmo_done
 .fmo_has:
@@ -489,20 +502,21 @@ fdc_do_rw:
     and al, 0x3F                 /* sector */
     call fdc_send_byte
     jc .fdr_to
-    push cs
+    push ds
+    call fdc_dpt_ptr
+    mov al, [bx + 3]
+    call fdc_send_byte
+    jc .fdr_to_dpt
+    mov al, [bx + 4]
+    call fdc_send_byte
+    jc .fdr_to_dpt
+    mov al, [bx + 5]
+    call fdc_send_byte
+    jc .fdr_to_dpt
+    mov al, [bx + 6]
+    call fdc_send_byte
+    jc .fdr_to_dpt
     pop ds
-    mov al, [disk_base_table + 3]
-    call fdc_send_byte
-    jc .fdr_to
-    mov al, [disk_base_table + 4]
-    call fdc_send_byte
-    jc .fdr_to
-    mov al, [disk_base_table + 5]
-    call fdc_send_byte
-    jc .fdr_to
-    mov al, [disk_base_table + 6]
-    call fdc_send_byte
-    jc .fdr_to
     call fdc_wait_irq
     jc .fdr_to
 
@@ -545,6 +559,8 @@ fdc_do_rw:
 .fdr_bound:
     mov ah, 0x09
     jmp .fdr_fail
+.fdr_to_dpt:
+    pop ds
 .fdr_to:
     mov ah, 0x80
     jmp .fdr_fail
@@ -565,50 +581,66 @@ fdc_do_rw:
 
 /*
  * Format one track.
- * IN: DL=drive, DH=head, CH=cyl, ES:BX = SCÃ—(C,H,R,N)
+ * IN: DL=drive, DH=head, CH=cyl, ES:BX = SC×(C,H,R,N)
  */
 fdc_do_format:
     push bx
     push cx
     push dx
+    push si
+    push di
     push ds
     push es
+    mov di, dx                   /* DI: DH=head DL=drive */
     call fdc_motor_on
     call fdc_seek
     jc .fdf_fail
-    push cs
+    push ds
+    push bx                      /* ID table offset */
+    call fdc_dpt_ptr
+    mov al, [bx + 3]             /* N */
+    mov ah, [bx + 4]             /* SC */
+    mov cl, [bx + 7]             /* gap */
+    mov ch, [bx + 8]             /* fill */
+    pop bx                       /* restore ID table */
     pop ds
-    mov al, [disk_base_table + 4]
+    push ax                      /* AL=N AH=SC */
+    push cx                      /* CL=gap CH=fill */
+    mov al, ah                   /* SC from saved AH — still in AX */
     xor ah, ah
     shl ax, 1
     shl ax, 1
     mov cx, ax
     mov al, 1
     call fdc_setup_dma
-    jc .fdf_bound
+    jc .fdf_bound_stk
     call fdc_clear_irq
     mov al, 0x4D
     call fdc_send_byte
-    jc .fdf_to
-    mov al, dh
+    jc .fdf_to_stk
+    mov ax, di
+    mov cl, al                   /* drive */
+    mov al, ah                   /* head */
     and al, 1
     shl al, 1
     shl al, 1
-    mov ah, dl
-    and ah, 3
-    or al, ah
+    and cl, 3
+    or al, cl
+    call fdc_send_byte
+    jc .fdf_to_stk
+    pop cx                       /* CL=gap CH=fill — wait, stack order: top is gap/fill */
+    pop ax                       /* AL=N AH=SC */
+    push cx                      /* keep gap/fill for later */
+    call fdc_send_byte           /* N in AL */
+    jc .fdf_to_one
+    mov al, ah                   /* SC */
+    call fdc_send_byte
+    jc .fdf_to_one
+    pop cx                       /* CL=gap CH=fill */
+    mov al, cl
     call fdc_send_byte
     jc .fdf_to
-    mov al, [disk_base_table + 3]
-    call fdc_send_byte
-    jc .fdf_to
-    mov al, [disk_base_table + 4]
-    call fdc_send_byte
-    jc .fdf_to
-    mov al, [disk_base_table + 7]        /* format gap */
-    call fdc_send_byte
-    jc .fdf_to
-    mov al, [disk_base_table + 8]        /* format fill */
+    mov al, ch
     call fdc_send_byte
     jc .fdf_to
     call fdc_wait_irq
@@ -621,9 +653,18 @@ fdc_do_format:
     xor ah, ah
     clc
     jmp .fdf_done
+.fdf_bound_stk:
+    pop cx
+    pop ax
 .fdf_bound:
     mov ah, 0x09
     jmp .fdf_fail
+.fdf_to_stk:
+    pop cx
+    pop ax
+    jmp .fdf_to
+.fdf_to_one:
+    pop cx
 .fdf_to:
     mov ah, 0x80
 .fdf_fail:
@@ -631,6 +672,8 @@ fdc_do_format:
 .fdf_done:
     pop es
     pop ds
+    pop di
+    pop si
     pop dx
     pop cx
     pop bx

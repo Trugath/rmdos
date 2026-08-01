@@ -77,8 +77,16 @@ int13_handler:
     call fdc_do_rw
     call fdc_store_status
     pushf
+    /* Upgrade 360K → 720K when guest seeks past 40 cyl (same as classic). */
     cmp ch, 40
     jb .i13_read_done
+    push ds
+    mov ax, BDA_SEG
+    mov ds, ax
+    mov al, [0x8B]
+    pop ds
+    cmp al, 1
+    jne .i13_read_done
     call disk_select_720
 .i13_read_done:
     popf
@@ -102,17 +110,20 @@ int13_handler:
     jmp .i13_ret
 
 .i13_params:
-    /* Report 360K or 720K from last media / host hint (BDA 40:8B). */
+    /* Report media from BDA 40:8B (host image-size hint / last select). */
     push ds
-    push ax
     mov ax, BDA_SEG
     mov ds, ax
     mov al, [0x8B]
-    pop ax
     pop ds
     cmp al, 1
     je .i13_params_360
-    /* 720 KB: 80 cyl × 2 heads × 9 spt */
+    cmp al, 2
+    je .i13_params_1200
+    cmp al, 4
+    je .i13_params_1440
+    /* 720 KB DD (type 3 or default): 80 cyl × 2 heads × 9 spt */
+    call disk_select_720
     xor ax, ax
     mov bx, 0x0003
     mov cx, 0x4F09
@@ -126,6 +137,26 @@ int13_handler:
     xor ax, ax
     mov bx, 0x0001
     mov cx, 0x2709
+    mov dx, 0x0101
+    xor ah, ah
+    clc
+    jmp .i13_ret
+.i13_params_1200:
+    /* 1.2 MB 5.25" HD: 80 cyl × 2 heads × 15 spt */
+    call disk_select_1200
+    xor ax, ax
+    mov bx, 0x0002
+    mov cx, 0x4F0F
+    mov dx, 0x0101
+    xor ah, ah
+    clc
+    jmp .i13_ret
+.i13_params_1440:
+    /* 1.44 MB 3.5" HD: 80 cyl × 2 heads × 18 spt */
+    call disk_select_1440
+    xor ax, ax
+    mov bx, 0x0004
+    mov cx, 0x4F12
     mov dx, 0x0101
     xor ah, ah
     clc
@@ -240,6 +271,32 @@ disk_base_table_360:
     .byte 0x0F
     .byte 0x00
 
+/* INT 1Eh — 1.44M 3.5" HD (18 SPT) */
+disk_base_table_1440:
+    .byte 0xAF, 0x02
+    .byte 0x25
+    .byte 0x02
+    .byte 0x12                   /* EOT = 18 */
+    .byte 0x1B                   /* GPL */
+    .byte 0xFF
+    .byte 0x54                   /* format gap */
+    .byte 0xF6
+    .byte 0x0F
+    .byte 0x00
+
+/* INT 1Eh — 1.2M 5.25" HD (15 SPT) */
+disk_base_table_1200:
+    .byte 0xDF, 0x02
+    .byte 0x25
+    .byte 0x02
+    .byte 0x0F                   /* EOT = 15 */
+    .byte 0x1B
+    .byte 0xFF
+    .byte 0x54
+    .byte 0xF6
+    .byte 0x0F
+    .byte 0x00
+
 /* Repoint INT 1Eh to 360K table (idempotent). */
 disk_select_360:
     push ax
@@ -266,6 +323,36 @@ disk_select_720:
     mov ax, BDA_SEG
     mov ds, ax
     mov byte ptr [0x8B], 3
+    pop ds
+    pop ax
+    ret
+
+/* Repoint INT 1Eh to 1.44M table. */
+disk_select_1440:
+    push ax
+    push ds
+    xor ax, ax
+    mov ds, ax
+    mov word ptr [0x1E * 4], offset disk_base_table_1440
+    mov word ptr [0x1E * 4 + 2], cs
+    mov ax, BDA_SEG
+    mov ds, ax
+    mov byte ptr [0x8B], 4
+    pop ds
+    pop ax
+    ret
+
+/* Repoint INT 1Eh to 1.2M table. */
+disk_select_1200:
+    push ax
+    push ds
+    xor ax, ax
+    mov ds, ax
+    mov word ptr [0x1E * 4], offset disk_base_table_1200
+    mov word ptr [0x1E * 4 + 2], cs
+    mov ax, BDA_SEG
+    mov ds, ax
+    mov byte ptr [0x8B], 2
     pop ds
     pop ax
     ret
