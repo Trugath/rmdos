@@ -129,7 +129,7 @@ def test_fat16_partition_io_and_boot() -> None:
     env = _env()
     try:
         proc = subprocess.Popen(
-            launcher_argv(floppy, hd, "--quiet", "--headless", "--serial-log", SERIAL, floppy_int13_shim=False, hd_int13_bios=False),
+            launcher_argv(floppy, hd, "--quiet", "--headless", "--serial-log", SERIAL, floppy_int13_shim=False),
             cwd=str(ROOT / "emulator" / "k8086"),
             env=env,
             stdout=subprocess.DEVNULL,
@@ -199,7 +199,7 @@ def test_fat16_partition_io_and_boot() -> None:
         proc = subprocess.Popen(
             launcher_argv(
                 floppy, "@" + str(hd), "--quiet", "--headless", "--serial-log", SERIAL,
-                floppy_int13_shim=False, hd_int13_bios=False,
+                floppy_int13_shim=False,
             ),
             cwd=str(ROOT / "emulator" / "k8086"),
             env=env,

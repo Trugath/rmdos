@@ -29,7 +29,9 @@ def _blank_hd(path: Path, size: int) -> None:
         f.truncate(size)
 
 
-def _run_format_hd(hd_path: Path, timeout: float = 180.0) -> str:
+def _run_format_hd(
+    hd_path: Path, timeout: float = 180.0, *, hd_int13_bios: bool | None = None
+) -> str:
     env = os.environ.copy()
     env["K8086_U18_ROM"] = str(BUILD / "u18.bin")
     env["K8086_U19_ROM"] = str(BUILD / "u19.bin")
@@ -50,7 +52,7 @@ def _run_format_hd(hd_path: Path, timeout: float = 180.0) -> str:
                 "--serial-log",
                 SERIAL,
                 floppy_int13_shim=False,
-                hd_int13_bios=False,
+                hd_int13_bios=hd_int13_bios,
             ),
             cwd=str(ROOT / "emulator" / "k8086"),
             env=env,
@@ -152,9 +154,18 @@ def test_format_hd_40m_fat16_totsec32() -> None:
     assert _bpb_totsec(img) == _geometry_totsec(HD_40M)
 
 
+def test_format_hd_host_bios_smoke() -> None:
+    """Host FixedDiskBios still works when explicitly enabled."""
+    hd = BUILD / "hd-10m-hostbios.img"
+    _blank_hd(hd, HD_10M)
+    img = _run_format_hd(hd, hd_int13_bios=True)
+    _assert_fat_volume(img, expect_fat16=False, size_bytes=HD_10M)
+
+
 if __name__ == "__main__":
     assert FLOPPY.is_file(), f"missing {FLOPPY}; build os-format-hd.img first"
     test_format_hd_10m_fat12()
     test_format_hd_20m_fat16()
     test_format_hd_40m_fat16_totsec32()
+    test_format_hd_host_bios_smoke()
     print("test_format_hd_e2e: OK")

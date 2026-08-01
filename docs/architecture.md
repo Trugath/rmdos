@@ -75,9 +75,10 @@ Sources live under `firmware/bios/src/` (`post`, `init`, `video`, `keyboard`,
   (`0Ch`/`0Dh`), CRTC cursor programming on set cursor/type, BEL beep, and
   graphics teletype scroll
 - INT 13h floppy via onboard FDC (DMA ch2 / IRQ6): AH=00–05, 08, 15–16 with
-  360K/720K media via BDA hint + dual INT 1Eh tables. HD uses host Fixed Disk
-  BIOS by default, or guest C800 option ROM (`--no-hd-int13-bios`). Floppy host
-  shim is opt-in (`--floppy-int13-shim` / `K8086_FLOPPY_INT13_SHIM=1`).
+  360K/720K media via BDA hint + dual INT 1Eh tables. HD uses guest C800 Fixed
+  Disk option ROM by default; host Fixed Disk BIOS is opt-in (`--hd-int13-bios` /
+  `K8086_HD_INT13_BIOS=1`). Floppy host shim is opt-in (`--floppy-int13-shim` /
+  `K8086_FLOPPY_INT13_SHIM=1`).
   INT 14h (COM1 8250 AH=00–03), 15h (AH=86h wait; AH=80h–82h succeed; else CF), 16h
   (AH=00–02,05 stuff,10–12→00–02; Caps/Num/Scroll/Insert flags), 17h
   (printer timeout stub), 18h, 19h, 1Ah
@@ -115,10 +116,10 @@ Pinned absolute entry points (k8086 and XT software expect these):
 
 BIOS service tests, boot E2E, and FORMAT floppy E2E use the guest FDC path
 (default; `--floppy-int13-shim` re-enables the host shim for one smoke test).
-Hard disk (`DL ≥ 0x80`) uses the host Fixed Disk BIOS by default; CI HD e2e
-forces the guest C800 Fixed Disk option ROM (`--no-hd-int13-bios`). Override
-ROMs with `K8086_U18_ROM` / `K8086_U19_ROM` / `K8086_FDROM`, `run-k8086.sh`, or
-the workstation ROM picker.
+Hard disk (`DL ≥ 0x80`) uses the guest C800 Fixed Disk option ROM by default;
+`--hd-int13-bios` re-enables the host Fixed Disk BIOS. Override ROMs with
+`K8086_U18_ROM` / `K8086_U19_ROM` / `K8086_FDROM`, `run-k8086.sh`, or the
+workstation ROM picker.
 
 ## Operating system
 
@@ -158,7 +159,12 @@ INT 25h/26h absolute disk, INT 2Fh install-check stubs (DOS AH=12, SHARE,
 PRINT, APPEND, XMS; Windows AX=1600 absent), vectors (AH=25h/35h), Ctrl-C
 (INT 23h abort) / critical error (INT 24h Abort/Retry/Ignore), date/time,
 drive/cwd, mkdir/rmdir/chdir, attrs, rename, country get/set (AH=38h),
-**AH=31h TSR**. AH=30h reports DOS 3.31.
+**AH=31h TSR**. AH=30h reports DOS 3.31. Gate: `DEMO\COMPAT.COM` +
+`DEMO\INT21X.COM`.
+
+**Out of scope for INT 21h/2Fh fidelity:** AH=53h BPB translate; real
+SHARE/PRINT/APPEND/XMS TSR bodies; extended FCB; full SysVars/SFT/CDS graphs;
+network redirector multiplex beyond “not installed.”
 
 After the FAT self-test, the kernel opens **`CONFIG.SYS`** if present (missing file
 is ignored). Supported lines: `INSTALL=` / `DEVICE=` (load+run a COM; failures
@@ -169,7 +175,10 @@ images ship **without** `CONFIG.SYS`.
 `COMMAND.COM` supports internal CD/MD/RD/CLS/REN/VER/SET/PAUSE, external
 program exec, `ECHO`, `IF ERRORLEVEL` / `IF EXIST`, `GOTO`/`CALL`, redirection
 and pipes, and `AUTOEXEC.BAT`. `PATH=A:\BIN` is set in the kernel
-environment.
+environment. Still absent as internals: `FOR`, `PROMPT`, `DATE`/`TIME`, `VOL`,
+`VERIFY`, `CTTY`. Classic utilities still absent: `EDIT`, `DEBUG`, `DISKCOPY`,
+`SORT`, `FC`, `TREE`, `MEM`, …
+
 
 `CHKDSK [d:] [/F]` audits the volume via INT 25h: BPB sanity, FAT1↔FAT2 compare,
 directory chain walk (cross-links / orphans / bad chains), and a classic-style

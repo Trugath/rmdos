@@ -28,15 +28,16 @@ def launcher_argv(
     """Return a subprocess argv that starts k8086-emulator with *args.
 
     When *floppy_int13_shim* is False, pass ``--no-floppy-int13-shim``.
-    When *hd_int13_bios* is False, pass ``--no-hd-int13-bios`` (guest C800 ROM).
+    When *hd_int13_bios* is True, pass ``--hd-int13-bios`` (host FixedDiskBios).
+    Guest C800 Fixed Disk ROM is the default when *hd_int13_bios* is None/False.
     """
     posix = _BIN / "k8086-emulator"
     bat = _BIN / "k8086-emulator.bat"
     extra = [str(a) for a in args]
     if floppy_int13_shim is False:
         extra.append("--no-floppy-int13-shim")
-    if hd_int13_bios is False:
-        extra.append("--no-hd-int13-bios")
+    if hd_int13_bios is True:
+        extra.append("--hd-int13-bios")
 
     if os.name == "nt":
         if bat.is_file():
@@ -79,13 +80,13 @@ def terminate_emulator(proc: subprocess.Popen) -> None:
             pass
 
 
-def unlink_retry(path: Path, attempts: int = 20) -> None:
-    """Unlink a path, retrying briefly while Windows releases file locks."""
+def unlink_retry(path: Path, attempts: int = 8, delay: float = 0.25) -> None:
+    """Remove *path*, retrying on Windows sharing violations."""
     for i in range(attempts):
         try:
             path.unlink(missing_ok=True)
             return
-        except PermissionError:
+        except OSError:
             if i + 1 >= attempts:
                 raise
-            time.sleep(0.1)
+            time.sleep(delay)
