@@ -34,7 +34,7 @@ def _run() -> bytes:
         f.truncate(HD_SIZE)
     try:
         proc = subprocess.Popen(
-            launcher_argv(floppy, hd, "--quiet", "--headless", "--serial-log", SERIAL),
+            launcher_argv(floppy, hd, "--quiet", "--headless", "--serial-log", SERIAL, floppy_int13_shim=False, hd_int13_bios=False),
             cwd=str(ROOT / "emulator" / "k8086"),
             env=env,
             stdout=subprocess.DEVNULL,
@@ -59,7 +59,7 @@ def _run() -> bytes:
         # k8086's @ prefix selects the fixed disk as INT 19h boot media.
         SERIAL.write_text("")
         proc = subprocess.Popen(
-            launcher_argv(floppy, "@" + str(hd), "--quiet", "--headless", "--serial-log", SERIAL),
+            launcher_argv(floppy, "@" + str(hd), "--quiet", "--headless", "--serial-log", SERIAL, floppy_int13_shim=False, hd_int13_bios=False),
             cwd=str(ROOT / "emulator" / "k8086"),
             env=env,
             stdout=subprocess.DEVNULL,

@@ -75,7 +75,7 @@ def test_install_from_floppy_to_10mb_hd() -> None:
     try:
         # Phase 1: boot floppy with blank 10MB disk attached; AUTOEXEC runs INSTALL.BAT
         proc = subprocess.Popen(
-            launcher_argv(floppy, hd, "--quiet", "--headless", "--serial-log", SERIAL),
+            launcher_argv(floppy, hd, "--quiet", "--headless", "--serial-log", SERIAL, floppy_int13_shim=False, hd_int13_bios=False),
             cwd=str(ROOT / "emulator" / "k8086"),
             env=env,
             stdout=subprocess.DEVNULL,
@@ -108,7 +108,8 @@ def test_install_from_floppy_to_10mb_hd() -> None:
         SERIAL.write_text("")
         proc = subprocess.Popen(
             launcher_argv(
-                floppy, "@" + str(hd), "--quiet", "--headless", "--serial-log", SERIAL
+                floppy, "@" + str(hd), "--quiet", "--headless", "--serial-log", SERIAL,
+                floppy_int13_shim=False, hd_int13_bios=False,
             ),
             cwd=str(ROOT / "emulator" / "k8086"),
             env=env,

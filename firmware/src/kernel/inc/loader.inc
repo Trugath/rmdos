@@ -742,9 +742,92 @@ com_tsr_kernel:
 dos_ah4b:
     cmp al, 0
     je .a4b_load
+    cmp al, 3
+    je .a4b_overlay
+    cmp al, 1
+    je .a4b_load_noexec
     mov ax, 1
     stc
     jmp int21_iret_cf
+.a4b_overlay:
+    /* AL=3: load overlay at EPB segment; no PSP / no exec.
+     * EPB: +0 WORD load segment, +2 WORD relocation factor
+     * DS:DX = ASCIZ path (caller) */
+    push ax
+    push bx
+    push cx
+    push dx
+    push si
+    push di
+    push es
+    push ds
+    mov word ptr cs:[path_off], dx
+    mov word ptr cs:[path_seg], ds
+    mov ax, word ptr es:[bx]
+    mov word ptr cs:[ovl_load_seg], ax
+    mov ax, word ptr es:[bx + 2]
+    mov word ptr cs:[ovl_reloc], ax
+    mov ds, word ptr cs:[path_seg]
+    mov dx, word ptr cs:[path_off]
+    mov ah, 0x3D
+    xor al, al
+    int 0x21
+    jc .a4b_ovl_fail
+    mov word ptr cs:[com_handle], bx
+    mov ah, 0x3F
+    mov cx, COM_MAX
+    push cs
+    pop ds
+    lea dx, [com_buf]
+    int 0x21
+    jc .a4b_ovl_fail_cl
+    mov word ptr cs:[com_size], ax
+    mov ah, 0x3E
+    mov bx, word ptr cs:[com_handle]
+    int 0x21
+    mov es, word ptr cs:[ovl_load_seg]
+    xor di, di
+    push cs
+    pop ds
+    lea si, [com_buf]
+    mov cx, word ptr [com_size]
+    rep movsb
+    cmp word ptr cs:[com_buf], 0x5A4D
+    je .a4b_ovl_mz
+    cmp word ptr cs:[com_buf], 0x4D5A
+    jne .a4b_ovl_ok
+.a4b_ovl_mz:
+    call overlay_apply_relocs
+.a4b_ovl_ok:
+    pop ds
+    pop es
+    pop di
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    xor ax, ax
+    clc
+    jmp int21_iret
+.a4b_ovl_fail_cl:
+    mov ah, 0x3E
+    mov bx, word ptr cs:[com_handle]
+    int 0x21
+.a4b_ovl_fail:
+    pop ds
+    pop es
+    pop di
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    mov ax, 2
+    stc
+    jmp int21_iret_cf
+.a4b_load_noexec:
+    /* AL=1: treat as load+exec for now (fixtures rarely need load-only) */
 .a4b_load:
     /* save param block ES:BX */
     mov word ptr cs:[exec_pb_seg], es
@@ -776,3 +859,39 @@ dos_ah4b:
     mov ax, 2
     stc
     jmp int21_iret_cf
+
+/* Apply MZ relocations for overlay using ovl_reloc as segment delta. */
+overlay_apply_relocs:
+    push ax
+    push bx
+    push cx
+    push dx
+    push si
+    push ds
+    push es
+    push cs
+    pop ds
+    mov bx, word ptr [com_buf + 0x18]   /* reloc table offset */
+    mov cx, word ptr [com_buf + 0x06]   /* reloc count */
+    jcxz .oar_done
+    lea si, [com_buf]
+    add si, bx
+    mov dx, word ptr [ovl_reloc]
+.oar_loop:
+    mov ax, word ptr [si]
+    mov bx, word ptr [si + 2]
+    add bx, dx
+    mov es, bx
+    mov bx, ax
+    add word ptr es:[bx], dx
+    add si, 4
+    loop .oar_loop
+.oar_done:
+    pop es
+    pop ds
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret

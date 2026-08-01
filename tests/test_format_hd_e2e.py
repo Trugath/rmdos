@@ -49,6 +49,8 @@ def _run_format_hd(hd_path: Path, timeout: float = 180.0) -> str:
                 "--headless",
                 "--serial-log",
                 SERIAL,
+                floppy_int13_shim=False,
+                hd_int13_bios=False,
             ),
             cwd=str(ROOT / "emulator" / "k8086"),
             env=env,

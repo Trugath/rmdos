@@ -33,18 +33,67 @@ int20_handler:
     jmp dos_terminate
 
 int23_default:
-    /* ignore Ctrl-C: return without abort */
-    iret
+    /* Ctrl-C: abort current process */
+    mov al, 0xC3
+    jmp dos_terminate
 
 int24_default:
-    /* critical error: fail (AL=3) */
-    mov al, 3
+    /* Critical error: Abort / Retry / Ignore via BIOS console */
+    push bx
+    push cx
+    push dx
+    push si
+    push ds
+    push cs
+    pop ds
+    lea si, [msg_int24]
+.i24_puts:
+    lodsb
+    test al, al
+    jz .i24_key
+    mov ah, 0x0E
+    mov bx, 0x0007
+    int 0x10
+    jmp .i24_puts
+.i24_key:
+    xor ah, ah
+    int 0x16
+    call .i24_up
+    cmp al, 'A'
+    je .i24_abort
+    cmp al, 'R'
+    je .i24_retry
+    cmp al, 'I'
+    je .i24_ignore
+    jmp .i24_key
+.i24_abort:
+    mov al, 2
+    jmp .i24_done
+.i24_retry:
+    mov al, 1
+    jmp .i24_done
+.i24_ignore:
+    xor al, al
+.i24_done:
+    pop ds
+    pop si
+    pop dx
+    pop cx
+    pop bx
     iret
+.i24_up:
+    cmp al, 'a'
+    jb .i24_up_done
+    cmp al, 'z'
+    ja .i24_up_done
+    sub al, 0x20
+.i24_up_done:
+    ret
 
 /*
  * Invoke INT 24h for a floppy I/O failure.
  * IN:  BH = 0 read / 1 write (mapped into AH)
- * OUT: AL = 0 retry, 1 ignore, 2 abort, 3 fail (default handler → 3)
+ * OUT: AL = 0 ignore, 1 retry, 2 abort, 3 fail
  * Preserves all other GPRs except AX/flags.
  */
 invoke_int24_disk:
@@ -78,6 +127,8 @@ invoke_int24_disk:
 
 int21_handler:
     sti
+    cmp ah, 0x00
+    je dos_ah00
     cmp ah, 0x01
     je dos_ah01
     cmp ah, 0x02
@@ -94,16 +145,34 @@ int21_handler:
     je dos_ah0a
     cmp ah, 0x0B
     je dos_ah0b
+    cmp ah, 0x0C
+    je dos_ah0c
     cmp ah, 0x0D
     je dos_ah0d
     cmp ah, 0x0E
     je dos_ah0e
+    cmp ah, 0x0F
+    je dos_ah0f
+    cmp ah, 0x10
+    je dos_ah10
+    cmp ah, 0x11
+    je dos_ah11
+    cmp ah, 0x12
+    je dos_ah12
+    cmp ah, 0x14
+    je dos_ah14
+    cmp ah, 0x15
+    je dos_ah15
+    cmp ah, 0x16
+    je dos_ah16
     cmp ah, 0x19
     je dos_ah19
     cmp ah, 0x1A
     je dos_ah1a
     cmp ah, 0x25
     je dos_ah25
+    cmp ah, 0x29
+    je dos_ah29
     cmp ah, 0x2A
     je dos_ah2a
     cmp ah, 0x2B
@@ -180,6 +249,10 @@ int21_handler:
     stc
     jmp int21_iret_cf
 
+/* AH=00h — terminate with AL=exit code (same as INT 20h path) */
+dos_ah00:
+    jmp dos_terminate
+
 /* AH=0Dh — disk reset / flush buffers */
 dos_ah0d:
     call fat12_flush_fat
@@ -199,7 +272,7 @@ dos_ah30:
 dos_ah4c:
     jmp dos_terminate
 
-/* AH=31h � terminate and stay resident: AL=code, DX=paragraphs to keep */
+/* AH=31h � terminate and stay resident: AL=code, DX=paragraphs to keep */
 dos_ah31:
     jmp dos_tsr
 

@@ -151,6 +151,7 @@ _start:
 .include "firmware/src/kernel/inc/path.inc"
 .include "firmware/src/kernel/inc/files.inc"
 .include "firmware/src/kernel/inc/find.inc"
+.include "firmware/src/kernel/inc/fcb.inc"
 .include "firmware/src/kernel/inc/memory.inc"
 .include "firmware/src/kernel/inc/loader.inc"
 .include "firmware/src/kernel/inc/config.inc"
@@ -249,6 +250,10 @@ exec_pb_seg:
     .word 0
 exec_pb_off:
     .word 0
+ovl_load_seg:
+    .word 0
+ovl_reloc:
+    .word 0
 dta_seg:
     .word 0
 dta_off:
@@ -312,6 +317,8 @@ msg_rw_bad:
     .ascii "rw fail\r\n$"
 msg_com_bad:
     .ascii "com fail\r\n$"
+msg_int24:
+    .asciz "\r\nAbort, Retry, Ignore? "
 path_kernel:
     .asciz "KERNEL.SYS"
 path_rw:
@@ -382,6 +389,22 @@ find_pat:
     .space 11, 0x20
 find_dirbuf:
     .space 64, 0
+fcb_path:
+    .space 16, 0
+fcb_pos_lo:
+    .word 0
+fcb_pos_hi:
+    .word 0
+fcb_xfer:
+    .word 0
+fcb_saved_dta_seg:
+    .word 0
+fcb_saved_dta_off:
+    .word 0
+fcb_parse_wild:
+    .byte 0
+fcb_find_dta:
+    .space 128, 0
 cwd_path:
     .space 64, 0
 read_buf:

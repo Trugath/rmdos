@@ -221,8 +221,15 @@ fat12_read_lba:
     xor bh, bh                   /* read */
     call invoke_int24_disk
     pop bx
-    cmp al, 1
+    cmp al, 0                    /* Ignore */
     je .frl_ok
+    cmp al, 1                    /* Retry */
+    je fat12_read_lba
+    cmp al, 2                    /* Abort */
+    jne .frl_fail
+    mov al, 0x42
+    jmp dos_terminate
+.frl_fail:
     stc
     jmp .frl_done
 .frl_ok:
@@ -274,8 +281,15 @@ fat12_write_lba:
     mov bh, 1                    /* write */
     call invoke_int24_disk
     pop bx
-    cmp al, 1
+    cmp al, 0                    /* Ignore */
     je .fwl_ok
+    cmp al, 1                    /* Retry */
+    je fat12_write_lba
+    cmp al, 2                    /* Abort */
+    jne .fwl_fail
+    mov al, 0x42
+    jmp dos_terminate
+.fwl_fail:
     stc
     jmp .fwl_done
 .fwl_ok:

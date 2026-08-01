@@ -127,7 +127,7 @@ K8086_ROMS_DIR := emulator/k8086/roms
 
 all: bios os
 
-bios: $(U18_BIN) $(U19_BIN) install-roms
+bios: $(U18_BIN) $(U19_BIN) $(BUILD_DIR)/fdrom.bin install-roms
 
 os: $(IMAGE) install-floppy
 
@@ -135,10 +135,11 @@ os-disk.img: $(DISK_IMAGE)
 
 bios-tests: bios $(BIOS_TEST_IMGS)
 
-install-roms: $(U18_BIN) $(U19_BIN)
+install-roms: $(U18_BIN) $(U19_BIN) $(BUILD_DIR)/fdrom.bin
 	cp -f $(U18_BIN) $(K8086_ROMS_DIR)/u18.bin
 	cp -f $(U19_BIN) $(K8086_ROMS_DIR)/u19.bin
-	chmod 644 $(K8086_ROMS_DIR)/u18.bin $(K8086_ROMS_DIR)/u19.bin
+	cp -f $(BUILD_DIR)/fdrom.bin $(K8086_ROMS_DIR)/fdrom.bin
+	chmod 644 $(K8086_ROMS_DIR)/u18.bin $(K8086_ROMS_DIR)/u19.bin $(K8086_ROMS_DIR)/fdrom.bin
 
 install-floppy: $(IMAGE)
 	cp -f $(IMAGE) $(FD_IMG)
@@ -161,6 +162,17 @@ $(U18_BIN): $(U18_ELF) scripts/pack_roms.py
 
 $(U19_BIN): scripts/pack_roms.py | $(BUILD_DIR)
 	$(PYTHON) scripts/pack_roms.py --u19-out $@
+
+# Fixed Disk option ROM (C800:)
+FDROM_SRC := firmware/bios/fdrom/fdrom.s
+FDROM_LD := firmware/bios/fdrom/fdrom.ld
+$(BUILD_DIR)/fdrom.o: $(FDROM_SRC) firmware/bios/fdrom/inc/equates.inc | $(BUILD_DIR)
+	$(AS8086) --32 -o $@ $(FDROM_SRC)
+$(BUILD_DIR)/fdrom.elf: $(BUILD_DIR)/fdrom.o $(FDROM_LD)
+	$(LD) -m elf_i386 -T $(FDROM_LD) -o $@ $(BUILD_DIR)/fdrom.o
+$(BUILD_DIR)/fdrom.bin: $(BUILD_DIR)/fdrom.elf scripts/pack_fdrom.py
+	$(OBJCOPY) -O binary $< $(BUILD_DIR)/fdrom.raw.bin
+	$(PYTHON) scripts/pack_fdrom.py --input $(BUILD_DIR)/fdrom.raw.bin --output $@
 
 # --- OS floppy image ---------------------------------------------------------
 

@@ -76,6 +76,12 @@ int13_handler:
     mov ah, 0
     call fdc_do_rw
     call fdc_store_status
+    pushf
+    cmp ch, 40
+    jb .i13_read_done
+    call disk_select_720
+.i13_read_done:
+    popf
     jmp .i13_ret
 
 .i13_write:
@@ -96,10 +102,30 @@ int13_handler:
     jmp .i13_ret
 
 .i13_params:
+    /* Report 360K or 720K from last media / host hint (BDA 40:8B). */
+    push ds
+    push ax
+    mov ax, BDA_SEG
+    mov ds, ax
+    mov al, [0x8B]
+    pop ax
+    pop ds
+    cmp al, 1
+    je .i13_params_360
     /* 720 KB: 80 cyl × 2 heads × 9 spt */
     xor ax, ax
     mov bx, 0x0003
     mov cx, 0x4F09
+    mov dx, 0x0101
+    xor ah, ah
+    clc
+    jmp .i13_ret
+.i13_params_360:
+    /* 360 KB: 40 cyl × 2 heads × 9 spt */
+    call disk_select_360
+    xor ax, ax
+    mov bx, 0x0001
+    mov cx, 0x2709
     mov dx, 0x0101
     xor ah, ah
     clc
@@ -188,7 +214,7 @@ int19_handler:
     int 0x18
     jmp .i19_fail
 
-/* INT 1Eh — 720K DD diskette parameter table */
+/* INT 1Eh — 720K DD diskette parameter table (default) */
 disk_base_table:
     .byte 0xAF, 0x02             /* Specify: SRT/HUT, HLT/ND */
     .byte 0x25                   /* motor off delay (ticks) */
@@ -200,3 +226,46 @@ disk_base_table:
     .byte 0xF6                   /* format fill */
     .byte 0x0F                   /* head settle (ms) */
     .byte 0x00                   /* motor start (ticks); 0 = no wait (emulator) */
+
+/* INT 1Eh — 360K DD table (same SPT/N; milder specify) */
+disk_base_table_360:
+    .byte 0xCF, 0x02
+    .byte 0x25
+    .byte 0x02
+    .byte 0x09
+    .byte 0x2A
+    .byte 0xFF
+    .byte 0x50
+    .byte 0xF6
+    .byte 0x0F
+    .byte 0x00
+
+/* Repoint INT 1Eh to 360K table (idempotent). */
+disk_select_360:
+    push ax
+    push ds
+    xor ax, ax
+    mov ds, ax
+    mov word ptr [0x1E * 4], offset disk_base_table_360
+    mov word ptr [0x1E * 4 + 2], cs
+    mov ax, BDA_SEG
+    mov ds, ax
+    mov byte ptr [0x8B], 1
+    pop ds
+    pop ax
+    ret
+
+/* Repoint INT 1Eh to 720K table. */
+disk_select_720:
+    push ax
+    push ds
+    xor ax, ax
+    mov ds, ax
+    mov word ptr [0x1E * 4], offset disk_base_table
+    mov word ptr [0x1E * 4 + 2], cs
+    mov ax, BDA_SEG
+    mov ds, ax
+    mov byte ptr [0x8B], 3
+    pop ds
+    pop ax
+    ret

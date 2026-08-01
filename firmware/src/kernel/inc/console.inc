@@ -1,5 +1,5 @@
 /*
- * Console helpers + INT 21h character I/O (AH=01/02/09/0A/0B).
+ * Console helpers + INT 21h character I/O (AH=01/02/06/07/08/09/0A/0B/0C).
  * Assumes CS=DS for kernel data; INT 21h uses caller DS for string buffers.
  */
 
@@ -144,6 +144,35 @@ dos_ah0b:
     jz .ah0b_none
     mov al, 0xFF
 .ah0b_none:
+    clc
+    jmp int21_iret
+
+/*
+ * INT 21h AH=0Ch — flush keyboard buffer, then dispatch AL as
+ * console function 01/06/07/08/0A (others: flush only).
+ */
+dos_ah0c:
+    push ax
+.a0c_flush:
+    mov ah, 0x01
+    int 0x16
+    jz .a0c_flushed
+    mov ah, 0x00
+    int 0x16
+    jmp .a0c_flush
+.a0c_flushed:
+    pop ax
+    mov ah, al
+    cmp ah, 0x01
+    je dos_ah01
+    cmp ah, 0x06
+    je dos_ah06
+    cmp ah, 0x07
+    je dos_ah07
+    cmp ah, 0x08
+    je dos_ah08
+    cmp ah, 0x0A
+    je dos_ah0a
     clc
     jmp int21_iret
 

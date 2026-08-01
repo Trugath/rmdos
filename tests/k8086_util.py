@@ -20,17 +20,23 @@ _BIN = (
 )
 
 
-def launcher_argv(*args: str | Path, floppy_int13_shim: bool | None = None) -> list[str]:
+def launcher_argv(
+    *args: str | Path,
+    floppy_int13_shim: bool | None = None,
+    hd_int13_bios: bool | None = None,
+) -> list[str]:
     """Return a subprocess argv that starts k8086-emulator with *args.
 
-    When *floppy_int13_shim* is False, pass ``--no-floppy-int13-shim`` so the
-    guest BIOS owns floppy INT 13h through the FDC.
+    When *floppy_int13_shim* is False, pass ``--no-floppy-int13-shim``.
+    When *hd_int13_bios* is False, pass ``--no-hd-int13-bios`` (guest C800 ROM).
     """
     posix = _BIN / "k8086-emulator"
     bat = _BIN / "k8086-emulator.bat"
     extra = [str(a) for a in args]
     if floppy_int13_shim is False:
         extra.append("--no-floppy-int13-shim")
+    if hd_int13_bios is False:
+        extra.append("--no-hd-int13-bios")
 
     if os.name == "nt":
         if bat.is_file():

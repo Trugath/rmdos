@@ -120,8 +120,7 @@ def _run_one(
 def test_bios_services() -> None:
     for name in TESTS:
         _run_one(name)
-    # Default workstation path keeps the host floppy INT 13h shim.
-    _run_one("bt_equip", floppy_int13_shim=True)
+    # One smoke with the legacy host floppy INT 13h shim still enabled.
     _run_one("bt_disk", floppy_int13_shim=True)
 
 

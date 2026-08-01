@@ -74,18 +74,19 @@ Sources live under `firmware/bios/src/` (`post`, `init`, `video`, `keyboard`,
 - INT 10h (text + CGA modes 0–6): AH=00–03,05–0F including pixel read/write
   (`0Ch`/`0Dh`), CRTC cursor programming on set cursor/type, BEL beep, and
   graphics teletype scroll
-- INT 13h floppy via onboard FDC (DMA ch2 / IRQ6): AH=00–05, 08, 15–16; HD
-  remains Fixed Disk BIOS / optional host shim. k8086 defaults to a floppy INT 13h
-  host shim; `--no-floppy-int13-shim` / `K8086_FLOPPY_INT13_SHIM=0` uses guest FDC.
+- INT 13h floppy via onboard FDC (DMA ch2 / IRQ6): AH=00–05, 08, 15–16 with
+  360K/720K media via BDA hint + dual INT 1Eh tables. HD uses host Fixed Disk
+  BIOS by default, or guest C800 option ROM (`--no-hd-int13-bios`). Floppy host
+  shim is opt-in (`--floppy-int13-shim` / `K8086_FLOPPY_INT13_SHIM=1`).
   INT 14h (COM1 8250 AH=00–03), 15h (AH=86h wait; AH=80h–82h succeed; else CF), 16h
   (AH=00–02,05 stuff,10–12→00–02; Caps/Num/Scroll/Insert flags), 17h
   (printer timeout stub), 18h, 19h, 1Ah
 - INT 05h Print Screen (status at `0000:0500`; Shift+PrtSc from INT 09h)
 - IRQ0 timer (INT 08h → INT 1Ch; floppy motor timeout) and IRQ1 keyboard (INT 09h);
-  IRQ6 → INT 0Eh for FDC completion
-- Option ROM scan `C000–F400` (`AA55`, checksum, far call +3)
+  IRQ6 → INT 0Eh for FDC completion; IRQ5 → INT 0Dh for Fixed Disk (guest ROM)
+- Option ROM scan `C000–F400` (`AA55`, checksum, far call +3); Fixed Disk ROM at `C800`
 - INT 18h prints a short “no BASIC” message (U19 is not an interpreter)
-- INT 1Eh diskette parameter table tuned for **720K** (9 SPT)
+- INT 1Eh diskette parameter table (720K default; 360K selectable)
 - ROM identity: `F000:FFF5` release date, `FFFE=FEh` (XT), top-8K checksum 0
 
 Pinned absolute entry points (k8086 and XT software expect these):
@@ -112,11 +113,12 @@ Pinned absolute entry points (k8086 and XT software expect these):
 | `F000:FFF0` | Reset vector |
 | `F000:FFF5` | Release date / `FFFE` machine type |
 
-BIOS service tests, boot E2E, and FORMAT floppy E2E force the guest FDC path
-(`--no-floppy-int13-shim`). Workstation default remains the host floppy shim.
-Hard disk (`DL ≥ 0x80`) stays Fixed Disk BIOS / optional INT 13h shim. Override
-ROMs with `K8086_U18_ROM` / `K8086_U19_ROM`, `run-k8086.sh --u18/--u19`, or the
-workstation ROM picker.
+BIOS service tests, boot E2E, and FORMAT floppy E2E use the guest FDC path
+(default; `--floppy-int13-shim` re-enables the host shim for one smoke test).
+Hard disk (`DL ≥ 0x80`) uses the host Fixed Disk BIOS by default; CI HD e2e
+forces the guest C800 Fixed Disk option ROM (`--no-hd-int13-bios`). Override
+ROMs with `K8086_U18_ROM` / `K8086_U19_ROM` / `K8086_FDROM`, `run-k8086.sh`, or
+the workstation ROM picker.
 
 ## Operating system
 
@@ -144,11 +146,14 @@ Keep assembly where fixed layout, interrupt ABI, or dense hardware I/O dominate
 Use C for DOS API + string/logic tools.
 
 
-Notable INT 21h areas: console I/O, file create/open/read/write/seek/delete,
-find-first/next, MCB alloc/free/resize (including grow), EXEC with PSP/env/FCBs,
-handle dup (AH=45h/46h), file datetime (AH=57h), INT 25h/26h absolute disk,
-minimal INT 2Fh, vectors (AH=25h/35h), Ctrl-C/break, date/time, drive/cwd,
-mkdir/rmdir/chdir, attrs, rename, **AH=31h TSR**. AH=30h reports DOS 3.31.
+Notable INT 21h areas: console I/O (including AH=00 terminate and AH=0Ch
+flush+dispatch), FCB open/close/create/seq I/O/find/parse (AH=0Fh–12h/14h–16h/29h),
+handle create/open/read/write/seek/delete, find-first/next, MCB alloc/free/resize
+(including grow), EXEC (AH=4Bh AL=0 load+run, AL=3 overlay), handle dup
+(AH=45h/46h), file datetime (AH=57h), INT 25h/26h absolute disk, minimal INT 2Fh,
+vectors (AH=25h/35h), Ctrl-C (INT 23h abort) / critical error (INT 24h
+Abort/Retry/Ignore), date/time, drive/cwd, mkdir/rmdir/chdir, attrs, rename,
+**AH=31h TSR**. AH=30h reports DOS 3.31.
 
 After the FAT self-test, the kernel opens **`CONFIG.SYS`** if present (missing file
 is ignored). Supported lines: `INSTALL=` / `DEVICE=` (load+run a COM; failures
@@ -161,10 +166,10 @@ program exec, `ECHO`, `IF ERRORLEVEL` / `IF EXIST`, `GOTO`/`CALL`, redirection
 and pipes, and `AUTOEXEC.BAT`. `PATH=A:\BIN` is set in the kernel
 environment.
 
-`CHKDSK [d:]` audits the volume via INT 25h: BPB sanity, FAT1↔FAT2 compare,
+`CHKDSK [d:] [/F]` audits the volume via INT 25h: BPB sanity, FAT1↔FAT2 compare,
 directory chain walk (cross-links / orphans / bad chains), and a classic-style
-space report. `/F` is accepted but not implemented yet. Prints `CHKDSK OK` when
-the scan completes without I/O failure.
+space report. `/F` repairs FAT copies and lost chains when possible. Prints
+`CHKDSK OK` when the scan completes without I/O failure.
 
 `GZIP [src [dst]]` / `GUNZIP [src [dst]]` compress and decompress a single gzip
 member (RFC 1952, DEFLATE method 8). Zero args use stdin→stdout; one arg reads a
