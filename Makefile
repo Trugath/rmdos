@@ -41,6 +41,8 @@ NETTEST_COM := $(BUILD_DIR)/nettest.com
 GZIP_COM := $(BUILD_DIR)/gzip.com
 GUNZIP_COM := $(BUILD_DIR)/gunzip.com
 ANSI_SYS := $(BUILD_DIR)/ansi.sys
+MOUSE_COM := $(BUILD_DIR)/mouse.com
+MOUSETST_COM := $(BUILD_DIR)/mousetst.com
 ANSITST_COM := $(BUILD_DIR)/ansitst.com
 EMM_SYS := $(BUILD_DIR)/emm.sys
 EMSTST_COM := $(BUILD_DIR)/emstst.com
@@ -158,6 +160,8 @@ EMS_CONFIG := fixtures/guest/CONFIG.EMS.SYS
 STUBCFG_IMAGE := $(BUILD_DIR)/os-stubcfg.img
 STUBCFG_AUTOEXEC := fixtures/guest/AUTOEXEC.STUB.BAT
 STUBCFG_CONFIG := fixtures/guest/CONFIG.STUB.SYS
+MOUSE_IMAGE := $(BUILD_DIR)/os-mouse.img
+MOUSE_AUTOEXEC := fixtures/guest/AUTOEXEC.MOUSE.BAT
 
 BIOS_MODULES := post init video keyboard timer disk fdc misc bios_entries bios_font
 BIOS_OBJS := $(addprefix $(BUILD_DIR)/,$(addsuffix .o,$(BIOS_MODULES)))
@@ -180,7 +184,7 @@ FD_IMG := emulator/k8086/disks/fd.img
 
 K8086_ROMS_DIR := emulator/k8086/roms
 
-.PHONY: all bios os os-disk.img bios-tests clean run run-fd run-elite setup test test-bios test-fd-img test-dos-compat test-ping test-dhcp test-telnet test-net test-star test-bigexe test-elite test-dir test-format test-format-options test-sys test-format-hd test-fat16-hd test-partedit-hd test-multilet-hd test-extpart-hd test-subst test-batch test-disk test-gzip test-utils test-diskcopy test-diskcomp test-ansi test-ems test-stubcfg test-install-hd install-roms install-floppy
+.PHONY: all bios os os-disk.img bios-tests clean run run-fd run-elite setup test test-bios test-fd-img test-dos-compat test-ping test-dhcp test-telnet test-net test-star test-bigexe test-elite test-dir test-format test-format-options test-sys test-format-hd test-fat16-hd test-partedit-hd test-multilet-hd test-extpart-hd test-subst test-batch test-disk test-gzip test-utils test-diskcopy test-diskcomp test-ansi test-ems test-stubcfg test-mouse test-install-hd install-roms install-floppy
 
 all: bios os
 
@@ -262,7 +266,7 @@ $(BUILD_DIR)/$(1).elf: $(BUILD_DIR)/$(1).o $(LINK_DIR)/com.ld
 $(BUILD_DIR)/$(1).com: $(BUILD_DIR)/$(1).elf
 	$$(OBJCOPY) -O binary $$< $$@
 endef
-$(foreach t,sys partedit format compat int21x ping dhcp telnet net nettest gzip gunzip ansitst emstst clock,$(eval $(call DOS_ASM_COM_RULE,$(t))))
+$(foreach t,sys partedit format compat int21x ping dhcp telnet net nettest gzip gunzip ansitst emstst clock mouse mousetst,$(eval $(call DOS_ASM_COM_RULE,$(t))))
 
 # ANSI.SYS (device driver — linked at offset 0)
 $(BUILD_DIR)/ansi.o: $(SRC_DIR)/dos/ansi.sys.s | $(BUILD_DIR)
@@ -351,6 +355,7 @@ OS_IMAGE_COMMON_DEPS := $(BOOT_BIN) $(KERNEL_BIN) $(HELLO_COM) $(HELLO_EXE) \
 	$(COMP_COM) $(ASSIGN_COM) \
 	$(COMPAT_COM) $(INT21X_COM) $(PING_COM) $(DHCP_COM) $(TELNET_COM) $(NET_COM) $(GZIP_COM) $(GUNZIP_COM) \
 	$(ANSI_SYS) $(ANSITST_COM) $(EMM_SYS) $(EMSTST_COM) \
+	$(MOUSE_COM) $(MOUSETST_COM) \
 	$(STAR_COM) $(SAMPLE_TXT) $(DBG_SCR) $(BIG_TXT) $(SHIFT_BAT) $(INSTALL_BAT) \
 	$(EMPTY_AUTOEXEC) scripts/mkfs_fat12.py scripts/fat12.py scripts/disk.py
 
@@ -393,12 +398,14 @@ define PACK_OS_IMAGE
 		--file BIN/GUNZIP.COM=$(GUNZIP_COM) \
 		--file BIN/ANSI.SYS=$(ANSI_SYS) \
 		--file BIN/EMM.SYS=$(EMM_SYS) \
+		--file BIN/MOUSE.COM=$(MOUSE_COM) \
 		--file DEMO/HELLO.COM=$(HELLO_COM) \
 		--file DEMO/HELLO.EXE=$(HELLO_EXE) \
 		--file DEMO/COMPAT.COM=$(COMPAT_COM) \
 		--file DEMO/INT21X.COM=$(INT21X_COM) \
 		--file DEMO/ANSITST.COM=$(ANSITST_COM) \
 		--file DEMO/EMSTST.COM=$(EMSTST_COM) \
+		--file DEMO/MOUSETST.COM=$(MOUSETST_COM) \
 		--file DEMO/STAR.COM=$(STAR_COM) \
 		--file TEST/SAMPLE.TXT=$(SAMPLE_TXT) \
 		--file TEST/DBG.SCR=$(DBG_SCR) \
@@ -447,6 +454,7 @@ define PACK_OS_IMAGE_CFG
 		--file BIN/GUNZIP.COM=$(GUNZIP_COM) \
 		--file BIN/ANSI.SYS=$(ANSI_SYS) \
 		--file BIN/EMM.SYS=$(EMM_SYS) \
+		--file BIN/MOUSE.COM=$(MOUSE_COM) \
 		--file BIN/NETTEST.COM=$(NETTEST_COM) \
 		--file DEMO/HELLO.COM=$(HELLO_COM) \
 		--file DEMO/HELLO.EXE=$(HELLO_EXE) \
@@ -454,6 +462,7 @@ define PACK_OS_IMAGE_CFG
 		--file DEMO/INT21X.COM=$(INT21X_COM) \
 		--file DEMO/ANSITST.COM=$(ANSITST_COM) \
 		--file DEMO/EMSTST.COM=$(EMSTST_COM) \
+		--file DEMO/MOUSETST.COM=$(MOUSETST_COM) \
 		--file DEMO/STAR.COM=$(STAR_COM) \
 		--file TEST/SAMPLE.TXT=$(SAMPLE_TXT) \
 		--file TEST/DBG.SCR=$(DBG_SCR) \
@@ -542,11 +551,13 @@ $(BATCH_IMAGE): $(OS_IMAGE_COMMON_DEPS) $(BATCH_AUTOEXEC) $(CALLTST_BAT) $(CALLT
 		--file BIN/GZIP.COM=$(GZIP_COM) \
 		--file BIN/GUNZIP.COM=$(GUNZIP_COM) \
 		--file BIN/ANSI.SYS=$(ANSI_SYS) \
+		--file BIN/MOUSE.COM=$(MOUSE_COM) \
 		--file DEMO/HELLO.COM=$(HELLO_COM) \
 		--file DEMO/HELLO.EXE=$(HELLO_EXE) \
 		--file DEMO/COMPAT.COM=$(COMPAT_COM) \
 		--file DEMO/INT21X.COM=$(INT21X_COM) \
 		--file DEMO/ANSITST.COM=$(ANSITST_COM) \
+		--file DEMO/MOUSETST.COM=$(MOUSETST_COM) \
 		--file DEMO/STAR.COM=$(STAR_COM) \
 		--file TEST/SAMPLE.TXT=$(SAMPLE_TXT) \
 		--file TEST/DBG.SCR=$(DBG_SCR) \
@@ -585,6 +596,9 @@ $(EMS_IMAGE): $(OS_IMAGE_COMMON_DEPS) $(EMS_AUTOEXEC) $(EMS_CONFIG)
 
 $(STUBCFG_IMAGE): $(OS_IMAGE_COMMON_DEPS) $(NETTEST_COM) $(STUBCFG_AUTOEXEC) $(STUBCFG_CONFIG)
 	$(call PACK_OS_IMAGE_CFG,$@,$(STUBCFG_AUTOEXEC),$(STUBCFG_CONFIG))
+
+$(MOUSE_IMAGE): $(OS_IMAGE_COMMON_DEPS) $(MOUSE_AUTOEXEC)
+	$(call PACK_OS_IMAGE,$@,$(MOUSE_AUTOEXEC))
 
 # --- BIOS boot-sector unit-test images ---------------------------------------
 
@@ -625,7 +639,7 @@ test-bios: bios-tests
 	$(PYTHON) -m tests.test_bios_roms
 	$(PYTHON) -m tests.test_bios_services
 
-test: all bios-tests $(COMPAT_IMAGE) $(PING_IMAGE) $(DHCP_IMAGE) $(TELNET_IMAGE) $(NET_IMAGE) $(STAR_IMAGE) $(BIGEXE_IMAGE) $(DIR_IMAGE) $(FORMAT_IMAGE) $(FORMAT_HD_IMAGE) $(FAT16_HD_IMAGE) $(PARTEDIT_HD_IMAGE) $(MULTILET_HD_IMAGE) $(EXTPART_HD_IMAGE) $(SUBST_IMAGE) $(BATCH_IMAGE) $(DISK_IMAGE) $(GZIP_IMAGE) $(UTILS_IMAGE) $(DISKCOPY_IMAGE) $(DISKCOMP_IMAGE) $(ANSI_IMAGE) $(EMS_IMAGE) $(STUBCFG_IMAGE) $(INSTALL_IMAGE)
+test: all bios-tests $(COMPAT_IMAGE) $(PING_IMAGE) $(DHCP_IMAGE) $(TELNET_IMAGE) $(NET_IMAGE) $(STAR_IMAGE) $(BIGEXE_IMAGE) $(DIR_IMAGE) $(FORMAT_IMAGE) $(FORMAT_HD_IMAGE) $(FAT16_HD_IMAGE) $(PARTEDIT_HD_IMAGE) $(MULTILET_HD_IMAGE) $(EXTPART_HD_IMAGE) $(SUBST_IMAGE) $(BATCH_IMAGE) $(DISK_IMAGE) $(GZIP_IMAGE) $(UTILS_IMAGE) $(DISKCOPY_IMAGE) $(DISKCOMP_IMAGE) $(ANSI_IMAGE) $(EMS_IMAGE) $(STUBCFG_IMAGE) $(MOUSE_IMAGE) $(INSTALL_IMAGE)
 	$(PYTHON) -m tests.test_wcc
 	$(PYTHON) -m tests.test_bios_roms
 	$(PYTHON) -m tests.test_bios_services
@@ -656,6 +670,7 @@ test: all bios-tests $(COMPAT_IMAGE) $(PING_IMAGE) $(DHCP_IMAGE) $(TELNET_IMAGE)
 	$(PYTHON) -m tests.test_ansi_e2e
 	$(PYTHON) -m tests.test_ems_e2e
 	$(PYTHON) -m tests.test_stubcfg_e2e
+	$(PYTHON) -m tests.test_mouse_e2e
 	$(PYTHON) -m tests.test_install_hd_e2e
 	$(PYTHON) -m tests.starfield_alg_test
 
@@ -742,6 +757,9 @@ test-ems: $(EMS_IMAGE)
 
 test-stubcfg: $(STUBCFG_IMAGE)
 	$(PYTHON) -m tests.test_stubcfg_e2e
+
+test-mouse: $(MOUSE_IMAGE)
+	$(PYTHON) -m tests.test_mouse_e2e
 
 test-install-hd: $(INSTALL_IMAGE)
 	$(PYTHON) -m tests.test_install_hd_e2e

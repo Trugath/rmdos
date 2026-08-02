@@ -160,7 +160,7 @@ live in [`firmware/src/dos/inc/dos.h`](../firmware/src/dos/inc/dos.h).
 
 | Built with wcc (C) | Left as assembly |
 |--------------------|------------------|
-| `COMMAND.COM`, DIR, TYPE, COPY, DEL, ATTRIB, LABEL, MOVE, XCOPY, CHKDSK, FIND, CHOICE, MORE, MEM, FC, TREE, SORT, EDIT, DEBUG, MODE, SUBST, COMP, ASSIGN, DEMO/STAR | Boot, kernel, BIOS; FORMAT, PARTEDIT, SYS; PING, DHCP, TELNET, NET; GZIP, GUNZIP; HELLO, COMPAT |
+| `COMMAND.COM`, DIR, TYPE, COPY, DEL, ATTRIB, LABEL, MOVE, XCOPY, CHKDSK, FIND, CHOICE, MORE, MEM, FC, TREE, SORT, EDIT, DEBUG, MODE, SUBST, COMP, ASSIGN, DEMO/STAR | Boot, kernel, BIOS; FORMAT, PARTEDIT, SYS; PING, DHCP, TELNET, NET; GZIP, GUNZIP; HELLO, COMPAT; MOUSE, MOUSETST |
 
 Keep assembly where fixed layout, interrupt ABI, or dense hardware I/O dominate
 (boot sector, kernel IVT/`iret`/EXEC, NE2000, INT 13h format/partition tools).
@@ -385,15 +385,17 @@ A:\
   AUTOEXEC.BAT
   BIN\     DIR TYPE COPY DEL ATTRIB LABEL MOVE XCOPY CHKDSK SYS PARTEDIT
            FORMAT FIND CHOICE MORE MEM FC TREE SORT EDIT DEBUG DISKCOPY
-           DISKCOMP MODE SUBST COMP ASSIGN PING DHCP TELNET NET GZIP GUNZIP ANSI.SYS
+           DISKCOMP MODE SUBST COMP ASSIGN PING DHCP TELNET NET GZIP GUNZIP
+           ANSI.SYS EMM.SYS MOUSE.COM
             (os-net.img also: NETTEST)
-  DEMO\    HELLO.COM HELLO.EXE COMPAT.COM INT21X.COM ANSITST.COM STAR.COM
+  DEMO\    HELLO.COM HELLO.EXE COMPAT.COM INT21X.COM ANSITST.COM EMSTST.COM
+           MOUSETST.COM STAR.COM
   TEST\    SAMPLE.TXT DBG.SCR BIG.TXT
 ```
 
 Packing fixtures live in [`fixtures/guest/`](../fixtures/guest/README.md)
 (AUTOEXEC variants for compat / ping / dhcp / telnet / net / star / batch / disk / format /
-partedit / multilet / install / fat16 / ansi gates). `INSTALL.BAT` on the floppy walks PARTEDIT → FORMAT C: /S
+partedit / multilet / install / fat16 / ansi / mouse gates). `INSTALL.BAT` on the floppy walks PARTEDIT → FORMAT C: /S
 → DIR C: for hard-disk installs. `os-net.img` also packs `CONFIG.SYS` with
 `INSTALL=A:\BIN\NET.COM`. `os-ansi.img` packs `CONFIG.SYS` with
 `DEVICE=A:\BIN\ANSI.SYS`.
@@ -434,11 +436,26 @@ fallback (`bt_int19_hd`), ROM identity/checksum, IBM entry trampolines,
 Ctrl-Break→INT 1Bh (`bt_brk`), INT 13h AH=17/18 (`bt_fdc_type`), plus
 `bt_readchar`/`bt_writech`/`bt_kbd_read`/`bt_int13_err`/`bt_hd_verify`/
 `bt_motor`/`bt_timer_of`. Host-only inject assists: `0x8901` scancode,
-`0x8902` FDC disk-change. COM2/LPT2 work when ISA cards populate BDA bases
+`0x8902` FDC disk-change, `0x8903` Microsoft serial mouse event (buttons, dx,
+dy → COM1 RX). COM2/LPT2 work when ISA cards populate BDA bases
 (POST probes `2F8`/`278`); COM3–4 / LPT3 remain out of scope. Conventional
 memory above motherboard RAM and adapter-hole UMB are provided by the
 `mem-expansion` ISA card (not XMS/A20). Expanded memory uses the `ems-window`
 page-frame card plus `BIN\EMM.SYS` (LIM 3.2 INT 67h).
+
+### Serial mouse (COM1 + `MOUSE.COM`)
+
+XT-class path: host relative Δx/Δy + buttons → Microsoft 7-bit 1200 baud
+3-byte packets → motherboard COM1 `Uart8250.enqueueRx` (IRQ4 line exists;
+guest driver polls RBR from INT 33h). `HostApi.sendMouseEvent` and console
+click-to-grab / Esc-to-release feed the same adapter; right-click paste stays
+active only while ungrabbed. Guest apps need clean-room `BIN\MOUSE.COM`
+(INT 33h TSR: reset/show/hide/get/set pos, min/max, motion counters, event
+callback, soft text cursor). Load with `BIN\MOUSE` (optional `MOUSE /U` to
+unload). COM1 (`40:00` / `0x3F8`) is the first target; COM2 would need the
+same RX inject on a UART card. BIOS INT 14h stays generic serial — the driver
+programs the UART directly. E2E: `make test-mouse` (`os-mouse.img`, inject
+port `0x8903`, `DEMO\MOUSETST`).
 ## References
 
 - IBM 5160 Technical Reference (behavioral contract for BIOS)
