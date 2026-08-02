@@ -27,6 +27,11 @@ MARKERS = (
     "ONE",
     "TWO",
     "FOR OK",
+    "BREAK is ON",
+    "IFSTR OK",
+    "IFNOT OK",
+    "SHIFT OK",
+    "EXIT OK",
     "BATCH OK",
 )
 

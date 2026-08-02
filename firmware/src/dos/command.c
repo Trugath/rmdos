@@ -18,15 +18,15 @@ static char arg2[64] = { 0 };
 static char cwd[64] = { 0 };
 static char pattern[64] = { 0 };
 static char dta[DTA_SIZE] = { 0 };
-static char copybuf[128] = { 0 };
+static char copybuf[64] = { 0 };
 static char pipe_rhs[82] = { 0 };
 static char redir_name[64] = { 0 };
-static char exec_tail[128] = { 0 };
+static char exec_tail[96] = { 0 };
 static char exec_pb[14] = { 0 };
 static char fcb1[16] = { 0 };
 static char fcb2[16] = { 0 };
-static char batch_names[256] = { 0 };
-static char batch_args[1280] = { 0 };
+static char batch_names[128] = { 0 };
+static char batch_args[160] = { 0 };
 static char goto_name[64] = { 0 };
 static char last_set[80] = { 0 };
 static char prompt_fmt[80] = { '$', 'p', '$', 'g', 0 };
@@ -45,8 +45,37 @@ static int saved_stdout;
 static int dir_count;
 static int dir_bytes;
 static int verify_on;
+static int break_on;
+static int batch_argc;
+static int batch_abort;
 
-/* DOS calls which are not shared by the other Small-C tools. */
+void dos_set_verify(int on)
+{
+    asm("mov al, [bp+4]");
+    asm("mov ah, 0x2E");
+    asm("int 0x21");
+    asm("push cs");
+    asm("pop ds");
+}
+
+void dos_set_break(int on)
+{
+    asm("mov dl, [bp+4]");
+    asm("mov ax, 0x3301");
+    asm("int 0x21");
+    asm("push cs");
+    asm("pop ds");
+}
+
+int dos_get_break(void)
+{
+    asm("mov ax, 0x3300");
+    asm("int 0x21");
+    asm("xor ah, ah");
+    asm("mov al, dl");
+    asm("push cs");
+    asm("pop ds");
+}
 int dos_chdir(char *path)
 {
     asm("mov dx, [bp+4]");
@@ -192,15 +221,6 @@ void dos_set_time(int hour, int min, int sec)
     asm("mov dh, [bp+4]");
     asm("xor dl, dl");
     asm("mov ah, 0x2D");
-    asm("int 0x21");
-    asm("push cs");
-    asm("pop ds");
-}
-
-void dos_set_verify(int on)
-{
-    asm("mov al, [bp+4]");
-    asm("mov ah, 0x2E");
     asm("int 0x21");
     asm("push cs");
     asm("pop ds");
@@ -733,6 +753,118 @@ void do_verify(void)
     }
 }
 
+void do_break(void)
+{
+    skip_spaces();
+    if (!next_token(arg1, PATH_MAX)) {
+        break_on = dos_get_break();
+        if (break_on) print_dollar("BREAK is ON\r\n$");
+        else print_dollar("BREAK is OFF\r\n$");
+        return;
+    }
+    if (str_eq(arg1, "ON")) {
+        break_on = 1;
+        dos_set_break(1);
+        print_dollar("BREAK OK\r\n$");
+    } else if (str_eq(arg1, "OFF")) {
+        break_on = 0;
+        dos_set_break(0);
+        print_dollar("BREAK OK\r\n$");
+    } else {
+        print_dollar("BREAK?\r\n$");
+    }
+}
+
+void clear_batch_args(void)
+{
+    int i;
+    i = 0;
+    while (i < 160) {
+        buf_set(batch_args, i, 0);
+        i = i + 1;
+    }
+    batch_argc = 0;
+}
+
+void collect_batch_args(void)
+{
+    clear_batch_args();
+    while (batch_argc < 9) {
+        if (!next_token(arg2, 16)) {
+            break;
+        }
+        str_copy(buf_addr(batch_args, batch_argc * 16), arg2, 16);
+        batch_argc = batch_argc + 1;
+    }
+}
+
+void do_shift(void)
+{
+    int i;
+    int j;
+    i = 0;
+    while (i < 8) {
+        j = 0;
+        while (j < 16) {
+            buf_set(batch_args, i * 16 + j, buf_get(batch_args, (i + 1) * 16 + j));
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    j = 0;
+    while (j < 16) {
+        buf_set(batch_args, 8 * 16 + j, 0);
+        j = j + 1;
+    }
+    if (batch_argc > 0) {
+        batch_argc = batch_argc - 1;
+    }
+    print_dollar("SHIFT OK\r\n$");
+}
+
+void do_exit(void)
+{
+    if (batch_depth > 0) {
+        batch_abort = 1;
+        print_dollar("EXIT OK\r\n$");
+        return;
+    }
+    print_dollar("Primary\r\n$");
+}
+
+void expand_batch_args(void)
+{
+    int i;
+    int o;
+    int c;
+    int n;
+    char out[82];
+    i = 0;
+    o = 0;
+    while (buf_get(cmd, i) != 0 && o < 80) {
+        c = buf_get(cmd, i);
+        if (c == '%' && buf_get(cmd, i + 1) >= '1' && buf_get(cmd, i + 1) <= '9') {
+            n = buf_get(cmd, i + 1) - '1';
+            i = i + 2;
+            {
+                int j;
+                j = 0;
+                while (buf_get(batch_args, n * 16 + j) != 0 && o < 80) {
+                    buf_set(out, o, buf_get(batch_args, n * 16 + j));
+                    o = o + 1;
+                    j = j + 1;
+                }
+            }
+        } else {
+            buf_set(out, o, c);
+            o = o + 1;
+            i = i + 1;
+        }
+    }
+    buf_set(out, o, 0);
+    str_copy(cmd, out, LINE_MAX);
+}
+
 void do_ctty(void)
 {
     int h;
@@ -967,11 +1099,15 @@ void do_batch(char *name)
     }
     slot = batch_depth;
     batch_handles[slot] = h;
-    base = slot * 64;
-    str_copy(buf_addr(batch_names, base), name, 64);
+    base = slot * 32;
+    str_copy(buf_addr(batch_names, base), name, 32);
     batch_depth = batch_depth + 1;
+    batch_abort = 0;
     n = 0;
     while (1) {
+        if (batch_abort) {
+            break;
+        }
         n = 0;
         while (n < LINE_MAX) {
             c = dos_read(h, copybuf, 1);
@@ -994,6 +1130,7 @@ void do_batch(char *name)
         if (buf_get(cmd, 0) == '@') {
             str_copy(cmd, buf_addr(cmd, 1), LINE_MAX);
         }
+        expand_batch_args();
         label = 0;
         if (buf_get(cmd, 0) == ':') {
             cursor = buf_addr(cmd, 1);
@@ -1018,6 +1155,11 @@ void do_if(void)
     int exists;
     int h;
     int i;
+    int j;
+    int eq;
+    int negate;
+    char left[64];
+    char right[64];
     next_token(arg1, PATH_MAX);
     if (str_eq(arg1, "ERRORLEVEL")) {
         next_token(arg1, PATH_MAX);
@@ -1034,25 +1176,93 @@ void do_if(void)
         }
         return;
     }
+    negate = 0;
     exists = 0;
     if (str_eq(arg1, "NOT")) {
+        negate = 1;
         exists = 1;
         next_token(arg1, PATH_MAX);
     }
-    if (!str_eq(arg1, "EXIST")) {
+    if (str_eq(arg1, "EXIST")) {
+        next_token(arg1, PATH_MAX);
+        h = dos_open(arg1, 0);
+        if (h != -1) {
+            dos_close(h);
+            if (!exists) {
+                skip_spaces();
+                str_copy(cmd, buf_addr(cmd, cursor - buf_addr(cmd, 0)), LINE_MAX);
+                dispatch();
+            }
+        } else {
+            if (exists) {
+                skip_spaces();
+                str_copy(cmd, buf_addr(cmd, cursor - buf_addr(cmd, 0)), LINE_MAX);
+                dispatch();
+            }
+        }
         return;
     }
-    next_token(arg1, PATH_MAX);
-    h = dos_open(arg1, 0);
-    if (h != -1) {
-        dos_close(h);
-        if (!exists) {
+    /* IF [NOT] string1==string2 command */
+    i = 0;
+    eq = -1;
+    while (buf_get(arg1, i) != 0) {
+        if (buf_get(arg1, i) == '=' && buf_get(arg1, i + 1) == '=') {
+            eq = i;
+            break;
+        }
+        i = i + 1;
+    }
+    if (eq < 0) {
+        str_copy(left, arg1, 64);
+        if (!next_token(arg1, PATH_MAX)) {
+            return;
+        }
+        if (!str_eq(arg1, "==")) {
+            /* token may be ==right or == alone */
+            if (buf_get(arg1, 0) == '=' && buf_get(arg1, 1) == '=') {
+                j = 0;
+                i = 2;
+                while (buf_get(arg1, i) != 0) {
+                    buf_set(right, j, buf_get(arg1, i));
+                    j = j + 1;
+                    i = i + 1;
+                }
+                buf_set(right, j, 0);
+            } else {
+                return;
+            }
+        } else {
+            if (!next_token(right, 64)) {
+                return;
+            }
+        }
+    } else {
+        j = 0;
+        i = 0;
+        while (i < eq) {
+            buf_set(left, j, buf_get(arg1, i));
+            j = j + 1;
+            i = i + 1;
+        }
+        buf_set(left, j, 0);
+        j = 0;
+        i = eq + 2;
+        while (buf_get(arg1, i) != 0) {
+            buf_set(right, j, buf_get(arg1, i));
+            j = j + 1;
+            i = i + 1;
+        }
+        buf_set(right, j, 0);
+    }
+    eq = str_eq(left, right);
+    if (negate) {
+        if (!eq) {
             skip_spaces();
             str_copy(cmd, buf_addr(cmd, cursor - buf_addr(cmd, 0)), LINE_MAX);
             dispatch();
         }
     } else {
-        if (exists) {
+        if (eq) {
             skip_spaces();
             str_copy(cmd, buf_addr(cmd, cursor - buf_addr(cmd, 0)), LINE_MAX);
             dispatch();
@@ -1180,15 +1390,28 @@ void dispatch_plain(void)
     if (str_eq(prog, "TIME")) { do_time(); return; }
     if (str_eq(prog, "VOL")) { do_vol(); return; }
     if (str_eq(prog, "VERIFY")) { do_verify(); return; }
+    if (str_eq(prog, "BREAK")) { do_break(); return; }
+    if (str_eq(prog, "SHIFT")) { do_shift(); return; }
+    if (str_eq(prog, "EXIT")) { do_exit(); return; }
     if (str_eq(prog, "CTTY")) { do_ctty(); return; }
     if (str_eq(prog, "FOR")) { do_for(); return; }
     if (str_eq(prog, "IF")) { do_if(); return; }
-    if (str_eq(prog, "CALL")) { if (next_token(arg1, PATH_MAX)) do_batch(arg1); return; }
+    if (str_eq(prog, "CALL")) {
+        if (next_token(arg1, PATH_MAX)) {
+            collect_batch_args();
+            do_batch(arg1);
+        }
+        return;
+    }
     if (str_eq(prog, "GOTO")) {
         if (next_token(goto_name, PATH_MAX)) goto_active = 1;
         return;
     }
-    if (str_has(prog, '.') && str_eq(buf_addr(prog, str_len(prog) - 4), ".BAT")) { do_batch(prog); return; }
+    if (str_has(prog, '.') && str_eq(buf_addr(prog, str_len(prog) - 4), ".BAT")) {
+        collect_batch_args();
+        do_batch(prog);
+        return;
+    }
     str_copy(prog_base, prog, PATH_MAX);
     make_exec_tail();
     if (!try_exec_name()) {

@@ -1,0 +1,3 @@
+ECHO %1
+SHIFT
+ECHO %1
