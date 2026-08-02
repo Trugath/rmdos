@@ -21,7 +21,7 @@ rmdos/
 |   |-- build/          # Generated ROMs, os.img, logs
 |-- fixtures/guest/     # AUTOEXEC variants + SAMPLE.TXT
 |-- scripts/            # Assembler wrapper, mkimg, run-k8086, wcc
-|-- docs/               # Architecture
+|-- docs/               # Architecture + compatibility matrix
 |-- tests/              # Host-side / E2E tests
 |-- setup.sh            # Init submodule + build k8086 CLI
 |-- Makefile
@@ -34,14 +34,37 @@ rmdos/
 - Develop and boot under [k8086](https://github.com/Trugath/k8086)
 
 Architecture: [`docs/architecture.md`](docs/architecture.md).
+Compatibility matrix: [`docs/compatibility.md`](docs/compatibility.md).
 
 ## Prerequisites
 
 - Git (submodule for k8086)
 - JDK **21+** (Gradle can download a toolchain; a host `java` is recommended)
 - Assembler toolchain: GNU `as` / `ld` / `objcopy` targeting `elf_i386`
-  (Linux/macOS package tools, or MinGW under `tools/host/` on Windows)
+  (Linux/macOS packages, or the bundled MinGW tools under `tools/host/` on Windows)
 - Python 3
+
+### Windows host
+
+Prefer **Git Bash** or **MSYS2** so `./setup.sh` and the Makefile recipes run as
+written. From the repo root:
+
+1. Install JDK 21+ and ensure `java -version` works in that shell.
+2. Install Python 3 (`python3` or `py -3`; the Makefile uses `python3`).
+3. Put the bundled assembler on `PATH` (or use an MSYS2 `mingw-w64` binutils that
+   supports `elf_i386`):
+
+   ```bash
+   export PATH="$PWD/tools/host/bin:$PWD/tools/host/i686-elf/bin:$PATH"
+   as --version    # GNU as
+   ld -V           # must list elf_i386
+   ```
+
+4. `./setup.sh` then `make` / `make test`.
+
+**WSL2** works the same as Linux once JDK 21+, Python 3, and `binutils` (`as`/`ld`
+with `elf_i386`) are installed inside the distro; run `setup.sh` from the WSL
+checkout (not a `/mnt/c/...` tree if Gradle/file watching misbehaves).
 
 ## Clone and build
 
@@ -92,7 +115,7 @@ defaults (`make bios` / `make install-roms`). Override at runtime with
 1. CPU reset at `0xFFFF0` far-jumps to `F000:E05B` (POST).
 2. POST initializes chipset/BDA/IVT, scans option ROMs, then INT 19h.
 3. INT 19h loads the floppy boot sector to `0000:7C00`.
-4. Boot reads the FAT12 `RFAT1` loader sector, loads `KERNEL.SYS` into `0070:0000`.
+4. Boot reads the FAT12/FAT16 `RFAT1` loader sector, loads `KERNEL.SYS` into `0070:0000`.
 5. Kernel installs INT 20h/21h, runs a quiet FAT R/W self-check, then starts
    `COMMAND.COM` (empty `AUTOEXEC.BAT` → interactive `A:\>` prompt). The image
    layout is `BIN\` (tools including FIND/CHOICE/MORE/FORMAT), `DEMO\` (HELLO/COMPAT/STAR),

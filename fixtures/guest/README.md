@@ -1,7 +1,7 @@
 # Image fixtures and AUTOEXEC variants
 
-`SAMPLE.TXT` and AUTOEXEC scripts for packing `os*.img`. FIND/CHOICE/MORE are
-**rmDOS** tools built from `firmware/src/dos/` into `BIN\`.
+`SAMPLE.TXT` and AUTOEXEC/CONFIG scripts for packing `os*.img`. FIND/CHOICE/MORE
+and the rest of `BIN\` are **rmDOS** tools built from `firmware/src/dos/`.
 
 | File | Role |
 |------|------|
@@ -17,6 +17,7 @@
 | `AUTOEXEC.ANSI.BAT` | `DEMO\ANSITST` + `PROMPT $e…` gate for `os-ansi.img` |
 | `CONFIG.EMS.SYS` | `DEVICE=A:\BIN\EMM.SYS` for LIM EMS (`os-ems.img`; needs `ems-window` card) |
 | `AUTOEXEC.EMS.BAT` | `DEMO\EMSTST` gate for `os-ems.img` |
+| `CONFIG.STUB.SYS` / `AUTOEXEC.STUB.BAT` | Advisory CONFIG no-ops + LASTDRIVE (`os-stubcfg.img`) |
 | `AUTOEXEC.MOUSE.BAT` | `BIN\MOUSE` then `DEMO\MOUSETST` for `os-mouse.img` / `make test-mouse` (INT 33h after COM1 inject `0x8903`) |
 | `AUTOEXEC.STAR.BAT` | `DEMO\STAR` for `os-star.img` |
 | `AUTOEXEC.BIGEXE.BAT` | `DEMO\BIGEXE.EXE` streaming MZ gate (`os-bigexe.img`) |
@@ -37,10 +38,14 @@
 | `AUTOEXEC.DISKCOPY.BAT` | `DISKCOPY A: B: /Y` for `os-diskcopy.img` |
 | `AUTOEXEC.DISKCOMP.BAT` | `DISKCOPY` then `DISKCOMP A: B: /Y` for `os-diskcomp.img` |
 | `DBG.SCR` / `BIG.TXT` / `SHIFT.BAT` | DEBUG script, >4 KiB EDIT fixture, SHIFT `%1` helper |
+| `CALLTST.BAT` / `CALLTST2.BAT` | Nested `CALL` helpers for the batch gate |
 | `INSTALL.BAT` | Hard-disk install helper: PARTEDIT /CREATE → FORMAT C: /S → DIR C: (on every `os*.img`) |
 | `AUTOEXEC.INSTALL.BAT` | Calls `INSTALL.BAT` for `os-install.img` / HD install e2e |
 
 ## Image layout
+
+Default packed `os.img` / k8086 `disks/fd.img` (720 KB FAT12) — keep in sync with
+[`docs/architecture.md`](../../docs/architecture.md):
 
 ```
 A:\
@@ -50,15 +55,19 @@ A:\
   AUTOEXEC.BAT
   BIN\     DIR TYPE COPY DEL ATTRIB LABEL MOVE XCOPY CHKDSK SYS PARTEDIT
            FORMAT FIND CHOICE MORE MEM FC TREE SORT EDIT DEBUG DISKCOPY
-           DISKCOMP MODE SUBST PING DHCP TELNET NET GZIP GUNZIP ANSI.SYS
-  DEMO\    HELLO.COM HELLO.EXE COMPAT.COM ANSITST.COM STAR.COM
+           DISKCOMP MODE SUBST COMP ASSIGN PING DHCP TELNET NET GZIP GUNZIP
+           ANSI.SYS EMM.SYS MOUSE.COM CLOCK.COM
+            (os-net.img also: NETTEST)
+  DEMO\    HELLO.COM HELLO.EXE COMPAT.COM INT21X.COM ANSITST.COM EMSTST.COM
+           MOUSETST.COM STAR.COM
   TEST\    SAMPLE.TXT DBG.SCR BIG.TXT
   SHIFT.BAT
 ```
 
 `PATH=A:\BIN` is set in the kernel environment so tools work from `A:\>`.
 Optional `CONFIG.SYS` (not on default images) can `INSTALL=` `BIN\NET.COM` for a
-resident NE2000 stack, or `DEVICE=` `BIN\ANSI.SYS` for ANSI CON filtering.
+resident NE2000 stack, `DEVICE=` `BIN\ANSI.SYS` for ANSI CON filtering, or
+`DEVICE=` `BIN\EMM.SYS` for LIM EMS.
 
 `FORMAT [d:] [/S] [/Y] [/V[:label]] [/F:360|720|1200|1.2|1440] [/1] [/4] [/8]`
 builds a FAT12 or FAT16 filesystem from INT 13h geometry (floppy or HDD up to
