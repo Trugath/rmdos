@@ -48,10 +48,10 @@ _start:
     int 0x16
     jnz .fail_kbd
 
-    /* INT 5 → status FFh with stub printer */
+    /* INT 5 → status 00h with working LPT1 */
     mov byte ptr [0x0500], 0
     int 0x05
-    cmp byte ptr [0x0500], 0xFF
+    cmp byte ptr [0x0500], 0
     jne .fail_prtsc
 
     push cs

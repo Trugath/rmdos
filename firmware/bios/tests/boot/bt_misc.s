@@ -4,7 +4,7 @@
 .global _start
 
 /*
- * Misc BIOS stubs/edges: INT 17 timeout, INT 14 bad DX, INT 15 AH=81/82/83.
+ * Misc BIOS: INT 17 LPT1 success + DX≠0 timeout, INT 14 bad DX, INT 15 edges.
  */
 
 _start:
@@ -15,12 +15,33 @@ _start:
     mov sp, 0x7c00
     sti
 
-    /* INT 17h — printer absent → AH bit0 timeout */
-    xor ah, ah
+    /* INT 17h DX=0 — write 'A' succeeds (no timeout bit) */
+    mov ah, 0
+    mov al, 'A'
     xor dx, dx
     int 0x17
     test ah, 0x01
-    jz .fail_prn
+    jnz .fail_prn
+
+    /* Status / init also succeed */
+    mov ah, 2
+    xor dx, dx
+    int 0x17
+    test ah, 0x01
+    jnz .fail_prn
+    mov ah, 1
+    xor dx, dx
+    int 0x17
+    test ah, 0x01
+    jnz .fail_prn
+
+    /* DX≠0 → timeout */
+    mov ah, 0
+    mov al, 'B'
+    mov dx, 1
+    int 0x17
+    test ah, 0x01
+    jz .fail_prn2
 
     /* INT 14h DX≠0 → timeout bit */
     mov ah, 0x03
@@ -52,6 +73,11 @@ _start:
     pop ds
     mov si, offset msg_prn
     call fail_and_halt
+.fail_prn2:
+    push cs
+    pop ds
+    mov si, offset msg_prn2
+    call fail_and_halt
 .fail_com:
     push cs
     pop ds
@@ -72,6 +98,8 @@ name:
     .asciz "bt_misc"
 msg_prn:
     .asciz "bt_misc:prn"
+msg_prn2:
+    .asciz "bt_misc:prn2"
 msg_com:
     .asciz "bt_misc:com"
 msg_ok:

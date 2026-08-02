@@ -4,7 +4,7 @@
 .global _start
 
 /*
- * INT 5 Print Screen: with INT 17 stub, status at 0000:0500 becomes FFh.
+ * INT 5 Print Screen: with working INT 17 LPT1, status at 0000:0500 becomes 00h.
  */
 
 _start:
@@ -17,7 +17,7 @@ _start:
 
     mov byte ptr [0x0500], 0
     int 0x05
-    cmp byte ptr [0x0500], 0xFF
+    cmp byte ptr [0x0500], 0
     jne .fail_status
 
     /* Re-entry while "busy" is ignored — force status=1 then INT 5 keeps it. */

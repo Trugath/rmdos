@@ -33,6 +33,10 @@ int13_handler:
     je .i13_dasd
     cmp ah, 0x16
     je .i13_change
+    cmp ah, 0x17
+    je .i13_set_dasd
+    cmp ah, 0x18
+    je .i13_set_media
     mov ah, 0x01
     stc
     jmp .i13_ret
@@ -187,6 +191,59 @@ int13_handler:
 .i13_nochg:
     xor ah, ah
     clc
+    jmp .i13_ret
+
+.i13_set_dasd:
+    /* AH=17h set DASD type: AL=type for drive DL; store BDA 40:8C+DL */
+    cmp dl, 1
+    ja .i13_sd_bad
+    push ds
+    mov bx, BDA_SEG
+    mov ds, bx
+    mov bx, 0x8C
+    add bl, dl
+    mov [bx], al
+    pop ds
+    xor ah, ah
+    clc
+    jmp .i13_ret
+.i13_sd_bad:
+    mov ah, 0x01
+    stc
+    jmp .i13_ret
+
+.i13_set_media:
+    /* AH=18h set media for format: CH=max track, CL=SPT → select table */
+    cmp dl, 1
+    ja .i13_sm_bad
+    cmp cl, 18
+    jae .i13_sm_144
+    cmp cl, 15
+    jae .i13_sm_120
+    cmp ch, 79
+    jae .i13_sm_720
+    call disk_select_360
+    jmp .i13_sm_ok
+.i13_sm_720:
+    call disk_select_720
+    jmp .i13_sm_ok
+.i13_sm_120:
+    call disk_select_1200
+    jmp .i13_sm_ok
+.i13_sm_144:
+    call disk_select_1440
+.i13_sm_ok:
+    push ds
+    xor ax, ax
+    mov ds, ax
+    les di, dword ptr [0x1E * 4]
+    pop ds
+    xor ah, ah
+    clc
+    jmp .i13_ret
+.i13_sm_bad:
+    mov ah, 0x01
+    stc
     jmp .i13_ret
 
 .i13_ret:

@@ -64,6 +64,7 @@ TESTS = [
     "bt_hd_rw",
     "bt_kbd_irq",
     "bt_kbd_prtsc",
+    "bt_brk",
     "bt_int18",
     "bt_chgline",
 ]

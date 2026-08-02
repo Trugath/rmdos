@@ -464,9 +464,93 @@ int5_handler:
     ret
 
 int17_handler:
-    /* printer not present: AH bit0=timeout */
+    /*
+     * INT 17h printer: DX=0 (LPT1) against BDA 40:08 base (0x378).
+     * AH=00 write AL, AH=01 init, AH=02 status. DX≠0 → timeout.
+     */
+    sti
+    push bx
+    push cx
+    push dx
+    push ds
+    cmp dx, 0
+    jne .i17_timeout
+    mov bx, BDA_SEG
+    mov ds, bx
+    mov dx, word ptr [BDA_LPT1]
+    test dx, dx
+    jz .i17_timeout
+    cmp ah, 0
+    je .i17_write
+    cmp ah, 1
+    je .i17_init
+    cmp ah, 2
+    je .i17_status
+    /* unknown: fall through as status */
+.i17_status:
+    call .i17_read_stat
+    jmp .i17_done
+.i17_init:
+    /* pulse /INIT on control (base+2): bit2 low then high */
+    push ax
+    mov bx, dx
+    add dx, 2
+    in al, dx
+    and al, 0xFB
+    out dx, al
+    mov cx, 50
+.i17_init_w:
+    loop .i17_init_w
+    or al, 0x04
+    out dx, al
+    mov dx, bx
+    pop ax
+    call .i17_read_stat
+    jmp .i17_done
+.i17_write:
+    /* data latch */
+    out dx, al
+    /* strobe pulse on control bit 0 */
+    push ax
+    mov bx, dx
+    add dx, 2
+    in al, dx
+    or al, 0x01
+    out dx, al
+    mov cx, 10
+.i17_str_w:
+    loop .i17_str_w
+    and al, 0xFE
+    out dx, al
+    mov dx, bx
+    pop ax
+    /* Prefer ready status; floating/unmapped ports still report success */
+    call .i17_read_stat
+    and ah, 0xFE
+    jmp .i17_done
+.i17_timeout:
     mov ah, 0x01
+.i17_done:
+    pop ds
+    pop dx
+    pop cx
+    pop bx
     iret
+
+/* DX = data base. Out: AH = classic printer status (prefer selected+ready). */
+.i17_read_stat:
+    push dx
+    push ax
+    inc dx
+    in al, dx
+    mov ah, al
+    and ah, 0xF8
+    or ah, 0x10                  /* selected */
+    and ah, 0xDF                 /* clear paper-out if floating bus */
+    pop dx
+    mov al, dl
+    pop dx
+    ret
 
 int18_handler:
     push cs

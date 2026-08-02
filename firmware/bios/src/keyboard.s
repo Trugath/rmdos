@@ -70,8 +70,15 @@ isr_09:
     xor byte ptr [BDA_KBD_FLAG0], 0x20
     jmp .k09_eoi
 .k09_not_num:
-    cmp ah, 0x46                      /* Scroll Lock */
+    cmp ah, 0x46                      /* Scroll Lock / Break */
     jne .k09_post_esc
+    /* Ctrl+Break (make 46h with Ctrl) → BDA flag + INT 1Bh */
+    test byte ptr [BDA_KBD_FLAG0], 0x04
+    jz .k09_scroll
+    or byte ptr [BDA_KBD_FLAG1], 0x80  /* Ctrl-Break latched */
+    int 0x1B
+    jmp .k09_eoi
+.k09_scroll:
     xor byte ptr [BDA_KBD_FLAG0], 0x10
     jmp .k09_eoi
 

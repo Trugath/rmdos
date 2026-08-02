@@ -4,7 +4,7 @@
 .global _start
 
 /*
- * Shift+PrtSc via INT 09 → INT 05; status at 0000:0500 becomes FFh.
+ * Shift+PrtSc via INT 09 → INT 05; status at 0000:0500 becomes 00h (LPT1 OK).
  */
 
 .equ SCAN_INJECT, 0x8901
@@ -30,7 +30,7 @@ _start:
     out dx, al
     hlt
 
-    cmp byte ptr [0x0500], 0xFF
+    cmp byte ptr [0x0500], 0
     jne .fail_status
 
     push cs
