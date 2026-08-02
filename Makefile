@@ -42,7 +42,7 @@ GZIP_COM := $(BUILD_DIR)/gzip.com
 GUNZIP_COM := $(BUILD_DIR)/gunzip.com
 
 # wcc C COM tools (same basename: foo.c -> foo.com), plus starfield.c -> star.com
-DOS_C_TOOLS := command dir type copy del attrib label move xcopy chkdsk find choice more mem fc tree sort edit debug diskcopy
+DOS_C_TOOLS := command dir type copy del attrib label move xcopy chkdsk find choice more mem fc tree sort edit debug diskcopy diskcomp mode
 COMMAND_COM := $(BUILD_DIR)/command.com
 DIR_COM := $(BUILD_DIR)/dir.com
 TYPE_COM := $(BUILD_DIR)/type.com
@@ -63,6 +63,8 @@ SORT_COM := $(BUILD_DIR)/sort.com
 EDIT_COM := $(BUILD_DIR)/edit.com
 DEBUG_COM := $(BUILD_DIR)/debug.com
 DISKCOPY_COM := $(BUILD_DIR)/diskcopy.com
+DISKCOMP_COM := $(BUILD_DIR)/diskcomp.com
+MODE_COM := $(BUILD_DIR)/mode.com
 
 STAR_C := $(SRC_DIR)/dos/starfield.c
 STAR_ASM := $(BUILD_DIR)/starfield.s
@@ -75,6 +77,9 @@ WCC_DEPS := $(DOS_INC)/dos.h scripts/wcc.py scripts/wcc_preprocess.py
 
 
 SAMPLE_TXT := fixtures/guest/SAMPLE.TXT
+DBG_SCR := fixtures/guest/DBG.SCR
+BIG_TXT := fixtures/guest/BIG.TXT
+SHIFT_BAT := fixtures/guest/SHIFT.BAT
 EMPTY_AUTOEXEC := fixtures/guest/AUTOEXEC.BAT
 
 HELLO_EXE := $(BUILD_DIR)/hello.exe
@@ -118,6 +123,8 @@ UTILS_IMAGE := $(BUILD_DIR)/os-utils.img
 UTILS_AUTOEXEC := fixtures/guest/AUTOEXEC.UTILS.BAT
 DISKCOPY_IMAGE := $(BUILD_DIR)/os-diskcopy.img
 DISKCOPY_AUTOEXEC := fixtures/guest/AUTOEXEC.DISKCOPY.BAT
+DISKCOMP_IMAGE := $(BUILD_DIR)/os-diskcomp.img
+DISKCOMP_AUTOEXEC := fixtures/guest/AUTOEXEC.DISKCOMP.BAT
 
 BIOS_MODULES := post init video keyboard timer disk fdc misc bios_entries bios_font
 BIOS_OBJS := $(addprefix $(BUILD_DIR)/,$(addsuffix .o,$(BIOS_MODULES)))
@@ -140,7 +147,7 @@ FD_IMG := emulator/k8086/disks/fd.img
 
 K8086_ROMS_DIR := emulator/k8086/roms
 
-.PHONY: all bios os os-disk.img bios-tests clean run run-fd setup test test-fd-img test-dos-compat test-ping test-dhcp test-telnet test-net test-star test-dir test-format test-format-hd test-fat16-hd test-partedit-hd test-multilet-hd test-batch test-disk test-gzip test-utils test-diskcopy test-install-hd install-roms install-floppy
+.PHONY: all bios os os-disk.img bios-tests clean run run-fd setup test test-fd-img test-dos-compat test-ping test-dhcp test-telnet test-net test-star test-dir test-format test-format-hd test-fat16-hd test-partedit-hd test-multilet-hd test-batch test-disk test-gzip test-utils test-diskcopy test-diskcomp test-install-hd install-roms install-floppy
 
 all: bios os
 
@@ -266,9 +273,9 @@ OS_IMAGE_COMMON_DEPS := $(BOOT_BIN) $(KERNEL_BIN) $(HELLO_COM) $(HELLO_EXE) \
 	$(DIR_COM) $(TYPE_COM) $(COMMAND_COM) $(COPY_COM) $(DEL_COM) $(ATTRIB_COM) $(LABEL_COM) \
 	$(MOVE_COM) $(XCOPY_COM) $(CHKDSK_COM) $(SYS_COM) $(PARTEDIT_COM) $(FORMAT_COM) \
 	$(FIND_COM) $(CHOICE_COM) $(MORE_COM) $(MEM_COM) $(FC_COM) $(TREE_COM) $(SORT_COM) \
-	$(EDIT_COM) $(DEBUG_COM) $(DISKCOPY_COM) \
+	$(EDIT_COM) $(DEBUG_COM) $(DISKCOPY_COM) $(DISKCOMP_COM) $(MODE_COM) \
 	$(COMPAT_COM) $(INT21X_COM) $(PING_COM) $(DHCP_COM) $(TELNET_COM) $(NET_COM) $(GZIP_COM) $(GUNZIP_COM) \
-	$(STAR_COM) $(SAMPLE_TXT) $(INSTALL_BAT) \
+	$(STAR_COM) $(SAMPLE_TXT) $(DBG_SCR) $(BIG_TXT) $(SHIFT_BAT) $(INSTALL_BAT) \
 	$(EMPTY_AUTOEXEC) scripts/mkfs_fat12.py scripts/fat12.py scripts/disk.py
 
 define PACK_OS_IMAGE
@@ -297,6 +304,8 @@ define PACK_OS_IMAGE
 		--file BIN/EDIT.COM=$(EDIT_COM) \
 		--file BIN/DEBUG.COM=$(DEBUG_COM) \
 		--file BIN/DISKCOPY.COM=$(DISKCOPY_COM) \
+		--file BIN/DISKCOMP.COM=$(DISKCOMP_COM) \
+		--file BIN/MODE.COM=$(MODE_COM) \
 		--file BIN/PING.COM=$(PING_COM) \
 		--file BIN/DHCP.COM=$(DHCP_COM) \
 		--file BIN/TELNET.COM=$(TELNET_COM) \
@@ -309,6 +318,9 @@ define PACK_OS_IMAGE
 		--file DEMO/INT21X.COM=$(INT21X_COM) \
 		--file DEMO/STAR.COM=$(STAR_COM) \
 		--file TEST/SAMPLE.TXT=$(SAMPLE_TXT) \
+		--file TEST/DBG.SCR=$(DBG_SCR) \
+		--file TEST/BIG.TXT=$(BIG_TXT) \
+		--file SHIFT.BAT=$(SHIFT_BAT) \
 		--file AUTOEXEC.BAT=$(2)
 endef
 
@@ -339,6 +351,8 @@ define PACK_OS_IMAGE_CFG
 		--file BIN/EDIT.COM=$(EDIT_COM) \
 		--file BIN/DEBUG.COM=$(DEBUG_COM) \
 		--file BIN/DISKCOPY.COM=$(DISKCOPY_COM) \
+		--file BIN/DISKCOMP.COM=$(DISKCOMP_COM) \
+		--file BIN/MODE.COM=$(MODE_COM) \
 		--file BIN/PING.COM=$(PING_COM) \
 		--file BIN/DHCP.COM=$(DHCP_COM) \
 		--file BIN/TELNET.COM=$(TELNET_COM) \
@@ -352,6 +366,9 @@ define PACK_OS_IMAGE_CFG
 		--file DEMO/INT21X.COM=$(INT21X_COM) \
 		--file DEMO/STAR.COM=$(STAR_COM) \
 		--file TEST/SAMPLE.TXT=$(SAMPLE_TXT) \
+		--file TEST/DBG.SCR=$(DBG_SCR) \
+		--file TEST/BIG.TXT=$(BIG_TXT) \
+		--file SHIFT.BAT=$(SHIFT_BAT) \
 		--file AUTOEXEC.BAT=$(2)
 endef
 
@@ -412,6 +429,9 @@ $(UTILS_IMAGE): $(OS_IMAGE_COMMON_DEPS) $(UTILS_AUTOEXEC)
 $(DISKCOPY_IMAGE): $(OS_IMAGE_COMMON_DEPS) $(DISKCOPY_AUTOEXEC)
 	$(call PACK_OS_IMAGE,$@,$(DISKCOPY_AUTOEXEC))
 
+$(DISKCOMP_IMAGE): $(OS_IMAGE_COMMON_DEPS) $(DISKCOMP_AUTOEXEC)
+	$(call PACK_OS_IMAGE,$@,$(DISKCOMP_AUTOEXEC))
+
 # --- BIOS boot-sector unit-test images ---------------------------------------
 
 $(BIOS_TEST_BUILD):
@@ -443,7 +463,7 @@ run-fd: bios $(FD_IMG)
 setup:
 	./setup.sh
 
-test: all bios-tests $(COMPAT_IMAGE) $(PING_IMAGE) $(DHCP_IMAGE) $(TELNET_IMAGE) $(NET_IMAGE) $(STAR_IMAGE) $(DIR_IMAGE) $(FORMAT_IMAGE) $(FORMAT_HD_IMAGE) $(FAT16_HD_IMAGE) $(PARTEDIT_HD_IMAGE) $(MULTILET_HD_IMAGE) $(BATCH_IMAGE) $(DISK_IMAGE) $(GZIP_IMAGE) $(UTILS_IMAGE) $(DISKCOPY_IMAGE) $(INSTALL_IMAGE)
+test: all bios-tests $(COMPAT_IMAGE) $(PING_IMAGE) $(DHCP_IMAGE) $(TELNET_IMAGE) $(NET_IMAGE) $(STAR_IMAGE) $(DIR_IMAGE) $(FORMAT_IMAGE) $(FORMAT_HD_IMAGE) $(FAT16_HD_IMAGE) $(PARTEDIT_HD_IMAGE) $(MULTILET_HD_IMAGE) $(BATCH_IMAGE) $(DISK_IMAGE) $(GZIP_IMAGE) $(UTILS_IMAGE) $(DISKCOPY_IMAGE) $(DISKCOMP_IMAGE) $(INSTALL_IMAGE)
 	$(PYTHON) -m tests.test_wcc
 	$(PYTHON) -m tests.test_bios_roms
 	$(PYTHON) -m tests.test_bios_services
@@ -465,6 +485,7 @@ test: all bios-tests $(COMPAT_IMAGE) $(PING_IMAGE) $(DHCP_IMAGE) $(TELNET_IMAGE)
 	$(PYTHON) -m tests.test_gzip_e2e
 	$(PYTHON) -m tests.test_utils_e2e
 	$(PYTHON) -m tests.test_diskcopy_e2e
+	$(PYTHON) -m tests.test_diskcomp_e2e
 	$(PYTHON) -m tests.test_install_hd_e2e
 	$(PYTHON) -m tests.starfield_alg_test
 
@@ -518,6 +539,9 @@ test-utils: $(UTILS_IMAGE)
 
 test-diskcopy: $(DISKCOPY_IMAGE)
 	$(PYTHON) -m tests.test_diskcopy_e2e
+
+test-diskcomp: $(DISKCOMP_IMAGE)
+	$(PYTHON) -m tests.test_diskcomp_e2e
 
 test-install-hd: $(INSTALL_IMAGE)
 	$(PYTHON) -m tests.test_install_hd_e2e

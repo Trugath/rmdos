@@ -176,10 +176,9 @@ images ship **without** `CONFIG.SYS`.
 program exec, `ECHO`, `IF ERRORLEVEL` / `IF EXIST`, `GOTO`/`CALL`, redirection
 and pipes, and `AUTOEXEC.BAT`. `PATH=A:\BIN` is set in the kernel
 environment. Internals present: `FOR`, `PROMPT`, `DATE`/`TIME`, `VOL`, `VERIFY`,
-`CTTY` (CON/NUL). Wave-1 utilities present: `MEM`, `FC`, `TREE`, `SORT`. Wave-2:
-`EDIT` (fullscreen + `/Q` smoke), `DEBUG` (D/E/U/A/N/L/W/Q; stdin scripts),
-`DISKCOPY` (INT 13h track copy, `/Y`).
-
+`BREAK`, `SHIFT`, `EXIT`, string `IF`, `CTTY` (CON/NUL). Wave-1 utilities present: `MEM`, `FC`, `TREE`, `SORT`. Wave-2:
+`EDIT` (16 KiB heap buffer, find, `/Q` smoke), `DEBUG` (debuggee arena, R/G/T/P),
+`DISKCOPY` / `DISKCOMP`, `MODE` (COM1).
 
 `CHKDSK [d:] [/F]` audits the volume via INT 25h: BPB sanity, FAT1↔FAT2 compare,
 directory chain walk (cross-links / orphans / bad chains), and a classic-style
@@ -253,10 +252,10 @@ A:\
   AUTOEXEC.BAT
   BIN\     DIR TYPE COPY DEL ATTRIB LABEL MOVE XCOPY CHKDSK SYS PARTEDIT
            FORMAT FIND CHOICE MORE MEM FC TREE SORT EDIT DEBUG DISKCOPY
-           PING DHCP TELNET NET
+           DISKCOMP MODE PING DHCP TELNET NET GZIP GUNZIP
             (os-net.img also: NETTEST)
   DEMO\    HELLO.COM HELLO.EXE COMPAT.COM INT21X.COM STAR.COM
-  TEST\    SAMPLE.TXT
+  TEST\    SAMPLE.TXT DBG.SCR BIG.TXT
 ```
 
 Packing fixtures live in [`fixtures/guest/`](../fixtures/guest/README.md)

@@ -21,8 +21,11 @@ MARKERS = (
     "Files compare OK",
     "Directory PATH listing",
     "EDIT OK",
+    "EDIT BIG OK",
     "DEBUG",
+    "DEBUG G OK",
     "DEBUG OK",
+    "MODE OK",
     "UTILS2 OK",
 )
 
@@ -36,6 +39,7 @@ def test_utils_on_image() -> None:
         "BIN\\SORT.COM",
         "BIN\\EDIT.COM",
         "BIN\\DEBUG.COM",
+        "BIN\\MODE.COM",
     ):
         assert fat12.find_directory_entry(raw, name).size_bytes > 0
 
