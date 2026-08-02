@@ -7,7 +7,7 @@ static char dta[128];
 static int dir_count;
 static int dir_bytes_lo;
 static int dir_bytes_hi;
-static char msg_hdr[19] = " Directory of A:\\$";
+static char msg_hdr[16] = " Directory of $";
 static char msg_tag[7] = "<DIR>$";
 static char msg_fs1[10] = "        $";
 static char msg_fs2[15] = " File(s)     $";
@@ -72,6 +72,7 @@ static void print_header(void)
     int i;
     int last;
     int c;
+    int drive;
 
     print_dollar(msg_hdr);
     last = -1;
@@ -86,13 +87,20 @@ static void print_header(void)
         }
         i = i + 1;
     }
-    if (last >= 0) {
+    if (last >= 0 && (buf_get(dirpat, 1) == ':' || buf_get(dirpat, 0) == 92)) {
         i = 0;
         while (i < last) {
             print_char(buf_get(dirpat, i));
             i = i + 1;
         }
     } else {
+        asm("mov ah, 0x19");
+        asm("int 0x21");
+        asm("mov ah, 0");
+        asm("mov [dos_tmp], ax");
+        drive = dos_tmp;
+        print_char(drive + 'A');
+        print_char(':');
         if (get_cwd(cwd_tmp) == 0) {
             i = 0;
             while (buf_get(cwd_tmp, i) != 0) {

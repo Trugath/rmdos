@@ -32,6 +32,9 @@ MARKERS = (
     "IFNOT OK",
     "SHIFT OK",
     "EXIT OK",
+    "ERASED",
+    "AUTOEXEC.BAT",
+    "CMD OK",
     "ENV OK",
     "BATCH OK",
 )

@@ -27,6 +27,7 @@ static char fcb1[16] = { 0 };
 static char fcb2[16] = { 0 };
 static char batch_names[128] = { 0 };
 static char batch_args[160] = { 0 };
+static char batch_arg0[32] = { 0 };
 static char goto_name[64] = { 0 };
 static char last_set[80] = { 0 };
 static char env_name[32];
@@ -492,7 +493,16 @@ void do_dir(void)
         }
     }
     dos_set_dta(dta);
-    print_dollar(" Directory of A:\\\r\n$");
+    print_dollar(" Directory of $");
+    {
+        int drive;
+        drive = dos_current_drive();
+        print_char(drive + 'A');
+        print_char(':');
+        get_cwd(cwd);
+        print_string(cwd);
+    }
+    print_crlf();
     dir_count = 0;
     dir_bytes = 0;
     if (dos_find_first(pattern, 0x10) == -1) {
@@ -1020,7 +1030,18 @@ void expand_batch_args(void)
     o = 0;
     while (buf_get(cmd, i) != 0 && o < 80) {
         c = buf_get(cmd, i);
-        if (c == '%' && buf_get(cmd, i + 1) >= '1' && buf_get(cmd, i + 1) <= '9') {
+        if (c == '%' && buf_get(cmd, i + 1) == '0') {
+            i = i + 2;
+            {
+                int j;
+                j = 0;
+                while (buf_get(batch_arg0, j) != 0 && o < 80) {
+                    buf_set(out, o, buf_get(batch_arg0, j));
+                    o = o + 1;
+                    j = j + 1;
+                }
+            }
+        } else if (c == '%' && buf_get(cmd, i + 1) >= '1' && buf_get(cmd, i + 1) <= '9') {
             n = buf_get(cmd, i + 1) - '1';
             i = i + 2;
             {
@@ -1040,6 +1061,34 @@ void expand_batch_args(void)
     }
     buf_set(out, o, 0);
     str_copy(cmd, out, LINE_MAX);
+}
+
+void do_path(void)
+{
+    int i;
+    int c;
+    skip_spaces();
+    if (peek_byte(cursor) == 0) {
+        print_dollar("PATH=$");
+        if (env_copy_var("PATH", env_pathbuf, 128)) {
+            print_string(env_pathbuf);
+        }
+        print_crlf();
+        return;
+    }
+    if (peek_byte(cursor) == '=') {
+        cursor = cursor + 1;
+        skip_spaces();
+    }
+    i = 0;
+    while (peek_byte(cursor) != 0 && i < 126) {
+        c = peek_byte(cursor);
+        buf_set(env_pathbuf, i, c);
+        i = i + 1;
+        cursor = cursor + 1;
+    }
+    buf_set(env_pathbuf, i, 0);
+    env_put("PATH", env_pathbuf);
 }
 
 void do_ctty(void)
@@ -1264,6 +1313,7 @@ void do_batch(char *name)
     batch_handles[slot] = h;
     base = slot * 32;
     str_copy(buf_addr(batch_names, base), name, 32);
+    str_copy(batch_arg0, name, 32);
     batch_depth = batch_depth + 1;
     batch_abort = 0;
     n = 0;
@@ -1310,6 +1360,11 @@ void do_batch(char *name)
     }
     batch_depth = batch_depth - 1;
     dos_close(h);
+    if (batch_depth > 0) {
+        str_copy(batch_arg0, buf_addr(batch_names, (batch_depth - 1) * 32), 32);
+    } else {
+        buf_set(batch_arg0, 0, 0);
+    }
 }
 
 void do_if(void)
@@ -1512,22 +1567,29 @@ void dispatch_plain(void)
     int h;
     int i;
     int c;
+    int drive;
     cursor = buf_addr(cmd, 0);
     if (!next_token(prog, PATH_MAX)) return;
     if (str_eq(prog, "DIR")) { do_dir(); return; }
     if (str_eq(prog, "TYPE")) { do_type(); return; }
     if (str_eq(prog, "COPY")) { do_copy(); return; }
-    if (str_eq(prog, "DEL")) {
+    if (str_eq(prog, "DEL") || str_eq(prog, "ERASE")) {
         if (next_token(arg1, PATH_MAX) && dos_delete(arg1) == 0) print_dollar("deleted\r\n$");
         else print_dollar("DEL file\r\n$");
         return;
     }
+    if (str_eq(prog, "PATH")) { do_path(); return; }
     if (str_eq(prog, "CLS")) { clear_screen(); return; }
     if (str_eq(prog, "CD") || str_eq(prog, "CHDIR")) {
         if (next_token(arg1, PATH_MAX)) {
             if (dos_chdir(arg1) == -1) print_dollar("Invalid directory\r\n$");
         } else {
-            print_dollar("A:\\$"); get_cwd(cwd); print_string(cwd); print_crlf();
+            drive = dos_current_drive();
+            print_char(drive + 'A');
+            print_char(':');
+            get_cwd(cwd);
+            print_string(cwd);
+            print_crlf();
         }
         return;
     }
