@@ -28,9 +28,10 @@ int drive_idx(char *s)
 
 int subst_set(int letter, int real, char *path)
 {
-    asm("mov bl, [bp+4]");
+    /* Small-C: last arg at [bp+4], first at [bp+8]. */
+    asm("mov dx, [bp+4]");
     asm("mov bh, [bp+6]");
-    asm("mov dx, [bp+8]");
+    asm("mov bl, [bp+8]");
     asm("mov ax, 0x12E0");
     asm("int 0x2F");
     asm("mov ah, 0");

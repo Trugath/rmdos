@@ -44,7 +44,7 @@ ANSI_SYS := $(BUILD_DIR)/ansi.sys
 ANSITST_COM := $(BUILD_DIR)/ansitst.com
 
 # wcc C COM tools (same basename: foo.c -> foo.com), plus starfield.c -> star.com
-DOS_C_TOOLS := command dir type copy del attrib label move xcopy chkdsk find choice more mem fc tree sort edit debug diskcopy diskcomp mode subst
+DOS_C_TOOLS := command dir type copy del attrib label move xcopy chkdsk find choice more mem fc tree sort edit debug diskcopy diskcomp mode subst comp assign
 COMMAND_COM := $(BUILD_DIR)/command.com
 DIR_COM := $(BUILD_DIR)/dir.com
 TYPE_COM := $(BUILD_DIR)/type.com
@@ -68,6 +68,8 @@ DISKCOPY_COM := $(BUILD_DIR)/diskcopy.com
 DISKCOMP_COM := $(BUILD_DIR)/diskcomp.com
 MODE_COM := $(BUILD_DIR)/mode.com
 SUBST_COM := $(BUILD_DIR)/subst.com
+COMP_COM := $(BUILD_DIR)/comp.com
+ASSIGN_COM := $(BUILD_DIR)/assign.com
 
 STAR_C := $(SRC_DIR)/dos/starfield.c
 STAR_ASM := $(BUILD_DIR)/starfield.s
@@ -333,6 +335,7 @@ OS_IMAGE_COMMON_DEPS := $(BOOT_BIN) $(KERNEL_BIN) $(HELLO_COM) $(HELLO_EXE) \
 	$(MOVE_COM) $(XCOPY_COM) $(CHKDSK_COM) $(SYS_COM) $(PARTEDIT_COM) $(FORMAT_COM) \
 	$(FIND_COM) $(CHOICE_COM) $(MORE_COM) $(MEM_COM) $(FC_COM) $(TREE_COM) $(SORT_COM) \
 	$(EDIT_COM) $(DEBUG_COM) $(DISKCOPY_COM) $(DISKCOMP_COM) $(MODE_COM) $(SUBST_COM) \
+	$(COMP_COM) $(ASSIGN_COM) \
 	$(COMPAT_COM) $(INT21X_COM) $(PING_COM) $(DHCP_COM) $(TELNET_COM) $(NET_COM) $(GZIP_COM) $(GUNZIP_COM) \
 	$(ANSI_SYS) $(ANSITST_COM) \
 	$(STAR_COM) $(SAMPLE_TXT) $(DBG_SCR) $(BIG_TXT) $(SHIFT_BAT) $(INSTALL_BAT) \
@@ -367,6 +370,8 @@ define PACK_OS_IMAGE
 		--file BIN/DISKCOMP.COM=$(DISKCOMP_COM) \
 		--file BIN/MODE.COM=$(MODE_COM) \
 		--file BIN/SUBST.COM=$(SUBST_COM) \
+		--file BIN/COMP.COM=$(COMP_COM) \
+		--file BIN/ASSIGN.COM=$(ASSIGN_COM) \
 		--file BIN/PING.COM=$(PING_COM) \
 		--file BIN/DHCP.COM=$(DHCP_COM) \
 		--file BIN/TELNET.COM=$(TELNET_COM) \
@@ -417,6 +422,8 @@ define PACK_OS_IMAGE_CFG
 		--file BIN/DISKCOMP.COM=$(DISKCOMP_COM) \
 		--file BIN/MODE.COM=$(MODE_COM) \
 		--file BIN/SUBST.COM=$(SUBST_COM) \
+		--file BIN/COMP.COM=$(COMP_COM) \
+		--file BIN/ASSIGN.COM=$(ASSIGN_COM) \
 		--file BIN/PING.COM=$(PING_COM) \
 		--file BIN/DHCP.COM=$(DHCP_COM) \
 		--file BIN/TELNET.COM=$(TELNET_COM) \
@@ -509,6 +516,8 @@ $(BATCH_IMAGE): $(OS_IMAGE_COMMON_DEPS) $(BATCH_AUTOEXEC) $(CALLTST_BAT) $(CALLT
 		--file BIN/DISKCOMP.COM=$(DISKCOMP_COM) \
 		--file BIN/MODE.COM=$(MODE_COM) \
 		--file BIN/SUBST.COM=$(SUBST_COM) \
+		--file BIN/COMP.COM=$(COMP_COM) \
+		--file BIN/ASSIGN.COM=$(ASSIGN_COM) \
 		--file BIN/PING.COM=$(PING_COM) \
 		--file BIN/DHCP.COM=$(DHCP_COM) \
 		--file BIN/TELNET.COM=$(TELNET_COM) \

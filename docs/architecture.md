@@ -157,7 +157,7 @@ live in [`firmware/src/dos/inc/dos.h`](../firmware/src/dos/inc/dos.h).
 
 | Built with wcc (C) | Left as assembly |
 |--------------------|------------------|
-| `COMMAND.COM`, DIR, TYPE, COPY, DEL, ATTRIB, LABEL, MOVE, XCOPY, CHKDSK, FIND, CHOICE, MORE, DEMO/STAR | Boot, kernel, BIOS; FORMAT, PARTEDIT, SYS; PING, DHCP, TELNET, NET; GZIP, GUNZIP; HELLO, COMPAT |
+| `COMMAND.COM`, DIR, TYPE, COPY, DEL, ATTRIB, LABEL, MOVE, XCOPY, CHKDSK, FIND, CHOICE, MORE, MEM, FC, TREE, SORT, EDIT, DEBUG, MODE, SUBST, COMP, ASSIGN, DEMO/STAR | Boot, kernel, BIOS; FORMAT, PARTEDIT, SYS; PING, DHCP, TELNET, NET; GZIP, GUNZIP; HELLO, COMPAT |
 
 Keep assembly where fixed layout, interrupt ABI, or dense hardware I/O dominate
 (boot sector, kernel IVT/`iret`/EXEC, NE2000, INT 13h format/partition tools).
@@ -214,7 +214,7 @@ non-null BUFFERS + SFTE LoL walk, and LoL LASTDRIVE).
 | `BUFFERS=` | Parsed; LoL +12/+14 points at free buffer-header chain (FAT I/O still windowed) |
 | `STACKS=` / `FCBS=` / `DRIVPARM=` | Accepted as advisory no-ops (not printed as ignored) |
 | `COUNTRY=` | `COUNTRY=nnn[,codepage]` updates country id + AH=66 code pages |
-| `SHELL=` | Path only — `/P` `/E:` discarded |
+| `SHELL=` | Path only — CONFIG discards `/P` `/E:`; COMMAND itself honors `/E:n` on its argv |
 | `DEVICE=` | Character `.SYS` only (≤8 KiB); **block drivers intentional OOS** (reject + clear CONFIG text; follow-on) |
 | `LASTDRIVE=` | Raises CDS count (compile max 16; default 8) |
 | Unknown `CONFIG.SYS` lines | Printed as `CONFIG: ignored …` |
@@ -238,7 +238,8 @@ the SYS ABI — INIT + INPUT + OUTPUT; block drivers print
 `FILES=` / `BUFFERS=` (`FILES=` clamps 5..64 into the handle table and current
 PSP JFT after CONFIG; default 20; AH=67 grows both), `LASTDRIVE=` (letter or
 count, max 16), `BREAK=`,
-`SHELL=` (path only; `/P`/`/E:` discarded), `COUNTRY=nnn[,codepage]` (updates
+`SHELL=` (path only in CONFIG — `/P`/`/E:` discarded there; `COMMAND` honors
+`/E:n` on its own argv), `COUNTRY=nnn[,codepage]` (updates
 country id + active/system code page), and advisory no-ops `STACKS=` /
 `FCBS=` / `DRIVPARM=`. Unknown directives print
 `CONFIG: ignored …`. Comments (`;`) and blank lines are skipped. Builtin
@@ -258,23 +259,28 @@ expansion on the full command line), bare `COPY` via `BIN\COPY.COM` (`/V`/`/A`/`
 wildcards, `+` concat, directory dest), `ECHO` / `ECHO ON`/`OFF`, `IF` / `IF … ELSE`
 (same line), `GOTO`/`CALL` (GOTO seeks so labels work backward; CALL arg frames
 stack to batch depth), dual `<`/`>` redirection and pipes, `/C` (run one command
-then exit; no AUTOEXEC) and `/P` (permanent shell), and `AUTOEXEC.BAT`. `/E:n` is
-ignored. Pipes use sequential unique temps on the current drive
+then exit; no AUTOEXEC) and `/P` (permanent shell), and `AUTOEXEC.BAT`. `/E:n`
+sets the environment block size (clamped ~160–32768 bytes). Batch/`FOR`/`CALL`
+nest to depth 8. Pipes use sequential unique temps on the current drive
 (`X:\PIPEn.$$`) and support chained `|` (still not concurrent DOS pipe
 semantics). `ERRORLEVEL` is updated for external EXEC and for CD/MD/RD/DEL/REN/
 TYPE/DIR/CTTY failures and Bad command. `DIR` supports classic `/W` and `/P` plus
 date/time columns. `DEL`/`ERASE` accept wildcards. `FOR` nests to batch
 depth. `CTTY CON`/`NUL` with one-level restore of handles 0/1/2.
 `PATH=A:\BIN` is set in the kernel environment. Internals present:
-`FOR`, `PROMPT` (including `$e` → ESC), `DATE`/`TIME` (interactive prompt outside
-batch), `VOL [d:]`, `VERIFY`,
+`FOR`, `PROMPT` (`$e` ESC, `$h` backspace, `$v` version), `DATE`/`TIME`
+(interactive prompt outside batch), `VOL [d:]`, `VERIFY`,
 `BREAK`, `SHIFT`, `EXIT`, string `IF`, `CTTY` (CON/NUL). DIR headers use the current
 drive/cwd. Wave-1 utilities present:
-`MEM`, `FC`, `TREE`, `SORT`. Wave-2: `EDIT` (16 KiB heap buffer, find, `/Q` smoke),
+`MEM`, `FC` (streamed binary compare), `TREE` (recursive; `/F` lists files), `SORT`.
+Wave-2: `EDIT` (16 KiB heap buffer, find, `/Q` smoke),
 `DEBUG` (debuggee arena, R/G/T/P), `DISKCOPY` / `DISKCOMP`, `MODE` (COM1 baud;
-`40`/`80`/`BW80`/`CO80`; CON columns; `LPT1:=COM1` reports unsupported), `COPY`
-(`/V` VERIFY; `/A`/`/B`; wildcards/concat), `XCOPY` with real `/S`, `FIND` with
-`/V`/`/C`/`/N` (file or stdin), `SUBST` (drive→path via INT 2Fh `12E0h`/`12E1h`).
+`40`/`80`/`BW80`/`CO80`; CON columns; `LPT1:=COM1` reports unsupported; LPT retry/`,,P`
+soft-acked), `COPY`
+(`/V` VERIFY; `/A`/`/B`; wildcards/concat), `XCOPY` (`/S`/`/E`/`/P`/`/V`/`/A`/`/D`),
+`ATTRIB` with `/S`, `FIND` with
+`/V`/`/C`/`/N` (file or stdin), `SUBST` / `ASSIGN` (drive remap via INT 2Fh
+`12E0h`/`12E1h`), `COMP` (binary file compare).
 `BIN\ANSI.SYS` is packed
 for optional `DEVICE=` load (off by default).
 
@@ -368,7 +374,7 @@ A:\
   AUTOEXEC.BAT
   BIN\     DIR TYPE COPY DEL ATTRIB LABEL MOVE XCOPY CHKDSK SYS PARTEDIT
            FORMAT FIND CHOICE MORE MEM FC TREE SORT EDIT DEBUG DISKCOPY
-           DISKCOMP MODE SUBST PING DHCP TELNET NET GZIP GUNZIP ANSI.SYS
+           DISKCOMP MODE SUBST COMP ASSIGN PING DHCP TELNET NET GZIP GUNZIP ANSI.SYS
             (os-net.img also: NETTEST)
   DEMO\    HELLO.COM HELLO.EXE COMPAT.COM INT21X.COM ANSITST.COM STAR.COM
   TEST\    SAMPLE.TXT DBG.SCR BIG.TXT

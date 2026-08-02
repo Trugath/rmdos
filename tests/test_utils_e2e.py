@@ -32,10 +32,17 @@ MARKERS = (
     "MODECO OK",
     "Redirect not supported",
     "REDIRECT FAIL OK",
+    "LPTRETRY OK",
     "COPYV OK",
     "COPYCONCAT OK",
     "COPYWILDCARD OK",
     "ERLVL OK",
+    "XCOPYS SKIP OK",
+    "XCOPYE OK",
+    "XCOPYAV OK",
+    "XCOPYD OK",
+    "RA-- U.TXT",
+    "ASSIGN OK",
     "UTILS2 OK",
 )
 
@@ -50,6 +57,8 @@ def test_utils_on_image() -> None:
         "BIN\\EDIT.COM",
         "BIN\\DEBUG.COM",
         "BIN\\MODE.COM",
+        "BIN\\COMP.COM",
+        "BIN\\ASSIGN.COM",
     ):
         assert fat12.find_directory_entry(raw, name).size_bytes > 0
 
