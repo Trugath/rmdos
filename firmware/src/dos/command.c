@@ -8,6 +8,8 @@
 #define PATH_MAX 64
 #define DTA_SIZE 128
 #define BATCH_MAX 8
+#define DIR_ENT_SIZE 24
+#define DIR_MAX_ENTS 80
 
 static char line[82] = { 0 };
 static char cmd[82] = { 0 };
@@ -58,6 +60,11 @@ static int saved_stdout;
 static int dir_count;
 static int dir_bytes;
 static int dir_bytes_hi;
+static char dir_pool[1920];
+static int dir_nent;
+static char dir_keys[4];
+static char dir_revs[4];
+static int dir_nkeys;
 static int verify_on;
 static int break_on;
 static int batch_argc;
@@ -658,6 +665,305 @@ void do_del(void)
     }
 }
 
+int dir_ent_off(int idx)
+{
+    return idx * DIR_ENT_SIZE;
+}
+
+int dir_u16_cmp(int a, int b)
+{
+    if (a == b) {
+        return 0;
+    }
+    if ((a & 0x8000) == (b & 0x8000)) {
+        if (a < b) {
+            return -1;
+        }
+        return 1;
+    }
+    if (a & 0x8000) {
+        return 1;
+    }
+    return -1;
+}
+
+int dir_name_cmp(int a, int b)
+{
+    int i;
+    int ca;
+    int cb;
+    int oa;
+    int ob;
+
+    oa = dir_ent_off(a);
+    ob = dir_ent_off(b);
+    i = 0;
+    while (i < 13) {
+        ca = buf_get(dir_pool, oa + i);
+        cb = buf_get(dir_pool, ob + i);
+        if (ca != cb) {
+            if (ca < cb) {
+                return -1;
+            }
+            return 1;
+        }
+        if (ca == 0) {
+            return 0;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+int dir_ext_at(int off)
+{
+    int i;
+    int c;
+
+    i = 0;
+    while (i < 13) {
+        c = buf_get(dir_pool, off + i);
+        if (c == 0) {
+            return off + i;
+        }
+        if (c == '.') {
+            return off + i + 1;
+        }
+        i = i + 1;
+    }
+    return off + i;
+}
+
+int dir_ext_cmp(int a, int b)
+{
+    int i;
+    int ca;
+    int cb;
+    int oa;
+    int ob;
+
+    oa = dir_ext_at(dir_ent_off(a));
+    ob = dir_ext_at(dir_ent_off(b));
+    i = 0;
+    while (i < 13) {
+        ca = buf_get(dir_pool, oa + i);
+        cb = buf_get(dir_pool, ob + i);
+        if (ca != cb) {
+            if (ca < cb) {
+                return -1;
+            }
+            return 1;
+        }
+        if (ca == 0) {
+            return 0;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+int dir_key_cmp(int a, int b, int key)
+{
+    int oa;
+    int ob;
+    int da;
+    int db;
+    int r;
+
+    oa = dir_ent_off(a);
+    ob = dir_ent_off(b);
+    if (key == 'N') {
+        return dir_name_cmp(a, b);
+    }
+    if (key == 'E') {
+        r = dir_ext_cmp(a, b);
+        if (r != 0) {
+            return r;
+        }
+        return dir_name_cmp(a, b);
+    }
+    if (key == 'D') {
+        da = peek_word(buf_addr(dir_pool, oa + 16));
+        db = peek_word(buf_addr(dir_pool, ob + 16));
+        r = dir_u16_cmp(da, db);
+        if (r != 0) {
+            return r;
+        }
+        da = peek_word(buf_addr(dir_pool, oa + 14));
+        db = peek_word(buf_addr(dir_pool, ob + 14));
+        return dir_u16_cmp(da, db);
+    }
+    if (key == 'S') {
+        da = peek_word(buf_addr(dir_pool, oa + 20));
+        db = peek_word(buf_addr(dir_pool, ob + 20));
+        r = dir_u16_cmp(da, db);
+        if (r != 0) {
+            return r;
+        }
+        da = peek_word(buf_addr(dir_pool, oa + 18));
+        db = peek_word(buf_addr(dir_pool, ob + 18));
+        return dir_u16_cmp(da, db);
+    }
+    if (key == 'G') {
+        da = buf_get(dir_pool, oa + 13) & 0x10;
+        db = buf_get(dir_pool, ob + 13) & 0x10;
+        if (da != 0 && db == 0) {
+            return -1;
+        }
+        if (da == 0 && db != 0) {
+            return 1;
+        }
+        return 0;
+    }
+    return 0;
+}
+
+int dir_ent_cmp(int a, int b)
+{
+    int i;
+    int r;
+    int key;
+
+    i = 0;
+    while (i < dir_nkeys) {
+        key = buf_get(dir_keys, i);
+        r = dir_key_cmp(a, b, key);
+        if (r != 0) {
+            if (buf_get(dir_revs, i)) {
+                return 0 - r;
+            }
+            return r;
+        }
+        i = i + 1;
+    }
+    return dir_name_cmp(a, b);
+}
+
+void dir_ent_swap(int a, int b)
+{
+    int i;
+    int t;
+    int oa;
+    int ob;
+
+    oa = dir_ent_off(a);
+    ob = dir_ent_off(b);
+    i = 0;
+    while (i < DIR_ENT_SIZE) {
+        t = buf_get(dir_pool, oa + i);
+        buf_set(dir_pool, oa + i, buf_get(dir_pool, ob + i));
+        buf_set(dir_pool, ob + i, t);
+        i = i + 1;
+    }
+}
+
+void dir_sort_pool(void)
+{
+    int i;
+    int j;
+
+    i = 0;
+    while (i < dir_nent) {
+        j = i + 1;
+        while (j < dir_nent) {
+            if (dir_ent_cmp(i, j) > 0) {
+                dir_ent_swap(i, j);
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+}
+
+void dir_store_dta(void)
+{
+    int off;
+    int i;
+    int c;
+
+    if (dir_nent >= DIR_MAX_ENTS) {
+        return;
+    }
+    off = dir_ent_off(dir_nent);
+    i = 0;
+    while (i < 13) {
+        c = buf_get(dta, 0x1e + i);
+        buf_set(dir_pool, off + i, c);
+        if (c == 0) {
+            break;
+        }
+        i = i + 1;
+    }
+    while (i < 13) {
+        buf_set(dir_pool, off + i, 0);
+        i = i + 1;
+    }
+    buf_set(dir_pool, off + 13, buf_get(dta, 0x15));
+    poke_word(buf_addr(dir_pool, off + 14), peek_word(buf_addr(dta, 0x16)));
+    poke_word(buf_addr(dir_pool, off + 16), peek_word(buf_addr(dta, 0x18)));
+    poke_word(buf_addr(dir_pool, off + 18), peek_word(buf_addr(dta, 0x1A)));
+    poke_word(buf_addr(dir_pool, off + 20), peek_word(buf_addr(dta, 0x1C)));
+    dir_nent = dir_nent + 1;
+}
+
+void dir_load_dta(int idx)
+{
+    int off;
+    int i;
+    int c;
+
+    off = dir_ent_off(idx);
+    i = 0;
+    while (i < 13) {
+        c = buf_get(dir_pool, off + i);
+        buf_set(dta, 0x1e + i, c);
+        i = i + 1;
+    }
+    buf_set(dta, 0x15, buf_get(dir_pool, off + 13));
+    poke_word(buf_addr(dta, 0x16), peek_word(buf_addr(dir_pool, off + 14)));
+    poke_word(buf_addr(dta, 0x18), peek_word(buf_addr(dir_pool, off + 16)));
+    poke_word(buf_addr(dta, 0x1A), peek_word(buf_addr(dir_pool, off + 18)));
+    poke_word(buf_addr(dta, 0x1C), peek_word(buf_addr(dir_pool, off + 20)));
+}
+
+void dir_parse_o_keys(void)
+{
+    int c;
+    int rev;
+
+    dir_nkeys = 0;
+    c = peek_byte(cursor);
+    if (c == ':') {
+        cursor = cursor + 1;
+        c = peek_byte(cursor);
+    }
+    while (dir_nkeys < 4) {
+        rev = 0;
+        c = peek_byte(cursor);
+        if (c == '-') {
+            rev = 1;
+            cursor = cursor + 1;
+            c = peek_byte(cursor);
+        }
+        if (c >= 'a' && c <= 'z') {
+            c = c - 32;
+        }
+        if (c == 'N' || c == 'E' || c == 'D' || c == 'S' || c == 'G') {
+            buf_set(dir_keys, dir_nkeys, c);
+            buf_set(dir_revs, dir_nkeys, rev);
+            dir_nkeys = dir_nkeys + 1;
+            cursor = cursor + 1;
+        } else {
+            break;
+        }
+    }
+    if (dir_nkeys == 0) {
+        buf_set(dir_keys, 0, 'N');
+        buf_set(dir_revs, 0, 0);
+        dir_nkeys = 1;
+    }
+}
+
 void do_dir(void)
 {
     int i;
@@ -667,6 +973,7 @@ void do_dir(void)
     int old_size;
     int opt_w;
     int opt_p;
+    int opt_o;
     int wide_col;
     int page_lines;
     int namelen;
@@ -674,7 +981,10 @@ void do_dir(void)
 
     opt_w = 0;
     opt_p = 0;
+    opt_o = 0;
     have_pat = 0;
+    dir_nent = 0;
+    dir_nkeys = 0;
     buf_set(pattern, 0, 0);
     skip_spaces();
     while (peek_byte(cursor) != 0) {
@@ -694,6 +1004,9 @@ void do_dir(void)
                 opt_w = 1;
             } else if (attr == 'P') {
                 opt_p = 1;
+            } else if (attr == 'O') {
+                opt_o = 1;
+                dir_parse_o_keys();
             } else {
                 last_errorlevel = 1;
                 print_dollar("Invalid switch\r\n$");
@@ -740,59 +1053,122 @@ void do_dir(void)
         return;
     }
     while (1) {
-        attr = buf_get(dta, 0x15);
-        if (opt_w) {
-            print_string(buf_addr(dta, 0x1e));
-            namelen = str_len(buf_addr(dta, 0x1e));
-            while (namelen < 13) {
-                print_char(' ');
-                namelen = namelen + 1;
-            }
-            wide_col = wide_col + 1;
-            if (wide_col >= 5) {
+        if (opt_o) {
+            dir_store_dta();
+        } else {
+            attr = buf_get(dta, 0x15);
+            if (opt_w) {
+                print_string(buf_addr(dta, 0x1e));
+                namelen = str_len(buf_addr(dta, 0x1e));
+                while (namelen < 13) {
+                    print_char(' ');
+                    namelen = namelen + 1;
+                }
+                wide_col = wide_col + 1;
+                if (wide_col >= 5) {
+                    print_crlf();
+                    wide_col = 0;
+                    page_lines = page_lines + 1;
+                }
+            } else {
+                print_string(buf_addr(dta, 0x1e));
+                i = str_len(buf_addr(dta, 0x1e));
+                while (i < 13) {
+                    print_char(' ');
+                    i = i + 1;
+                }
+                if (attr & 0x10) {
+                    print_dollar("<DIR>$");
+                } else {
+                    size = peek_word(buf_addr(dta, 0x1A));
+                    size_hi = peek_word(buf_addr(dta, 0x1C));
+                    print_u32(size, size_hi);
+                }
+                print_dta_datetime();
                 print_crlf();
-                wide_col = 0;
                 page_lines = page_lines + 1;
             }
-        } else {
-            print_string(buf_addr(dta, 0x1e));
-            i = str_len(buf_addr(dta, 0x1e));
-            while (i < 13) {
-                print_char(' ');
-                i = i + 1;
-            }
-            if (attr & 0x10) {
-                print_dollar("<DIR>$");
-            } else {
-                size = peek_word(buf_addr(dta, 0x1A));
-                size_hi = peek_word(buf_addr(dta, 0x1C));
-                print_u32(size, size_hi);
-            }
-            print_dta_datetime();
-            print_crlf();
-            page_lines = page_lines + 1;
-        }
-        if (!(buf_get(dta, 0x1e) == '.' && (buf_get(dta, 0x1f) == 0 || (buf_get(dta, 0x1f) == '.' && buf_get(dta, 0x20) == 0)))) {
-            dir_count = dir_count + 1;
-            if (!(attr & 0x10)) {
-                size = peek_word(buf_addr(dta, 0x1A));
-                size_hi = peek_word(buf_addr(dta, 0x1C));
-                old_size = dir_bytes;
-                dir_bytes = dir_bytes + size;
-                dir_bytes_hi = dir_bytes_hi + size_hi;
-                if (dir_bytes < old_size) {
-                    dir_bytes_hi = dir_bytes_hi + 1;
+            if (!(buf_get(dta, 0x1e) == '.' && (buf_get(dta, 0x1f) == 0 || (buf_get(dta, 0x1f) == '.' && buf_get(dta, 0x20) == 0)))) {
+                dir_count = dir_count + 1;
+                if (!(attr & 0x10)) {
+                    size = peek_word(buf_addr(dta, 0x1A));
+                    size_hi = peek_word(buf_addr(dta, 0x1C));
+                    old_size = dir_bytes;
+                    dir_bytes = dir_bytes + size;
+                    dir_bytes_hi = dir_bytes_hi + size_hi;
+                    if (dir_bytes < old_size) {
+                        dir_bytes_hi = dir_bytes_hi + 1;
+                    }
                 }
             }
-        }
-        if (opt_p && page_lines >= 23) {
-            print_dollar("Press any key to continue . . .$");
-            read_key();
-            print_crlf();
-            page_lines = 0;
+            if (opt_p && page_lines >= 23) {
+                print_dollar("Press any key to continue . . .$");
+                read_key();
+                print_crlf();
+                page_lines = 0;
+            }
         }
         if (dos_find_next() == -1) {
             break;
+        }
+    }
+    if (opt_o) {
+        dir_sort_pool();
+        i = 0;
+        while (i < dir_nent) {
+            dir_load_dta(i);
+            attr = buf_get(dta, 0x15);
+            if (opt_w) {
+                print_string(buf_addr(dta, 0x1e));
+                namelen = str_len(buf_addr(dta, 0x1e));
+                while (namelen < 13) {
+                    print_char(' ');
+                    namelen = namelen + 1;
+                }
+                wide_col = wide_col + 1;
+                if (wide_col >= 5) {
+                    print_crlf();
+                    wide_col = 0;
+                    page_lines = page_lines + 1;
+                }
+            } else {
+                print_string(buf_addr(dta, 0x1e));
+                namelen = str_len(buf_addr(dta, 0x1e));
+                while (namelen < 13) {
+                    print_char(' ');
+                    namelen = namelen + 1;
+                }
+                if (attr & 0x10) {
+                    print_dollar("<DIR>$");
+                } else {
+                    size = peek_word(buf_addr(dta, 0x1A));
+                    size_hi = peek_word(buf_addr(dta, 0x1C));
+                    print_u32(size, size_hi);
+                }
+                print_dta_datetime();
+                print_crlf();
+                page_lines = page_lines + 1;
+            }
+            if (!(buf_get(dta, 0x1e) == '.' && (buf_get(dta, 0x1f) == 0 || (buf_get(dta, 0x1f) == '.' && buf_get(dta, 0x20) == 0)))) {
+                dir_count = dir_count + 1;
+                if (!(attr & 0x10)) {
+                    size = peek_word(buf_addr(dta, 0x1A));
+                    size_hi = peek_word(buf_addr(dta, 0x1C));
+                    old_size = dir_bytes;
+                    dir_bytes = dir_bytes + size;
+                    dir_bytes_hi = dir_bytes_hi + size_hi;
+                    if (dir_bytes < old_size) {
+                        dir_bytes_hi = dir_bytes_hi + 1;
+                    }
+                }
+            }
+            if (opt_p && page_lines >= 23) {
+                print_dollar("Press any key to continue . . .$");
+                read_key();
+                print_crlf();
+                page_lines = 0;
+            }
+            i = i + 1;
         }
     }
     if (opt_w && wide_col != 0) {

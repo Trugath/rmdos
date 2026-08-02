@@ -18,6 +18,7 @@ SERIAL = BUILD / "serial.log"
 IMAGE = BUILD / "os-dir.img"
 MARKER = "DIR OK"
 DIRWP = "DIRWP OK"
+DIRO = "DIRO OK"
 
 
 def test_dir_on_image() -> None:
@@ -59,6 +60,7 @@ def test_dir_e2e() -> None:
                     if (
                         MARKER in text
                         and DIRWP in text
+                        and DIRO in text
                         and "Directory of" in text
                         and "<DIR>" in text
                         and "bytes free" in text
@@ -69,8 +71,8 @@ def test_dir_e2e() -> None:
                 time.sleep(0.25)
             text = SERIAL.read_text(errors="replace") if SERIAL.is_file() else ""
             raise AssertionError(
-                f"DIR gate failed (need {MARKER!r}, {DIRWP!r}, Directory of, <DIR>, "
-                f"bytes free).\n---\n{text}\n---"
+                f"DIR gate failed (need {MARKER!r}, {DIRWP!r}, {DIRO!r}, Directory of, "
+                f"<DIR>, bytes free).\n---\n{text}\n---"
             )
         finally:
             terminate_emulator(proc)

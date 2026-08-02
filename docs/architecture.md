@@ -280,7 +280,8 @@ nest to depth 8. Pipes use sequential unique temps on the current drive
 (`X:\PIPEn.$$`) and support chained `|` (still not concurrent DOS pipe
 semantics). `ERRORLEVEL` is updated for external EXEC and for CD/MD/RD/DEL/REN/
 TYPE/DIR/CTTY failures and Bad command. `DIR` supports classic `/W` and `/P` plus
-date/time columns. `DEL`/`ERASE` accept wildcards. `FOR` nests to batch
+date/time columns; optional `/O` (`N`/`E`/`D`/`S`/`G`, optional `-` reverse) sorts
+a buffered listing (default remains on-disk FindFirst order; cap 80 entries). `DEL`/`ERASE` accept wildcards. `FOR` nests to batch
 depth. `CTTY CON`/`NUL` with one-level restore of handles 0/1/2.
 `PATH=A:\BIN` is set in the kernel environment. Internals present:
 `FOR`, `PROMPT` (`$e` ESC, `$h` backspace, `$v` version), `DATE`/`TIME`
