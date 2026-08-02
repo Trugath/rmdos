@@ -318,6 +318,7 @@ load_device_sys:
 
     mov word ptr cs:[path_off], dx
     mov word ptr cs:[path_seg], ds
+    mov byte ptr cs:[device_load_error], 0
 
     mov ah, 0x3D
     xor al, al
@@ -332,7 +333,10 @@ load_device_sys:
     test ax, ax
     jz .lds_fail_close
     cmp ax, SYS_MAX
-    ja .lds_fail_close
+    jbe .lds_size_ok
+    mov byte ptr cs:[device_load_error], 1
+    jmp .lds_fail_close
+.lds_size_ok:
     mov word ptr cs:[com_size], ax
     mov word ptr cs:[img_bytes_lo], ax
     mov word ptr cs:[img_bytes_hi], 0
@@ -391,6 +395,14 @@ load_device_sys:
 
     test word ptr [dev_req + 3], 0x8000
     jnz .lds_fail_free
+
+    /* Block drivers need a different ABI; retain character drivers only. */
+    mov es, word ptr [psp_run]
+    test word ptr es:[4], DEV_ATTR_CHAR
+    jnz .lds_is_char
+    mov byte ptr cs:[device_load_error], 2
+    jmp .lds_fail_free
+.lds_is_char:
 
     /* shrink to break address */
     mov ax, word ptr [dev_req + 0x0E]

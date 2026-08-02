@@ -3,7 +3,7 @@
 .section .text
 .global _start
 
-/* INT 10h AH=05 active page + AH=0F BH; AH=09 write on page 1 */
+/* INT 10h AH=05 selects distinct text pages and programs their start. */
 
 _start:
     cli
@@ -24,6 +24,8 @@ _start:
     mov ds, ax
     cmp byte ptr [0x62], 1
     jne .fail_bda
+    cmp word ptr [0x4e], 0x0800 /* 80x25 page = 0x800 character cells */
+    jne .fail_start
     xor ax, ax
     mov ds, ax
 
@@ -32,7 +34,7 @@ _start:
     cmp bh, 1
     jne .fail_get
 
-    /* Cursor on page 1, write 'P' */
+    /* Cursor on page 1, write a different character. */
     mov ah, 0x02
     mov bh, 1
     xor dx, dx
@@ -44,17 +46,25 @@ _start:
     mov cx, 1
     int 0x10
 
-    mov ax, 0xB800
-    mov es, ax
-    cmp byte ptr es:[0], 'P'
-    jne .fail_write
-
     mov ax, 0x0500
     int 0x10
     mov ah, 0x0F
     int 0x10
     cmp bh, 0
     jne .fail_restore
+    mov ax, 0x40
+    mov ds, ax
+    cmp word ptr [0x4e], 0
+    jne .fail_start
+    xor ax, ax
+    mov ds, ax
+
+    /* AH=08 must read the requested inactive page, not visible page zero. */
+    mov ah, 0x08
+    mov bh, 1
+    int 0x10
+    cmp al, 'P'
+    jne .fail_read1
 
     push cs
     pop ds
@@ -71,10 +81,15 @@ _start:
     pop ds
     mov si, offset msg_get
     call fail_and_halt
-.fail_write:
+.fail_start:
     push cs
     pop ds
-    mov si, offset msg_write
+    mov si, offset msg_start
+    call fail_and_halt
+.fail_read1:
+    push cs
+    pop ds
+    mov si, offset msg_read1
     call fail_and_halt
 .fail_restore:
     push cs
@@ -88,8 +103,10 @@ msg_bda:
     .asciz "bt_page:bda"
 msg_get:
     .asciz "bt_page:get"
-msg_write:
-    .asciz "bt_page:write"
+msg_start:
+    .asciz "bt_page:start"
+msg_read1:
+    .asciz "bt_page:read1"
 msg_restore:
     .asciz "bt_page:restore"
 

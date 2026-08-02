@@ -1677,11 +1677,11 @@ dos_ah5b:
     mov cx, word ptr cs:[tmp_attrs]
     jmp dos_ah3c
 
-/* AH=5Ch — lock/unlock file region (single-user stub: always succeed) */
+/* AH=5Ch — lock/unlock file region (SHARE is not installed). */
 dos_ah5c:
-    xor ax, ax
-    clc
-    jmp int21_iret
+    mov ax, 1                    /* invalid function */
+    stc
+    jmp int21_iret_cf
 
 /*
  * AH=60h — truename: DS:SI source path, ES:DI dest buffer.

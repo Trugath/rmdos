@@ -500,14 +500,18 @@ static int size_to_clusters(int sz_lo, int sz_hi, int bpc)
     if (sz_lo == 0 && sz_hi == 0) {
         return 0;
     }
-    cfs_lo = sz_lo + (bpc - 1);
+    /* ceil(size/bpc) via DX:AX / BX. Do the (size + bpc - 1) add in asm —
+     * Small-C int is signed 16-bit, so sz_lo+(bpc-1) overflows for sizes
+     * 32257..32767 and falsely reports bad FAT chains. */
+    cfs_lo = sz_lo;
     cfs_hi = sz_hi;
-    if (cfs_lo < sz_lo) {
-        cfs_hi = cfs_hi + 1;
-    }
     cfs_bpc = bpc;
     asm("mov ax, [cfs_lo]");
     asm("mov dx, [cfs_hi]");
+    asm("mov bx, [cfs_bpc]");
+    asm("dec bx");
+    asm("add ax, bx");
+    asm("adc dx, 0");
     asm("mov bx, [cfs_bpc]");
     asm("div bx");
     asm("mov [cfs_quot], ax");

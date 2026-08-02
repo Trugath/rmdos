@@ -177,8 +177,22 @@ re-read) and commit (AH=68h → `handle_flush_file`), date/time, drive/cwd,
 mkdir/rmdir/chdir, attrs, rename, country get/set (AH=38h) and extended country
 get (AH=65h AL=01), **AH=31h TSR**. AH=30h reports DOS 3.31. Gate:
 `DEMO\COMPAT.COM` + `DEMO\INT21X.COM` (markers include `FILES OK`, `EXEC1 OK`,
-`AUXPRN OK`, `BREAK23 OK`; INT21X also probes IOCTL AL=02–05, DPB device ptr,
-last-fit AH=58, AH=46/57, INT 25h boot signature).
+`AUXPRN OK`, `BREAK23 OK`, `STUB OK`; INT21X also probes IOCTL AL=02–05, DPB device ptr,
+last-fit AH=58, AH=46/57, INT 25h boot signature, honest AH=5Ch, VERIFY flag get/set,
+unsupported AH=66, and LoL LASTDRIVE).
+
+### Stub vs real (INT 21h / CONFIG)
+
+| Surface | Behavior |
+|---------|----------|
+| VERIFY (`AH=2Eh`/`54h`) | Flag only — no media re-read on write |
+| File lock (`AH=5Ch`) | CF + AX=1 (SHARE not installed) |
+| IOCTL AL=04/05/0Dh | Success stubs (no control work) |
+| `BUFFERS=` | Parsed into SysVars; FAT uses windowed cache, not DOS buffer chain |
+| `DEVICE=` | Character `.SYS` only (≤8 KiB); block drivers unsupported |
+| `LASTDRIVE=` | Raises CDS count (compile max 16; default 8) |
+| Unknown `CONFIG.SYS` lines | Printed as `CONFIG: ignored …` |
+| INT 60h `AH=B8h` | rmDOS-only net mux (not packet-driver / redirector) |
 
 **Out of scope for INT 21h/2Fh fidelity:** AH=53h BPB translate; real
 SHARE/PRINT/APPEND/XMS TSR bodies; JOIN and full SHARE/network SFT graphs;
@@ -187,10 +201,11 @@ network redirector multiplex beyond “not installed.” Live CDS paths and
 
 After the FAT self-test, the kernel opens **`CONFIG.SYS`** if present (missing file
 is ignored). Supported lines: `INSTALL=` (load+run a COM), `DEVICE=` (`.SYS`
-character drivers via the SYS ABI — INIT + INPUT + OUTPUT — or load+run COM
-otherwise; failures print and continue), `FILES=` / `BUFFERS=` (`FILES=` clamps
-5..64 into the handle table after CONFIG; default 20), `SHELL=` (overrides
-the command processor path). Comments (`;`) and blank lines are skipped. Builtin
+character drivers via the SYS ABI — INIT + INPUT + OUTPUT; failures print and
+continue), `FILES=` / `BUFFERS=` (`FILES=` clamps 5..64 into the handle table
+after CONFIG; default 20), `LASTDRIVE=` (letter or count, max 16), `BREAK=`,
+`SHELL=` (overrides the command processor path). Unknown directives print
+`CONFIG: ignored …`. Comments (`;`) and blank lines are skipped. Builtin
 **CON** / **NUL** device headers form the driver chain; `putch`, AH=40 CON writes,
 and AH=01/08/3F CON reads call the current CON driver’s OUTPUT/INPUT. Default
 images ship **without** `CONFIG.SYS`.
@@ -202,9 +217,11 @@ key-remap entry is active (F1 → `!`). `PROMPT $e` emits ESC so ANSI prompts wo
 when the driver is loaded.
 
 `COMMAND.COM` supports internal CD/MD/RD/CLS/REN/VER/SET/PAUSE/REM/`PATH`/`ERASE`,
-external program exec with `PATH` walk and `%var%` from the PSP environment, `ECHO`,
-`IF ERRORLEVEL` / `IF EXIST`, `GOTO`/`CALL`, batch `%0`–`%9`, redirection and pipes, and
-`AUTOEXEC.BAT`. Pipes use a sequential temp file on the **current drive**
+external program exec with `PATH` walk and `%var%` from the PSP environment (env
+expansion on the full command line), `ECHO` / `ECHO ON`/`OFF`, `IF ERRORLEVEL` /
+`IF EXIST`, `GOTO`/`CALL` (GOTO seeks the batch file so labels work backward),
+batch `%0`–`%9` with one-level CALL arg frame save/restore, redirection and pipes,
+and `AUTOEXEC.BAT`. Pipes use a sequential temp file on the **current drive**
 (`X:\PIPE.$$$`) and support chained `|` (still not concurrent DOS pipe
 semantics). `ERRORLEVEL` is updated for external EXEC and for CD/MD/RD/DEL/REN/
 CTTY failures. `CTTY CON`/`NUL` with one-level restore of handles 0/1/2.

@@ -83,6 +83,7 @@ SAMPLE_TXT := fixtures/guest/SAMPLE.TXT
 DBG_SCR := fixtures/guest/DBG.SCR
 BIG_TXT := fixtures/guest/BIG.TXT
 SHIFT_BAT := fixtures/guest/SHIFT.BAT
+CALLTST_BAT := fixtures/guest/CALLTST.BAT
 EMPTY_AUTOEXEC := fixtures/guest/AUTOEXEC.BAT
 
 HELLO_EXE := $(BUILD_DIR)/hello.exe
@@ -146,6 +147,9 @@ DISKCOMP_AUTOEXEC := fixtures/guest/AUTOEXEC.DISKCOMP.BAT
 ANSI_IMAGE := $(BUILD_DIR)/os-ansi.img
 ANSI_AUTOEXEC := fixtures/guest/AUTOEXEC.ANSI.BAT
 ANSI_CONFIG := fixtures/guest/CONFIG.ANSI.SYS
+STUBCFG_IMAGE := $(BUILD_DIR)/os-stubcfg.img
+STUBCFG_AUTOEXEC := fixtures/guest/AUTOEXEC.STUB.BAT
+STUBCFG_CONFIG := fixtures/guest/CONFIG.STUB.SYS
 
 BIOS_MODULES := post init video keyboard timer disk fdc misc bios_entries bios_font
 BIOS_OBJS := $(addprefix $(BUILD_DIR)/,$(addsuffix .o,$(BIOS_MODULES)))
@@ -168,7 +172,7 @@ FD_IMG := emulator/k8086/disks/fd.img
 
 K8086_ROMS_DIR := emulator/k8086/roms
 
-.PHONY: all bios os os-disk.img bios-tests clean run run-fd run-elite setup test test-fd-img test-dos-compat test-ping test-dhcp test-telnet test-net test-star test-bigexe test-elite test-dir test-format test-format-hd test-fat16-hd test-partedit-hd test-multilet-hd test-extpart-hd test-subst test-batch test-disk test-gzip test-utils test-diskcopy test-diskcomp test-ansi test-install-hd install-roms install-floppy
+.PHONY: all bios os os-disk.img bios-tests clean run run-fd run-elite setup test test-fd-img test-dos-compat test-ping test-dhcp test-telnet test-net test-star test-bigexe test-elite test-dir test-format test-format-hd test-fat16-hd test-partedit-hd test-multilet-hd test-extpart-hd test-subst test-batch test-disk test-gzip test-utils test-diskcopy test-diskcomp test-ansi test-stubcfg test-install-hd install-roms install-floppy
 
 all: bios os
 
@@ -475,8 +479,54 @@ $(EXTPART_HD_IMAGE): $(OS_IMAGE_COMMON_DEPS) $(EXTPART_HD_AUTOEXEC)
 $(SUBST_IMAGE): $(OS_IMAGE_COMMON_DEPS) $(SUBST_AUTOEXEC)
 	$(call PACK_OS_IMAGE,$@,$(SUBST_AUTOEXEC))
 
-$(BATCH_IMAGE): $(OS_IMAGE_COMMON_DEPS) $(BATCH_AUTOEXEC)
-	$(call PACK_OS_IMAGE,$@,$(BATCH_AUTOEXEC))
+$(BATCH_IMAGE): $(OS_IMAGE_COMMON_DEPS) $(BATCH_AUTOEXEC) $(CALLTST_BAT)
+	$(PYTHON) -m scripts.mkfs_fat12 --output $@ --boot $(BOOT_BIN) --kernel $(KERNEL_BIN) \
+		--file COMMAND.COM=$(COMMAND_COM) \
+		--file INSTALL.BAT=$(INSTALL_BAT) \
+		--file BIN/DIR.COM=$(DIR_COM) \
+		--file BIN/TYPE.COM=$(TYPE_COM) \
+		--file BIN/COPY.COM=$(COPY_COM) \
+		--file BIN/DEL.COM=$(DEL_COM) \
+		--file BIN/ATTRIB.COM=$(ATTRIB_COM) \
+		--file BIN/LABEL.COM=$(LABEL_COM) \
+		--file BIN/MOVE.COM=$(MOVE_COM) \
+		--file BIN/XCOPY.COM=$(XCOPY_COM) \
+		--file BIN/CHKDSK.COM=$(CHKDSK_COM) \
+		--file BIN/SYS.COM=$(SYS_COM) \
+		--file BIN/PARTEDIT.COM=$(PARTEDIT_COM) \
+		--file BIN/FORMAT.COM=$(FORMAT_COM) \
+		--file BIN/FIND.COM=$(FIND_COM) \
+		--file BIN/CHOICE.COM=$(CHOICE_COM) \
+		--file BIN/MORE.COM=$(MORE_COM) \
+		--file BIN/MEM.COM=$(MEM_COM) \
+		--file BIN/FC.COM=$(FC_COM) \
+		--file BIN/TREE.COM=$(TREE_COM) \
+		--file BIN/SORT.COM=$(SORT_COM) \
+		--file BIN/EDIT.COM=$(EDIT_COM) \
+		--file BIN/DEBUG.COM=$(DEBUG_COM) \
+		--file BIN/DISKCOPY.COM=$(DISKCOPY_COM) \
+		--file BIN/DISKCOMP.COM=$(DISKCOMP_COM) \
+		--file BIN/MODE.COM=$(MODE_COM) \
+		--file BIN/SUBST.COM=$(SUBST_COM) \
+		--file BIN/PING.COM=$(PING_COM) \
+		--file BIN/DHCP.COM=$(DHCP_COM) \
+		--file BIN/TELNET.COM=$(TELNET_COM) \
+		--file BIN/NET.COM=$(NET_COM) \
+		--file BIN/GZIP.COM=$(GZIP_COM) \
+		--file BIN/GUNZIP.COM=$(GUNZIP_COM) \
+		--file BIN/ANSI.SYS=$(ANSI_SYS) \
+		--file DEMO/HELLO.COM=$(HELLO_COM) \
+		--file DEMO/HELLO.EXE=$(HELLO_EXE) \
+		--file DEMO/COMPAT.COM=$(COMPAT_COM) \
+		--file DEMO/INT21X.COM=$(INT21X_COM) \
+		--file DEMO/ANSITST.COM=$(ANSITST_COM) \
+		--file DEMO/STAR.COM=$(STAR_COM) \
+		--file TEST/SAMPLE.TXT=$(SAMPLE_TXT) \
+		--file TEST/DBG.SCR=$(DBG_SCR) \
+		--file TEST/BIG.TXT=$(BIG_TXT) \
+		--file SHIFT.BAT=$(SHIFT_BAT) \
+		--file CALLTST.BAT=$(CALLTST_BAT) \
+		--file AUTOEXEC.BAT=$(BATCH_AUTOEXEC)
 
 $(DISK_IMAGE): $(OS_IMAGE_COMMON_DEPS) $(DISK_AUTOEXEC)
 	$(call PACK_OS_IMAGE,$@,$(DISK_AUTOEXEC))
@@ -501,6 +551,9 @@ $(DISKCOMP_IMAGE): $(OS_IMAGE_COMMON_DEPS) $(DISKCOMP_AUTOEXEC)
 
 $(ANSI_IMAGE): $(OS_IMAGE_COMMON_DEPS) $(ANSI_AUTOEXEC) $(ANSI_CONFIG)
 	$(call PACK_OS_IMAGE_CFG,$@,$(ANSI_AUTOEXEC),$(ANSI_CONFIG))
+
+$(STUBCFG_IMAGE): $(OS_IMAGE_COMMON_DEPS) $(NETTEST_COM) $(STUBCFG_AUTOEXEC) $(STUBCFG_CONFIG)
+	$(call PACK_OS_IMAGE_CFG,$@,$(STUBCFG_AUTOEXEC),$(STUBCFG_CONFIG))
 
 # --- BIOS boot-sector unit-test images ---------------------------------------
 
@@ -537,7 +590,7 @@ run-elite: bios $(ELITE_IMAGE)
 setup:
 	./setup.sh
 
-test: all bios-tests $(COMPAT_IMAGE) $(PING_IMAGE) $(DHCP_IMAGE) $(TELNET_IMAGE) $(NET_IMAGE) $(STAR_IMAGE) $(BIGEXE_IMAGE) $(DIR_IMAGE) $(FORMAT_IMAGE) $(FORMAT_HD_IMAGE) $(FAT16_HD_IMAGE) $(PARTEDIT_HD_IMAGE) $(MULTILET_HD_IMAGE) $(EXTPART_HD_IMAGE) $(SUBST_IMAGE) $(BATCH_IMAGE) $(DISK_IMAGE) $(GZIP_IMAGE) $(UTILS_IMAGE) $(DISKCOPY_IMAGE) $(DISKCOMP_IMAGE) $(ANSI_IMAGE) $(INSTALL_IMAGE)
+test: all bios-tests $(COMPAT_IMAGE) $(PING_IMAGE) $(DHCP_IMAGE) $(TELNET_IMAGE) $(NET_IMAGE) $(STAR_IMAGE) $(BIGEXE_IMAGE) $(DIR_IMAGE) $(FORMAT_IMAGE) $(FORMAT_HD_IMAGE) $(FAT16_HD_IMAGE) $(PARTEDIT_HD_IMAGE) $(MULTILET_HD_IMAGE) $(EXTPART_HD_IMAGE) $(SUBST_IMAGE) $(BATCH_IMAGE) $(DISK_IMAGE) $(GZIP_IMAGE) $(UTILS_IMAGE) $(DISKCOPY_IMAGE) $(DISKCOMP_IMAGE) $(ANSI_IMAGE) $(STUBCFG_IMAGE) $(INSTALL_IMAGE)
 	$(PYTHON) -m tests.test_wcc
 	$(PYTHON) -m tests.test_bios_roms
 	$(PYTHON) -m tests.test_bios_services
@@ -564,6 +617,7 @@ test: all bios-tests $(COMPAT_IMAGE) $(PING_IMAGE) $(DHCP_IMAGE) $(TELNET_IMAGE)
 	$(PYTHON) -m tests.test_diskcopy_e2e
 	$(PYTHON) -m tests.test_diskcomp_e2e
 	$(PYTHON) -m tests.test_ansi_e2e
+	$(PYTHON) -m tests.test_stubcfg_e2e
 	$(PYTHON) -m tests.test_install_hd_e2e
 	$(PYTHON) -m tests.starfield_alg_test
 
@@ -638,6 +692,9 @@ test-diskcomp: $(DISKCOMP_IMAGE)
 
 test-ansi: $(ANSI_IMAGE)
 	$(PYTHON) -m tests.test_ansi_e2e
+
+test-stubcfg: $(STUBCFG_IMAGE)
+	$(PYTHON) -m tests.test_stubcfg_e2e
 
 test-install-hd: $(INSTALL_IMAGE)
 	$(PYTHON) -m tests.test_install_hd_e2e

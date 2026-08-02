@@ -6,7 +6,7 @@
  * Base LBAs are 16-bit (hi word of partition LBA must be 0).
  */
 
-.equ DRIVEMAP_MAX, 8
+.equ DRIVEMAP_MAX, CDS_COUNT
 
 /*
  * Rebuild CS:drive_map / num_drives. Uses CS:sector_buf.
@@ -26,11 +26,18 @@ dos_rebuild_drivemap:
     push cs
     pop es
 
+    mov byte ptr [num_drives], 0
+    cmp byte ptr [cfg_lastdrive], 0
+    je .drm_initial_done
     mov byte ptr [drive_map_bios], 0
     mov word ptr [drive_map_base], 0
+    inc byte ptr [num_drives]
+    cmp byte ptr [cfg_lastdrive], 1
+    jbe .drm_initial_done
     mov byte ptr [drive_map_bios + 1], 1
     mov word ptr [drive_map_base + 2], 0
-    mov byte ptr [num_drives], 2
+    inc byte ptr [num_drives]
+.drm_initial_done:
 
     mov dl, 0x80
 .drm_disk:
@@ -285,6 +292,8 @@ drm_push:
     push dx
     mov dl, byte ptr [drm_bios_dl]
     mov bl, [num_drives]
+    cmp bl, byte ptr [cfg_lastdrive]
+    jae .drm_push_full
     cmp bl, DRIVEMAP_MAX
     jae .drm_push_full
     xor bh, bh
@@ -321,7 +330,7 @@ dos_cwd_save_current:
     pop es
     mov bl, [cur_drive]
     xor bh, bh
-    cmp bl, CDS_COUNT
+    cmp bl, byte ptr [cfg_lastdrive]
     jae .dcs_done
     mov ax, [cwd_cluster]
     mov si, bx

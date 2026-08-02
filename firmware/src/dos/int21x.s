@@ -245,9 +245,13 @@ _start:
     xor dx, dx
     xor si, si
     int 0x21
-    jnc .t_5c_ok
+    jc .t_5c_ok
     jmp fail_temp
 .t_5c_ok:
+    cmp ax, 1
+    je .t_5c_ax
+    jmp fail_temp
+.t_5c_ax:
 
     push cs
     pop ds
@@ -1143,6 +1147,43 @@ _start:
 
     push cs
     pop ds
+
+    /* AH=5Ch must fail honestly without SHARE (CF, AX=1) */
+    mov ax, 0x5C00
+    xor bx, bx
+    xor cx, cx
+    xor dx, dx
+    int 0x21
+    jnc .x_stub_fail
+    cmp ax, 1
+    jne .x_stub_fail
+
+    /* VERIFY flag-only: set ON then get */
+    mov ax, 0x2E01
+    int 0x21
+    mov ah, 0x54
+    int 0x21
+    cmp al, 1
+    jne .x_stub_fail
+    mov ax, 0x2E00
+    int 0x21
+
+    /* AH=66h unsupported — CF or unchanged AX path */
+    mov ax, 0x6601
+    int 0x21
+    jnc .x_stub_fail
+
+    /* LoL LASTDRIVE byte (default images keep 8) */
+    mov ah, 0x52
+    int 0x21
+    mov al, es:[bx + 0x21]
+    cmp al, 8
+    jb .x_stub_fail
+
+    mov ah, 0x09
+    lea dx, [msg_stub]
+    int 0x21
+
     mov ah, 0x09
     lea dx, [msg_xtra]
     int 0x21
@@ -1152,6 +1193,12 @@ _start:
     int 0x21
     mov ax, 0x4C00
     int 0x21
+
+.x_stub_fail:
+    mov ah, 0x09
+    lea dx, [msg_stub_fail]
+    int 0x21
+    jmp fail_exit
 
 fail_fcb:
     mov ah, 0x09
@@ -1195,6 +1242,8 @@ msg_ioctl:
     .ascii "IOCTL OK\r\n$"
 msg_xtra:
     .ascii "XTRA OK\r\n$"
+msg_stub:
+    .ascii "STUB OK\r\n$"
 msg_files:
     .ascii "FILES OK\r\n$"
 msg_exec1:
@@ -1215,6 +1264,8 @@ msg_ioctl_fail:
     .ascii "IOCTL FAIL\r\n$"
 msg_xtra_fail:
     .ascii "XTRA FAIL\r\n$"
+msg_stub_fail:
+    .ascii "STUB FAIL\r\n$"
 msg_xf1:
     .ascii "XF1\r\n$"
 msg_xf2:

@@ -1,4 +1,4 @@
-"""E2E gate for COMMAND.COM batch, redirection, SET, GOTO, and REN."""
+"""CONFIG.SYS honesty: unknown directives + LASTDRIVE parse."""
 
 from __future__ import annotations
 
@@ -9,51 +9,16 @@ import tempfile
 import time
 from pathlib import Path
 
-from scripts import fat12
 from tests.k8086_util import launcher_argv, terminate_emulator, unlink_retry
 
 ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "firmware" / "build"
 SERIAL = BUILD / "serial.log"
-IMAGE = BUILD / "os-batch.img"
-MARKERS = (
-    "EXISTS",
-    "RENAMED",
-    "BAR",
-    "rmDOS DOS 3.31",
-    "PROMPT OK",
-    "Current date is",
-    "VERIFY is ON",
-    "ONE",
-    "TWO",
-    "FOR OK",
-    "BREAK is ON",
-    "IFSTR OK",
-    "IFNOT OK",
-    "SHIFT OK",
-    "EXIT OK",
-    "ERASED",
-    "AUTOEXEC.BAT",
-    "CMD OK",
-    "ENV OK",
-    "PIPE OK",
-    "ELCD OK",
-    "CTTY OK",
-    "GOTOLOOP OK",
-    "ENVEXP OK",
-    "ECHOCTL OK",
-    "CALLARG OK",
-    "BATCH OK",
-)
+IMAGE = BUILD / "os-stubcfg.img"
+MARKERS = ("CONFIG: ignored", "STUBCFG OK")
 
 
-def test_batch_on_image() -> None:
-    raw = IMAGE.read_bytes()
-    entry = fat12.find_directory_entry(raw, "AUTOEXEC.BAT")
-    assert entry.size_bytes >= 20
-
-
-def test_batch_e2e() -> None:
+def test_stubcfg_e2e() -> None:
     env = os.environ.copy()
     env["K8086_U18_ROM"] = str(BUILD / "u18.bin")
     env["K8086_U19_ROM"] = str(BUILD / "u19.bin")
@@ -72,18 +37,18 @@ def test_batch_e2e() -> None:
             stderr=subprocess.DEVNULL,
         )
         try:
-            deadline = time.time() + 90
+            deadline = time.time() + 60
             text = ""
             while time.time() < deadline:
                 if SERIAL.is_file():
                     text = SERIAL.read_text(errors="replace")
-                    if all(marker in text for marker in MARKERS):
+                    if all(m in text for m in MARKERS):
                         return
                 if proc.poll() is not None:
                     break
                 time.sleep(0.25)
             raise AssertionError(
-                f"batch gate failed (need {MARKERS!r}).\n---\n{text}\n---"
+                f"stubcfg gate failed (need {MARKERS!r}).\n---\n{text}\n---"
             )
         finally:
             terminate_emulator(proc)
@@ -92,6 +57,5 @@ def test_batch_e2e() -> None:
 
 
 if __name__ == "__main__":
-    test_batch_on_image()
-    test_batch_e2e()
-    print("test_batch_e2e: OK")
+    test_stubcfg_e2e()
+    print("test_stubcfg_e2e: OK")

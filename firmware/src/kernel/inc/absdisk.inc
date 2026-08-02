@@ -66,6 +66,9 @@ int26_handler:
 /*
  * IN: AL=drive, CX=count, DX=start, DS:BX=buf; CS:abs_write
  * OUT: CF clear + AX=0 on success; CF set + AX=error on failure.
+ *
+ * Sector transfers that would cross a physical 64K boundary use CS:sector_buf
+ * as a bounce buffer (INT 13h / DMA cannot safely span a page).
  */
 absdisk_xfer:
     push bx
@@ -96,6 +99,18 @@ absdisk_xfer:
 .ax_loop:
     test si, si
     jz .ax_ok
+    /* Physical offset in 64K page: (ES*16 + BP) & 0xFFFF */
+    mov ax, es
+    mov cl, 4
+    shl ax, cl
+    add ax, bp
+    cmp ax, 0xFE00
+    ja .ax_bounce
+    /* Also bounce if ES:BP offset itself wraps within the segment. */
+    mov ax, bp
+    cmp ax, 0xFE00
+    ja .ax_bounce
+
     mov ax, di
     xor dx, dx
     add ax, word ptr cs:[vol_base_lba]
@@ -109,10 +124,73 @@ absdisk_xfer:
     call fat12_write_lba
 .ax_one:
     jc .ax_io
+.ax_next:
     add bp, 512
     inc di
     dec si
     jmp .ax_loop
+
+.ax_bounce:
+    cmp byte ptr cs:[abs_write], 0
+    jne .ax_bounce_wr
+    /* Read into sector_buf, then copy to ES:BP */
+    push es
+    push cs
+    pop es
+    lea bx, [sector_buf]
+    mov ax, di
+    xor dx, dx
+    add ax, word ptr cs:[vol_base_lba]
+    adc dx, 0
+    call fat12_read_lba
+    pop es
+    jc .ax_io
+    push ds
+    push si
+    push di
+    push cs
+    pop ds
+    lea si, [sector_buf]
+    mov di, bp
+    mov cx, 256
+    cld
+    rep movsw
+    pop di
+    pop si
+    pop ds
+    jmp .ax_next
+
+.ax_bounce_wr:
+    /* Copy ES:BP → sector_buf, then write */
+    push ds
+    push si
+    push di
+    push es
+    push es
+    pop ds
+    mov si, bp
+    push cs
+    pop es
+    lea di, [sector_buf]
+    mov cx, 256
+    cld
+    rep movsw
+    pop es
+    push es
+    push cs
+    pop es
+    lea bx, [sector_buf]
+    mov ax, di
+    xor dx, dx
+    add ax, word ptr cs:[vol_base_lba]
+    adc dx, 0
+    call fat12_write_lba
+    pop es
+    pop di
+    pop si
+    pop ds
+    jc .ax_io
+    jmp .ax_next
 
 .ax_ok:
     call .ax_restore

@@ -4,7 +4,7 @@
 .global _start
 
 .equ CDS_ENTRY_SIZE, 81
-.equ CDS_COUNT, 8
+.equ CDS_COUNT, 16
 
 /*
  * rmDOS KERNEL.SYS — INT 21h + writable FAT12/FAT16 + tools.
@@ -113,6 +113,7 @@ _start:
 
     call dos_process_config
     call handles_apply_files
+    call dos_rebuild_drivemap
 
     /* Drop into the shell (path_command may be set by SHELL=) */
     lea dx, [path_command]
@@ -235,6 +236,8 @@ cfg_files:
     .word 20
 cfg_buffers:
     .word 8
+cfg_lastdrive:
+    .byte 8
 cfg_handle:
     .word 0
 exec_pb_valid:
@@ -437,8 +440,24 @@ cfg_kw_buffers:
     .asciz "BUFFERS"
 cfg_kw_shell:
     .asciz "SHELL"
+cfg_kw_lastdrive:
+    .asciz "LASTDRIVE"
+cfg_kw_break:
+    .asciz "BREAK"
 msg_cfg_install:
     .ascii "CONFIG: INSTALL failed\r\n$"
+msg_cfg_ignored:
+    .ascii "CONFIG: ignored "
+msg_cfg_crlf:
+    .ascii "\r\n$"
+msg_cfg_device_sys:
+    .ascii "CONFIG: DEVICE requires a .SYS character driver\r\n$"
+msg_cfg_device_size:
+    .ascii "CONFIG: DEVICE exceeds 8 KiB limit\r\n$"
+msg_cfg_device_char:
+    .ascii "CONFIG: DEVICE is not a character driver\r\n$"
+msg_cfg_device_failed:
+    .ascii "CONFIG: DEVICE failed\r\n$"
 rw_payload:
     .ascii "rwok\n"
 env_comspec:
@@ -453,6 +472,8 @@ drive_map_bios:
     .space DRIVEMAP_MAX, 0
 drive_map_base:
     .space DRIVEMAP_MAX * 2, 0
+device_load_error:
+    .byte 0
 drm_ext_base:
     .word 0
 drm_ebr_lba:

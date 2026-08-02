@@ -52,11 +52,14 @@ static int verify_on;
 static int break_on;
 static int batch_argc;
 static int batch_abort;
+static int echo_on;
 static int ctty_saved0;
 static int ctty_saved1;
 static int ctty_saved2;
 static int ctty_active;
 static char pipe_tmp[16];
+static char saved_batch_args[160] = { 0 };
+static int saved_batch_argc = 0;
 
 
 void dos_set_verify(int on)
@@ -151,6 +154,18 @@ int dos_seek_end(int handle)
     asm("jnc Lcmd_seek_ok");
     asm("mov ax, 0xFFFF");
     asm("Lcmd_seek_ok:");
+}
+
+int dos_seek_start(int handle)
+{
+    asm("mov bx, [bp+4]");
+    asm("mov ax, 0x4200");
+    asm("xor cx, cx");
+    asm("xor dx, dx");
+    asm("int 0x21");
+    asm("jnc Lcmd_seek0_ok");
+    asm("mov ax, 0xFFFF");
+    asm("Lcmd_seek0_ok:");
 }
 
 int dos_current_drive(void)
@@ -643,6 +658,9 @@ void do_if(void);
 void dispatch(void);
 void do_batch(char *name);
 void collect_batch_args(void);
+void push_batch_args(void);
+void pop_batch_args(void);
+void expand_env_percent(void);
 
 /* If prog has no extension, try prog.BAT via the batch interpreter. */
 int try_batch_name(void)
@@ -664,8 +682,10 @@ int try_batch_name(void)
         return 0;
     }
     dos_close(h);
+    push_batch_args();
     collect_batch_args();
     do_batch(prog);
+    pop_batch_args();
     return 1;
 }
 
@@ -1046,6 +1066,32 @@ void clear_batch_args(void)
     batch_argc = 0;
 }
 
+void push_batch_args(void)
+{
+    int i;
+    int c;
+    i = 0;
+    while (i < 160) {
+        c = buf_get(batch_args, i);
+        buf_set(saved_batch_args, i, c);
+        i = i + 1;
+    }
+    saved_batch_argc = batch_argc;
+}
+
+void pop_batch_args(void)
+{
+    int i;
+    int c;
+    i = 0;
+    while (i < 160) {
+        c = buf_get(saved_batch_args, i);
+        buf_set(batch_args, i, c);
+        i = i + 1;
+    }
+    batch_argc = saved_batch_argc;
+}
+
 void collect_batch_args(void)
 {
     clear_batch_args();
@@ -1098,6 +1144,8 @@ void expand_batch_args(void)
     int o;
     int c;
     int n;
+    int j;
+    int idx;
     char out[82];
     i = 0;
     o = 0;
@@ -1105,31 +1153,104 @@ void expand_batch_args(void)
         c = buf_get(cmd, i);
         if (c == '%' && buf_get(cmd, i + 1) == '0') {
             i = i + 2;
-            {
-                int j;
-                j = 0;
-                while (buf_get(batch_arg0, j) != 0 && o < 80) {
-                    buf_set(out, o, buf_get(batch_arg0, j));
-                    o = o + 1;
-                    j = j + 1;
-                }
+            j = 0;
+            while (buf_get(batch_arg0, j) != 0 && o < 80) {
+                buf_set(out, o, buf_get(batch_arg0, j));
+                o = o + 1;
+                j = j + 1;
             }
         } else if (c == '%' && buf_get(cmd, i + 1) >= '1' && buf_get(cmd, i + 1) <= '9') {
             n = buf_get(cmd, i + 1) - '1';
             i = i + 2;
-            {
-                int j;
-                j = 0;
-                while (buf_get(batch_args, n * 16 + j) != 0 && o < 80) {
-                    buf_set(out, o, buf_get(batch_args, n * 16 + j));
-                    o = o + 1;
-                    j = j + 1;
-                }
+            j = 0;
+            idx = n * 16;
+            while (1) {
+                c = buf_get(batch_args, idx + j);
+                if (c == 0) break;
+                if (o >= 80) break;
+                buf_set(out, o, c);
+                o = o + 1;
+                j = j + 1;
             }
         } else {
             buf_set(out, o, c);
             o = o + 1;
             i = i + 1;
+        }
+    }
+    buf_set(out, o, 0);
+    str_copy(cmd, out, LINE_MAX);
+}
+
+/* Expand %NAME% from the environment into cmd (after %0–%9). */
+void expand_env_percent(void)
+{
+    int i;
+    int o;
+    int c;
+    int ni;
+    int closed;
+    int j;
+    char out[82];
+    char name[32];
+    i = 0;
+    o = 0;
+    while (buf_get(cmd, i) != 0 && o < 80) {
+        c = buf_get(cmd, i);
+        if (c != '%') {
+            buf_set(out, o, c);
+            o = o + 1;
+            i = i + 1;
+        } else {
+            i = i + 1;
+            c = buf_get(cmd, i);
+            if (c == '%') {
+                buf_set(out, o, '%');
+                o = o + 1;
+                i = i + 1;
+            } else if (c >= '0' && c <= '9') {
+                buf_set(out, o, '%');
+                o = o + 1;
+                buf_set(out, o, c);
+                o = o + 1;
+                i = i + 1;
+            } else {
+                ni = 0;
+                closed = 0;
+                while (buf_get(cmd, i) != 0 && ni < 31) {
+                    c = buf_get(cmd, i);
+                    if (c == '%') {
+                        closed = 1;
+                        i = i + 1;
+                        break;
+                    }
+                    buf_set(name, ni, c);
+                    ni = ni + 1;
+                    i = i + 1;
+                }
+                buf_set(name, ni, 0);
+                if (closed && env_copy_var(name, env_pathbuf, 128)) {
+                    j = 0;
+                    while (buf_get(env_pathbuf, j) != 0 && o < 80) {
+                        buf_set(out, o, buf_get(env_pathbuf, j));
+                        o = o + 1;
+                        j = j + 1;
+                    }
+                } else {
+                    buf_set(out, o, '%');
+                    o = o + 1;
+                    j = 0;
+                    while (buf_get(name, j) != 0 && o < 80) {
+                        buf_set(out, o, buf_get(name, j));
+                        o = o + 1;
+                        j = j + 1;
+                    }
+                    if (closed && o < 80) {
+                        buf_set(out, o, '%');
+                        o = o + 1;
+                    }
+                }
+            }
         }
     }
     buf_set(out, o, 0);
@@ -1354,42 +1475,13 @@ int print_last_set_value(char *name)
     return print_env_value(name);
 }
 
-/* ECHO's argument is expanded here so batch SET values affect later lines. */
+/* ECHO remainder — %VAR% already expanded on the command line. */
 void echo_tail(void)
 {
-    int i;
-    int c;
-    int closed;
     skip_spaces();
     while (peek_byte(cursor) != 0) {
-        c = peek_byte(cursor);
-        if (c != '%') {
-            print_char(c);
-            cursor = cursor + 1;
-        } else {
-            cursor = cursor + 1;
-            i = 0;
-            closed = 0;
-            while (peek_byte(cursor) != 0 && i < PATH_MAX - 1) {
-                c = peek_byte(cursor);
-                if (c == '%') {
-                    closed = 1;
-                    cursor = cursor + 1;
-                    break;
-                }
-                buf_set(arg1, i, c);
-                i = i + 1;
-                cursor = cursor + 1;
-            }
-            buf_set(arg1, i, 0);
-            if (closed && print_last_set_value(arg1)) {
-                /* value was emitted */
-            } else {
-                print_char('%');
-                print_string(arg1);
-                if (closed) print_char('%');
-            }
-        }
+        print_char(peek_byte(cursor));
+        cursor = cursor + 1;
     }
     print_crlf();
 }
@@ -1402,6 +1494,7 @@ void do_batch(char *name)
     int slot;
     int base;
     int label;
+    int at_cmd;
     if (batch_depth >= BATCH_MAX) {
         return;
     }
@@ -1440,10 +1533,13 @@ void do_batch(char *name)
             break;
         }
         buf_set(cmd, n, 0);
+        at_cmd = 0;
         if (buf_get(cmd, 0) == '@') {
+            at_cmd = 1;
             str_copy(cmd, buf_addr(cmd, 1), LINE_MAX);
         }
         expand_batch_args();
+        expand_env_percent();
         label = 0;
         if (buf_get(cmd, 0) == ':') {
             cursor = buf_addr(cmd, 1);
@@ -1452,6 +1548,10 @@ void do_batch(char *name)
             if (goto_active && str_eq(arg1, goto_name)) goto_active = 0;
         }
         if (!goto_active && !label && buf_get(cmd, 0) != 0) {
+            if (echo_on && !at_cmd) {
+                print_string(cmd);
+                print_crlf();
+            }
             dispatch();
         }
         if (c <= 0) {
@@ -1668,6 +1768,7 @@ void dispatch_plain(void)
     int i;
     int c;
     int drive;
+    int echo_save;
     cursor = buf_addr(cmd, 0);
     if (!next_token(prog, PATH_MAX)) return;
     if (is_drive_spec(prog)) {
@@ -1740,7 +1841,21 @@ void dispatch_plain(void)
             print_crlf();
             return;
         }
-        echo_tail(); return;
+        skip_spaces();
+        echo_save = cursor;
+        if (next_token(arg1, PATH_MAX) && peek_byte(cursor) == 0) {
+            if (str_eq(arg1, "ON")) {
+                echo_on = 1;
+                return;
+            }
+            if (str_eq(arg1, "OFF")) {
+                echo_on = 0;
+                return;
+            }
+        }
+        cursor = echo_save;
+        echo_tail();
+        return;
     }
     if (str_eq(prog, "PAUSE")) { print_dollar("Press any key to continue . . .$"); read_key(); print_crlf(); return; }
     if (str_eq(prog, "VER")) { h = dos_version(); print_dollar("rmDOS DOS $"); print_num(h & 255); print_char('.'); print_num(h >> 8); print_crlf(); return; }
@@ -1759,18 +1874,25 @@ void dispatch_plain(void)
     if (str_eq(prog, "IF")) { do_if(); return; }
     if (str_eq(prog, "CALL")) {
         if (next_token(arg1, PATH_MAX)) {
+            push_batch_args();
             collect_batch_args();
             do_batch(arg1);
+            pop_batch_args();
         }
         return;
     }
     if (str_eq(prog, "GOTO")) {
-        if (next_token(goto_name, PATH_MAX)) goto_active = 1;
+        if (next_token(goto_name, PATH_MAX) && batch_depth > 0) {
+            dos_seek_start(batch_handles[batch_depth - 1]);
+            goto_active = 1;
+        }
         return;
     }
     if (str_has(prog, '.') && str_eq(buf_addr(prog, str_len(prog) - 4), ".BAT")) {
+        push_batch_args();
         collect_batch_args();
         do_batch(prog);
+        pop_batch_args();
         return;
     }
     str_copy(prog_base, prog, PATH_MAX);
@@ -1918,6 +2040,8 @@ void main_loop(void)
         if (n > 0) {
             buf_set(line, n + 2, 0);
             str_copy(cmd, buf_addr(line, 2), LINE_MAX);
+            expand_batch_args();
+            expand_env_percent();
             dispatch();
         }
     }
@@ -1926,6 +2050,7 @@ void main_loop(void)
 int main(void)
 {
     reload_ds();
+    echo_on = 1;
     do_batch("AUTOEXEC.BAT");
     main_loop();
     return 0;

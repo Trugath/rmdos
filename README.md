@@ -30,7 +30,7 @@ rmdos/
 ## Goals
 
 - Clean-room **5155/5160-compatible** system BIOS (U18 32 KB + U19 8 KB), no ROM BASIC
-- Real-mode 8088/8086 OS (`INT 21h`, `.COM` / `.EXE`, FAT12, `COMMAND.COM`)
+- Real-mode 8088/8086 OS (`INT 21h`, `.COM` / `.EXE`, FAT12/FAT16 ≤128 MiB, `COMMAND.COM`)
 - Develop and boot under [k8086](https://github.com/Trugath/k8086)
 
 Architecture: [`docs/architecture.md`](docs/architecture.md).

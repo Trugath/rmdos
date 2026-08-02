@@ -245,7 +245,7 @@ path_resolve:
     push si
     mov bl, al
     xor bh, bh
-    cmp bl, CDS_COUNT
+    cmp bl, byte ptr cs:[cfg_lastdrive]
     jae .pr_drv_mount
     cmp byte ptr cs:[subst_real + bx], 0xFF
     je .pr_drv_mount
@@ -275,7 +275,7 @@ path_resolve:
     push si
     mov bl, al
     xor bh, bh
-    cmp bl, CDS_COUNT
+    cmp bl, byte ptr cs:[cfg_lastdrive]
     jae .pr_no_m
     cmp byte ptr cs:[subst_real + bx], 0xFF
     je .pr_no_m

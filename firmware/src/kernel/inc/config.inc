@@ -1,12 +1,13 @@
 /*
  * CONFIG.SYS — parse before COMMAND.COM.
- * Supports INSTALL= (load+run COM), DEVICE= (.SYS via driver ABI, else COM),
- * FILES=, BUFFERS=, SHELL=. Missing CONFIG.SYS is success (no-op).
+ * Supports INSTALL= (load+run COM), character-device DEVICE= (.SYS), FILES=,
+ * BUFFERS=, LASTDRIVE=, BREAK=, and SHELL=. Missing CONFIG.SYS is success.
  */
 
 .equ CFG_LINE_MAX, 120
 .equ CFG_FILES_DEFAULT, 20
 .equ CFG_BUFS_DEFAULT, 8
+.equ CFG_LASTDRIVE_DEFAULT, 8
 
 dos_process_config:
     push ax
@@ -22,6 +23,7 @@ dos_process_config:
     pop ds
     mov word ptr [cfg_files], CFG_FILES_DEFAULT
     mov word ptr [cfg_buffers], CFG_BUFS_DEFAULT
+    mov byte ptr [cfg_lastdrive], CFG_LASTDRIVE_DEFAULT
 
     mov ah, 0x3D
     xor al, al
@@ -49,28 +51,34 @@ dos_process_config:
     jnc .cfg_line
     call cfg_match_buffers
     jnc .cfg_line
+    call cfg_match_lastdrive
+    jnc .cfg_line
+    call cfg_match_break
+    jnc .cfg_line
     call cfg_match_shell
     jnc .cfg_line
+    call cfg_print_ignored
     jmp .cfg_line
 
 .cfg_do_device:
-    /* SI → path; .SYS → load_device_sys, else COM load+run */
+    /* DEVICE= is limited to character .SYS drivers; no block-driver ABI. */
     push ds
     push cs
     pop ds
     call cfg_path_is_sys
-    jc .cfg_dev_com
+    jc .cfg_dev_not_sys
     mov dx, si
     call load_device_sys
     pop ds
     jnc .cfg_line
-    jmp .cfg_install_fail
-.cfg_dev_com:
-    mov dx, si
-    call load_and_run_com
+    call cfg_print_device_fail
+    jmp .cfg_line
+.cfg_dev_not_sys:
     pop ds
-    jnc .cfg_line
-    jmp .cfg_install_fail
+    mov ah, 0x09
+    lea dx, [msg_cfg_device_sys]
+    int 0x21
+    jmp .cfg_line
 
 .cfg_do_install:
     /* SI → path ASCIZ in cfg_line (already advanced) */
@@ -286,6 +294,92 @@ cfg_match_buffers:
     pop ax
     ret
 
+/* Match LASTDRIVE=letter|count and store a count in 1..CDS_COUNT. */
+cfg_match_lastdrive:
+    push ax
+    push di
+    lea si, [cfg_line]
+    call cfg_skip_ws
+    call cfg_upcase_line
+    lea di, [cfg_kw_lastdrive]
+    call cfg_strcmp_prefix
+    jc .cfg_ml_no
+    cmp byte ptr [si], '='
+    jne .cfg_ml_no
+    inc si
+    call cfg_skip_ws
+    call cfg_trim_path
+    mov al, [si]
+    cmp al, 'A'
+    jb .cfg_ml_count
+    cmp al, 'Z'
+    ja .cfg_ml_count
+    sub al, 'A'
+    inc al
+    cmp byte ptr [si + 1], 0
+    jne .cfg_ml_no
+    jmp .cfg_ml_store
+.cfg_ml_count:
+    call cfg_parse_u16
+    test ax, ax
+    jz .cfg_ml_no
+    cmp ax, CDS_COUNT
+    jbe .cfg_ml_count_ok
+    mov ax, CDS_COUNT
+.cfg_ml_count_ok:
+    mov al, al
+.cfg_ml_store:
+    mov byte ptr [cfg_lastdrive], al
+    clc
+    jmp .cfg_ml_done
+.cfg_ml_no:
+    stc
+.cfg_ml_done:
+    pop di
+    pop ax
+    ret
+
+/* Match BREAK=ON|OFF and wire it to AH=33h's break_flag. */
+cfg_match_break:
+    push ax
+    push di
+    lea si, [cfg_line]
+    call cfg_skip_ws
+    call cfg_upcase_line
+    lea di, [cfg_kw_break]
+    call cfg_strcmp_prefix
+    jc .cfg_mbr_no
+    cmp byte ptr [si], '='
+    jne .cfg_mbr_no
+    inc si
+    call cfg_skip_ws
+    call cfg_trim_path
+    cmp byte ptr [si], 'O'
+    jne .cfg_mbr_no
+    cmp byte ptr [si + 1], 'N'
+    jne .cfg_mbr_off
+    cmp byte ptr [si + 2], 0
+    jne .cfg_mbr_no
+    mov byte ptr [break_flag], 1
+    clc
+    jmp .cfg_mbr_done
+.cfg_mbr_off:
+    cmp byte ptr [si + 1], 'F'
+    jne .cfg_mbr_no
+    cmp byte ptr [si + 2], 'F'
+    jne .cfg_mbr_no
+    cmp byte ptr [si + 3], 0
+    jne .cfg_mbr_no
+    mov byte ptr [break_flag], 0
+    clc
+    jmp .cfg_mbr_done
+.cfg_mbr_no:
+    stc
+.cfg_mbr_done:
+    pop di
+    pop ax
+    ret
+
 cfg_match_shell:
     push ax
     push di
@@ -392,5 +486,53 @@ cfg_trim_path:
     jmp .cfg_tp_back
 .cfg_tp_done:
     pop di
+    pop ax
+    ret
+
+/* Print the unsupported directive exactly as parsed. */
+cfg_print_ignored:
+    push ax
+    push dx
+    push si
+    mov ah, 0x09
+    lea dx, [msg_cfg_ignored]
+    int 0x21
+    lea si, [cfg_line]
+.cfg_pi_loop:
+    mov dl, [si]
+    test dl, dl
+    jz .cfg_pi_done
+    mov ah, 0x02
+    int 0x21
+    inc si
+    jmp .cfg_pi_loop
+.cfg_pi_done:
+    mov ah, 0x09
+    lea dx, [msg_cfg_crlf]
+    int 0x21
+    pop si
+    pop dx
+    pop ax
+    ret
+
+cfg_print_device_fail:
+    push ax
+    push dx
+    mov al, byte ptr [device_load_error]
+    cmp al, 1
+    je .cfg_pdf_size
+    cmp al, 2
+    je .cfg_pdf_char
+    lea dx, [msg_cfg_device_failed]
+    jmp .cfg_pdf_print
+.cfg_pdf_size:
+    lea dx, [msg_cfg_device_size]
+    jmp .cfg_pdf_print
+.cfg_pdf_char:
+    lea dx, [msg_cfg_device_char]
+.cfg_pdf_print:
+    mov ah, 0x09
+    int 0x21
+    pop dx
     pop ax
     ret

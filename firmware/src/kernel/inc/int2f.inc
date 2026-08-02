@@ -79,11 +79,13 @@ dos_subst_set:
     push di
     push es
     push ds
-    cmp bl, CDS_COUNT
+    cmp bl, byte ptr cs:[cfg_lastdrive]
     jae .dss_bad
-    cmp bh, CDS_COUNT
+    cmp bh, byte ptr cs:[cfg_lastdrive]
     jae .dss_bad
-    mov byte ptr cs:[subst_real + bx], bh
+    mov al, bh
+    xor bh, bh
+    mov byte ptr cs:[subst_real + bx], al
     push cs
     pop es
     mov ax, bx
@@ -152,7 +154,7 @@ dos_subst_del:
     push di
     push es
     push ds
-    cmp bl, CDS_COUNT
+    cmp bl, byte ptr cs:[cfg_lastdrive]
     jae .dsd_bad2
     mov byte ptr cs:[subst_real + bx], 0xFF
     push cs

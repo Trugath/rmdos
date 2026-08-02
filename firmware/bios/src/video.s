@@ -254,11 +254,50 @@ int10_handler:
     iret
 
 .i10_set_page:
+    push ax
+    push bx
+    push cx
+    push dx
     push ds
-    mov bx, BDA_SEG
-    mov ds, bx
-    mov [BDA_CRT_PAGE], al
+    mov cl, al
+    mov ax, BDA_SEG
+    mov ds, ax
+    /*
+     * CGA regeneration memory is 16KB.  The page length gives 8 pages
+     * in 40-column text modes, 4 in 80-column modes, and 1 in graphics.
+     */
+    mov ax, 0x4000
+    xor dx, dx
+    div word ptr [BDA_CRT_LEN]
+    dec al
+    cmp cl, al
+    jbe .i10_sp_valid
+    mov cl, al
+.i10_sp_valid:
+    mov [BDA_CRT_PAGE], cl
+
+    /* BDA/CRTC start addresses are character, not byte, offsets. */
+    xor ch, ch
+    mov ax, cx
+    mov bx, [BDA_CRT_LEN]
+    shr bx, 1
+    mul bx
+    mov [BDA_CRT_START], ax
+    call crtc_set_start_addr
+
+    /* Display the selected page's cursor in text modes. */
+    cmp byte ptr [BDA_CRT_MODE], 4
+    jae .i10_sp_done
+    mov bx, cx
+    shl bx, 1
+    mov dx, [BDA_CURSOR_POS + bx]
+    call crtc_set_cursor_addr
+.i10_sp_done:
     pop ds
+    pop dx
+    pop cx
+    pop bx
+    pop ax
     iret
 
 .i10_scroll_up:
@@ -307,11 +346,12 @@ int10_handler:
     push di
     mov di, BDA_SEG
     mov ds, di
+    mov al, bh
     mov bl, bh
     xor bh, bh
     shl bx, 1
     mov dx, [BDA_CURSOR_POS + bx]
-    call cursor_to_offset
+    call cursor_to_page_offset
     mov ax, CGA_SEG
     mov es, ax
     mov ax, es:[di]
@@ -334,7 +374,8 @@ int10_handler:
     shl bx, 1
     mov dx, [BDA_CURSOR_POS + bx]
     pop bx
-    call cursor_to_offset
+    mov al, bh
+    call cursor_to_page_offset
     mov ax, CGA_SEG
     mov es, ax
     pop cx
@@ -365,7 +406,8 @@ int10_handler:
     shl bx, 1
     mov dx, [BDA_CURSOR_POS + bx]
     pop bx
-    call cursor_to_offset
+    mov al, bh
+    call cursor_to_page_offset
     mov ax, CGA_SEG
     mov es, ax
     pop cx
@@ -499,7 +541,10 @@ int10_handler:
     jmp .i10_tt_advance
 
 .i10_tt_text:
-    mov dx, [BDA_CURSOR_POS]
+    mov bl, [BDA_CRT_PAGE]
+    xor bh, bh
+    shl bx, 1
+    mov dx, [BDA_CURSOR_POS + bx]
     push ax
     call cursor_to_offset
     mov bx, CGA_SEG
@@ -509,20 +554,29 @@ int10_handler:
     mov es:[di], ax
 
 .i10_tt_advance:
-    inc byte ptr [BDA_CURSOR_POS]
+    mov bl, [BDA_CRT_PAGE]
+    xor bh, bh
+    shl bx, 1
+    inc byte ptr [BDA_CURSOR_POS + bx]
     mov al, byte ptr [BDA_CRT_COLS]
-    cmp byte ptr [BDA_CURSOR_POS], al
+    cmp byte ptr [BDA_CURSOR_POS + bx], al
     jb .i10_tt_done
-    mov byte ptr [BDA_CURSOR_POS], 0
+    mov byte ptr [BDA_CURSOR_POS + bx], 0
     jmp .i10_lf
 .i10_cr:
-    mov byte ptr [BDA_CURSOR_POS], 0
+    mov bl, [BDA_CRT_PAGE]
+    xor bh, bh
+    shl bx, 1
+    mov byte ptr [BDA_CURSOR_POS + bx], 0
     jmp .i10_tt_done
 .i10_lf:
-    inc byte ptr [BDA_CURSOR_POS + 1]
-    cmp byte ptr [BDA_CURSOR_POS + 1], 25
+    mov bl, [BDA_CRT_PAGE]
+    xor bh, bh
+    shl bx, 1
+    inc byte ptr [BDA_CURSOR_POS + bx + 1]
+    cmp byte ptr [BDA_CURSOR_POS + bx + 1], 25
     jb .i10_tt_done
-    mov byte ptr [BDA_CURSOR_POS + 1], 24
+    mov byte ptr [BDA_CURSOR_POS + bx + 1], 24
     cmp byte ptr [BDA_CRT_MODE], 4
     jae .i10_lf_gfx
     push ax
@@ -543,9 +597,12 @@ int10_handler:
     call gfx_scroll_up_row
     jmp .i10_tt_done
 .i10_bs:
-    cmp byte ptr [BDA_CURSOR_POS], 0
+    mov bl, [BDA_CRT_PAGE]
+    xor bh, bh
+    shl bx, 1
+    cmp byte ptr [BDA_CURSOR_POS + bx], 0
     je .i10_tt_done
-    dec byte ptr [BDA_CURSOR_POS]
+    dec byte ptr [BDA_CURSOR_POS + bx]
     jmp .i10_tt_done
 .i10_bel:
     call speaker_beep
@@ -553,7 +610,10 @@ int10_handler:
     /* Keep CRTC cursor in sync for text modes. */
     cmp byte ptr [BDA_CRT_MODE], 4
     jae .i10_tt_iret
-    mov dx, [BDA_CURSOR_POS]
+    mov bl, [BDA_CRT_PAGE]
+    xor bh, bh
+    shl bx, 1
+    mov dx, [BDA_CURSOR_POS + bx]
     call crtc_set_cursor_addr
 .i10_tt_iret:
     pop di
@@ -599,7 +659,8 @@ int10_handler:
 
     jcxz .i10_ws_finish
 
-    call cursor_to_offset        /* DI = regen byte offset */
+    mov al, bh
+    call cursor_to_page_offset   /* DI = regen byte offset */
     push ds                      /* BDA */
     push es                      /* string seg */
     mov ax, CGA_SEG
@@ -1029,6 +1090,32 @@ gfx_scroll_up_row:
     ret
 
 /*
+ * DS=BDA. AX=character start address. Program CRTC start registers 0Ch/0Dh.
+ * Clobbers AX,DX.
+ */
+crtc_set_start_addr:
+    push ax
+    push bx
+    push dx
+    mov bx, ax
+    mov dx, [BDA_CRT_PORT]
+    mov al, 0x0C
+    out dx, al
+    inc dx
+    mov al, bh
+    out dx, al
+    dec dx
+    mov al, 0x0D
+    out dx, al
+    inc dx
+    mov al, bl
+    out dx, al
+    pop dx
+    pop bx
+    pop ax
+    ret
+
+/*
  * DS=BDA. DX=row/col. Program CRTC cursor address registers 0Eh/0Fh.
  * Clobbers AX,BX,DX (port).
  */
@@ -1038,15 +1125,9 @@ crtc_set_cursor_addr:
     push cx
     push dx
     push di
-    call cursor_to_offset        /* DI = byte offset in regen for page 0 cell */
+    call cursor_to_offset        /* DI = byte offset in regen for active page */
     shr di, 1                    /* character offset within page */
-    mov ax, [BDA_CRT_LEN]
-    shr ax, 1                    /* chars per page */
-    mov bl, [BDA_CRT_PAGE]
-    xor bh, bh
-    mul bx                       /* AX = page base (chars) */
-    add ax, di
-    mov bx, ax                   /* BX = CRTC cursor address */
+    mov bx, di                   /* BX = CRTC cursor address */
     mov dx, [BDA_CRT_PORT]
     mov al, 0x0E
     out dx, al
@@ -1281,10 +1362,35 @@ video_scroll_dn:
 
 cursor_to_offset:
     push ax
-    push bx
     push ds
     mov ax, BDA_SEG
     mov ds, ax
+    mov al, [BDA_CRT_PAGE]
+    pop ds
+    call cursor_to_page_offset
+    pop ax
+    ret
+
+/*
+ * DX=row/col, AL=page.  Return DI=regen byte offset for that text page.
+ * Clobbers DI only.
+ */
+cursor_to_page_offset:
+    push bp
+    mov bp, sp
+    push ax
+    push bx
+    push dx
+    push ds
+    mov bl, al
+    xor bh, bh
+    mov ax, BDA_SEG
+    mov ds, ax
+    mov ax, bx
+    mov bx, [BDA_CRT_LEN]
+    mul bx                       /* AX = page byte base */
+    push ax
+    mov dx, [bp - 6]             /* restore input row/column after MUL */
     mov al, dh
     xor ah, ah
     mov bl, byte ptr [BDA_CRT_COLS]
@@ -1293,8 +1399,12 @@ cursor_to_offset:
     xor bh, bh
     add ax, bx
     shl ax, 1
+    add ax, [bp - 10]
+    add sp, 2
     mov di, ax
     pop ds
+    pop dx
     pop bx
     pop ax
+    pop bp
     ret

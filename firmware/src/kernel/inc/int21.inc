@@ -565,7 +565,7 @@ dos_select_drive:
     /* Save cwd of current drive into per-drive slot */
     mov bl, [cur_drive]
     xor bh, bh
-    cmp bl, CDS_COUNT
+    cmp bl, byte ptr [cfg_lastdrive]
     jae .dsd_mount
     mov ax, [cwd_cluster]
     add bx, bx
@@ -589,7 +589,7 @@ dos_select_drive:
     /* Restore cwd for new drive */
     mov bl, dl
     xor bh, bh
-    cmp bl, CDS_COUNT
+    cmp bl, byte ptr [cfg_lastdrive]
     jae .dsd_root
     mov si, bx
     add si, si
@@ -1125,11 +1125,7 @@ dos_sysvars_refresh:
     /* leave buffer ptr 0; expose count via unused pad if needed */
     mov al, byte ptr [num_drives]
     mov byte ptr [dos_sysvars + 0x20], al
-    mov al, CDS_COUNT
-    cmp al, byte ptr [num_drives]
-    jae .svr_ld
-    mov al, byte ptr [num_drives]
-.svr_ld:
+    mov al, byte ptr [cfg_lastdrive]
     mov byte ptr [dos_sysvars + 0x21], al
     mov al, byte ptr [cur_drive]
     mov byte ptr [dos_sysvars + 0x22], al
@@ -1138,7 +1134,7 @@ dos_sysvars_refresh:
     /* CDS[i] = "X:" + cwd; SUBST flag when active */
     xor bx, bx
 .svr_cds:
-    cmp bx, CDS_COUNT
+    cmp bl, byte ptr [cfg_lastdrive]
     jae .svr_done
     /* clear entry */
     mov ax, bx
@@ -1204,23 +1200,7 @@ dos_sysvars_refresh:
     inc bx
     jmp .svr_cds
 .svr_done:
-    /* LASTDRIVE = max used letter index+1 */
-    mov al, byte ptr [num_drives]
-    xor bx, bx
-.svr_ld2:
-    cmp bx, CDS_COUNT
-    jae .svr_ld2_done
-    cmp byte ptr [subst_real + bx], 0xFF
-    je .svr_ld2_n
-    mov ah, bl
-    inc ah
-    cmp ah, al
-    jbe .svr_ld2_n
-    mov al, ah
-.svr_ld2_n:
-    inc bx
-    jmp .svr_ld2
-.svr_ld2_done:
+    mov al, byte ptr [cfg_lastdrive]
     mov byte ptr [dos_sysvars + 0x21], al
     pop ds
     pop es
