@@ -661,6 +661,8 @@ dev_nul_rh_seg:
     .word 0
 dev_putch_reent:
     .byte 0
+con_defer_crtc:
+    .byte 0                      /* 1 = OUTPUT batch; skip per-char CRTC */
 putch_byte:
     .byte 0
 dev_req:

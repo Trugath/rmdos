@@ -107,22 +107,43 @@ prn_write_byte:
     pop ax
     ret
 
-/* INT 21h AH=09 — write DS:DX '$'-terminated */
-
-/* INT 21h AH=09 — write DS:DX '$'-terminated */
+/* INT 21h AH=09 — write DS:DX '$'-terminated (one CON OUTPUT when possible) */
 dos_ah09:
     push ax
+    push bx
+    push cx
     push si
+    cmp byte ptr cs:[dev_putch_reent], 0
+    jne .ah09_byte_lp
+    /* Count bytes until '$' (caller DS:DX). */
     mov si, dx
-.ah09_loop:
+    xor cx, cx
+.ah09_len:
+    mov al, [si]
+    cmp al, '$'
+    je .ah09_len_done
+    inc si
+    inc cx
+    jmp .ah09_len
+.ah09_len_done:
+    jcxz .ah09_done
+    mov byte ptr cs:[dev_putch_reent], 1
+    call con_dev_write          /* DS:DX len CX */
+    mov byte ptr cs:[dev_putch_reent], 0
+    jmp .ah09_done
+.ah09_byte_lp:
+    mov si, dx
+.ah09_byte:
     mov al, [si]
     cmp al, '$'
     je .ah09_done
     call putch
     inc si
-    jmp .ah09_loop
+    jmp .ah09_byte
 .ah09_done:
     pop si
+    pop cx
+    pop bx
     pop ax
     clc
     jmp int21_iret

@@ -115,10 +115,25 @@ dev_con_interrupt:
     lds si, es:[bx + 0x0D]
     mov cx, es:[bx + 0x11]
     jcxz .dci_out_ok
-.dci_out_lp:
+    /* Text mode → fast path; one CRTC sync after the batch. */
+    push es
+    mov ax, 0x0040
+    mov es, ax
+    cmp byte ptr es:[0x49], 4
+    pop es
+    jae .dci_out_bios
+    mov byte ptr cs:[con_defer_crtc], 1
+.dci_out_fast:
     lodsb
     call con_teletype
-    loop .dci_out_lp
+    loop .dci_out_fast
+    mov byte ptr cs:[con_defer_crtc], 0
+    call con_sync_crtc
+    jmp .dci_out_ok
+.dci_out_bios:
+    lodsb
+    call con_teletype
+    loop .dci_out_bios
 .dci_out_ok:
     pop ds
     mov word ptr es:[bx + 3], DEV_STAT_DONE
@@ -158,8 +173,120 @@ dev_nul_interrupt:
     pop ax
     retf
 
-/* Teletype AL → CGA + COM1. Preserves AL. Used by builtin CON. */
+/*
+ * Teletype AL → screen + COM1. Preserves AL.
+ * Text mode: direct B800 + BDA cursor; CRTC unless con_defer_crtc.
+ * Graphics: INT 10h AH=0E.
+ */
 con_teletype:
+    push ax
+    push bx
+    push cx
+    push dx
+    push di
+    push es
+    push ds
+    mov ah, al                   /* save char in AH for COM1 */
+    mov bx, 0x0040
+    mov ds, bx
+    cmp byte ptr [0x49], 4       /* CRT mode */
+    jae .ct_bios
+    /* Text fast path — DS=BDA */
+    cmp al, 0x0D
+    je .ct_cr
+    cmp al, 0x0A
+    je .ct_lf
+    cmp al, 0x08
+    je .ct_bs
+    cmp al, 0x07
+    je .ct_bel
+    /* Printable: write atrribute 07 at cursor */
+    mov bl, [0x62]               /* page */
+    xor bh, bh
+    shl bx, 1
+    mov dx, [0x50 + bx]          /* row/col */
+    push ax                      /* AL=char */
+    push dx                      /* MUL clobbers DX */
+    mov al, [0x62]
+    xor ah, ah
+    mov cx, [0x4C]               /* CRT_LEN */
+    mul cx
+    mov di, ax
+    pop dx
+    mov al, dh
+    xor ah, ah
+    mov cl, [0x4A]               /* cols */
+    mul cl
+    mov bl, dl
+    xor bh, bh
+    add ax, bx
+    shl ax, 1
+    add di, ax
+    mov ax, 0xB800
+    mov es, ax
+    pop ax
+    mov ah, 0x07
+    mov es:[di], ax
+    /* advance cursor */
+    mov bl, [0x62]
+    xor bh, bh
+    shl bx, 1
+    inc byte ptr [0x50 + bx]
+    mov al, [0x4A]
+    cmp byte ptr [0x50 + bx], al
+    jb .ct_crtc
+    mov byte ptr [0x50 + bx], 0
+    call con_tty_lf
+    jmp .ct_crtc
+.ct_cr:
+    mov bl, [0x62]
+    xor bh, bh
+    shl bx, 1
+    mov byte ptr [0x50 + bx], 0
+    jmp .ct_crtc
+.ct_lf:
+    call con_tty_lf
+    jmp .ct_crtc
+.ct_bs:
+    mov bl, [0x62]
+    xor bh, bh
+    shl bx, 1
+    cmp byte ptr [0x50 + bx], 0
+    je .ct_crtc
+    dec byte ptr [0x50 + bx]
+    jmp .ct_crtc
+.ct_bel:
+    push ax
+    mov al, 0x07
+    mov ah, 0x0E
+    mov bx, 0x0007
+    int 0x10                     /* BIOS BEL (no cursor move) */
+    pop ax
+    mov ah, al                   /* COM1 char */
+    jmp .ct_com1                 /* BEL: skip CRTC */
+.ct_crtc:
+    cmp byte ptr cs:[con_defer_crtc], 0
+    jne .ct_com1
+    call con_sync_crtc
+.ct_com1:
+    pop ds
+    pop es
+    pop di
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    /* fall through to com1_out with AL preserved */
+    jmp com1_out
+
+.ct_bios:
+    pop ds
+    pop es
+    pop di
+    pop dx
+    pop cx
+    pop bx
+    pop ax
     push ax
     push bx
     push dx
@@ -183,6 +310,52 @@ com1_out:
     mov dx, 0x3F8
     out dx, al
     pop dx
+    pop ax
+    ret
+
+/* DS=BDA. Advance row; scroll at 25 via INT 10h AH=06. Clobbers AX,BX,CX,DX. */
+con_tty_lf:
+    push ax
+    push bx
+    push cx
+    push dx
+    mov bl, [0x62]
+    xor bh, bh
+    shl bx, 1
+    inc byte ptr [0x50 + bx + 1]
+    cmp byte ptr [0x50 + bx + 1], 25
+    jb .ctl_done
+    mov byte ptr [0x50 + bx + 1], 24
+    mov ax, 0x0601
+    mov bh, 0x07
+    xor cx, cx
+    mov dx, 0x184F
+    int 0x10
+.ctl_done:
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+/* Program CRTC from BDA cursor (INT 10h AH=02). Preserves AX. */
+con_sync_crtc:
+    push ax
+    push bx
+    push dx
+    push ds
+    mov ax, 0x0040
+    mov ds, ax
+    mov bl, [0x62]
+    xor bh, bh
+    shl bx, 1
+    mov dx, [0x50 + bx]
+    mov ah, 0x02
+    mov bh, [0x62]
+    int 0x10
+    pop ds
+    pop dx
+    pop bx
     pop ax
     ret
 
