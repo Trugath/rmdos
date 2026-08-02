@@ -130,7 +130,7 @@ absdisk_xfer:
     mov ax, di
     mov dx, ds
     add ax, word ptr cs:[vol_base_lba]
-    adc dx, 0
+    adc dx, word ptr cs:[vol_base_lba + 2]
     mov bx, bp
     cmp byte ptr cs:[abs_write], 0
     jne .ax_wr
@@ -162,7 +162,7 @@ absdisk_xfer:
     mov ax, di
     mov dx, ds
     add ax, word ptr cs:[vol_base_lba]
-    adc dx, 0
+    adc dx, word ptr cs:[vol_base_lba + 2]
     call fat12_read_lba
     pop es
     jc .ax_io
@@ -186,7 +186,7 @@ absdisk_xfer:
     mov ax, di
     mov dx, ds
     add ax, word ptr cs:[vol_base_lba]
-    adc dx, 0
+    adc dx, word ptr cs:[vol_base_lba + 2]
     push ds
     push si
     push di

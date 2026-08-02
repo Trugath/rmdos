@@ -27,7 +27,7 @@ _start:
 
 /* ---- hot path: must remain below offset 0x100 ---- */
 
-/* AX=LBA, ES:BX=buf; DS=0060. Preserves AX/BX. */
+/* AX=volume-relative LBA, ES:BX=buf; DS=0060. Preserves AX/BX. */
 read_lba:
     push ax
     push bx
@@ -36,8 +36,9 @@ read_lba:
     push si
 
     mov si, bx
-    add ax, [0x1C]               /* BPB HiddenSectors (partition base) */
     xor dx, dx
+    add ax, [0x1C]               /* BPB HiddenSectors (partition base) */
+    adc dx, [0x1E]
     mov cx, [0x18]
     div cx
     mov cl, dl

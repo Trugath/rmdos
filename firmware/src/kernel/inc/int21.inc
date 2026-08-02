@@ -514,8 +514,12 @@ dos_mount_drive:
     cmp al, [boot_drive]
     jne .dmd_switch
     add bx, bx
+    add bx, bx
     mov ax, [drive_map_base + bx]
     cmp ax, [vol_want_base]
+    jne .dmd_switch
+    mov ax, [drive_map_base + bx + 2]
+    cmp ax, [vol_want_base + 2]
     je .dmd_ok
     mov bl, dl
 .dmd_switch:
@@ -525,8 +529,11 @@ dos_mount_drive:
     mov al, [drive_map_bios + bx]
     mov [boot_drive], al
     add bx, bx
+    add bx, bx
     mov ax, [drive_map_base + bx]
     mov [vol_want_base], ax
+    mov ax, [drive_map_base + bx + 2]
+    mov [vol_want_base + 2], ax
     call fat12_init_bpb
     jc .dmd_bad
     call fat12_load_fat
@@ -803,6 +810,8 @@ dpb_fill_from_bpb:
     mov word ptr cs:[di + 9], ax
     mov ax, word ptr cs:[bpb_data_lba]
     sub ax, word ptr cs:[vol_want_base]
+    mov bx, word ptr cs:[bpb_data_lba + 2]
+    sbb bx, word ptr cs:[vol_want_base + 2]
     mov word ptr cs:[di + 0x0B], ax         /* +0B first data sector */
     mov ax, word ptr cs:[bpb_max_clust]
     mov word ptr cs:[di + 0x0D], ax         /* +0D max cluster */
@@ -810,6 +819,8 @@ dpb_fill_from_bpb:
     mov word ptr cs:[di + 0x0F], ax
     mov ax, word ptr cs:[bpb_root_lba]
     sub ax, word ptr cs:[vol_want_base]
+    mov bx, word ptr cs:[bpb_root_lba + 2]
+    sbb bx, word ptr cs:[vol_want_base + 2]
     mov word ptr cs:[di + 0x11], ax         /* +11 first dir sector */
     lea ax, [dev_nul_hdr]
     mov word ptr cs:[di + 0x13], ax         /* +13 device header off */

@@ -30,8 +30,10 @@ fat12_init_bpb:
     push cs
     pop ds
     mov ax, [vol_want_base]
+    mov dx, [vol_want_base + 2]
     mov [vol_base_lba], ax
-    test ax, ax
+    mov [vol_base_lba + 2], dx
+    or ax, dx
     jnz .fib_at_base
     lea bx, [sector_buf]
     mov ax, 0x0201
@@ -44,6 +46,7 @@ fat12_init_bpb:
 
 .fib_at_base:
     /* Convert vol_want_base → CHS via INT 13h AH=08 geometry. */
+    push dx
     push ax
     mov ah, 0x08
     mov dl, cs:[boot_drive]
@@ -57,8 +60,8 @@ fat12_init_bpb:
     xor ah, ah
     inc ax
     mov di, ax                   /* heads */
-    pop ax                       /* LBA */
-    xor dx, dx
+    pop ax                       /* LBA lo */
+    pop dx                       /* LBA hi */
     div si
     mov cl, dl
     inc cl                       /* sector */
@@ -80,6 +83,7 @@ fat12_init_bpb:
     jmp .fib_vbr
 .fib_at_fail_pop:
     pop ax
+    pop dx
     jmp .fib_fail
 .fib_vbr:
     /* Require 512 BPS */
@@ -113,13 +117,39 @@ fat12_init_bpb:
     mov ax, [sector_buf + 26]
     mov [bpb_heads], ax
 
+    /* Reject malformed BPBs before using their fields in arithmetic/divides. */
+    mov al, [bpb_spc]
+    test al, al
+    jz .fib_fail
+    mov bl, al
+    dec bl
+    test al, bl
+    jnz .fib_fail
+    cmp word ptr [bpb_reserved], 0
+    je .fib_fail
+    cmp byte ptr [bpb_fats], 0
+    je .fib_fail
+    cmp word ptr [bpb_root_ents], 0
+    je .fib_fail
+    cmp word ptr [bpb_spf], 0
+    je .fib_fail
+    cmp word ptr [bpb_spt], 0
+    je .fib_fail
+    cmp word ptr [bpb_heads], 0
+    je .fib_fail
+    mov ax, [bpb_totsec]
+    or ax, [bpb_totsec_hi]
+    jz .fib_fail
+
     /* fat1_lba = reserved */
     mov ax, [bpb_reserved]
     mov [bpb_fat1_lba], ax
+    mov word ptr [bpb_fat1_lba + 2], 0
     /* fat2_lba = reserved + spf */
     mov bx, [bpb_spf]
     add ax, bx
     mov [bpb_fat2_lba], ax
+    mov word ptr [bpb_fat2_lba + 2], 0
     /* root_lba = reserved + fats*spf */
     mov ax, [bpb_reserved]
     mov cl, [bpb_fats]
@@ -128,6 +158,7 @@ fat12_init_bpb:
     add ax, bx
     loop .fib_fats
     mov [bpb_root_lba], ax
+    mov word ptr [bpb_root_lba + 2], 0
     /* root_secs = root_ents / 16 */
     mov ax, [bpb_root_ents]
     mov cl, 4
@@ -137,6 +168,7 @@ fat12_init_bpb:
     mov bx, [bpb_root_lba]
     add bx, ax
     mov [bpb_data_lba], bx
+    mov word ptr [bpb_data_lba + 2], 0
     /* max_clust = 2 + (totsec - data_lba) / spc  (totsec may be 32-bit) */
     mov ax, [bpb_totsec]
     mov dx, [bpb_totsec_hi]
@@ -150,10 +182,15 @@ fat12_init_bpb:
 
     /* The BPB addresses are volume-relative; all filesystem I/O is physical. */
     mov ax, [vol_base_lba]
+    mov dx, [vol_base_lba + 2]
     add [bpb_fat1_lba], ax
+    adc [bpb_fat1_lba + 2], dx
     add [bpb_fat2_lba], ax
+    adc [bpb_fat2_lba + 2], dx
     add [bpb_root_lba], ax
+    adc [bpb_root_lba + 2], dx
     add [bpb_data_lba], ax
+    adc [bpb_data_lba + 2], dx
 
     /* FAT12 if CountOfClusters < 4085, else FAT16 */
     mov byte ptr [bpb_fat_type], 12
@@ -322,7 +359,7 @@ fat12_cluster_to_lba:
     xor bh, bh
     mul bx                       /* DX:AX = (clust-2)*spc */
     add ax, cs:[bpb_data_lba]
-    adc dx, 0
+    adc dx, cs:[bpb_data_lba + 2]
     pop bx
     ret
 
@@ -478,9 +515,11 @@ fat12_flush_fat:
     pop si
     /* FAT1 */
     mov ax, cs:[bpb_fat1_lba]
+    mov dx, cs:[bpb_fat1_lba + 2]
     add ax, cs:[fat_win_sec]
+    adc dx, 0
     add ax, cx
-    xor dx, dx
+    adc dx, 0
     lea bx, [sector_buf]
     push cx
     call fat12_write_lba
@@ -488,9 +527,11 @@ fat12_flush_fat:
     jc .fff_err
     /* FAT2 */
     mov ax, cs:[bpb_fat2_lba]
+    mov dx, cs:[bpb_fat2_lba + 2]
     add ax, cs:[fat_win_sec]
+    adc dx, 0
     add ax, cx
-    xor dx, dx
+    adc dx, 0
     lea bx, [sector_buf]
     push cx
     call fat12_write_lba
@@ -565,8 +606,9 @@ fat_ensure_window:
     push ax
     mov bx, ax
     mov ax, cs:[bpb_fat1_lba]
+    mov dx, cs:[bpb_fat1_lba + 2]
     add ax, bx
-    xor dx, dx
+    adc dx, 0
     lea bx, [sector_buf]
     call fat12_read_lba
     jc .few_rd_err
@@ -844,16 +886,18 @@ fat12_find_free_dirent:
     push cs
     pop es
     mov bp, cs:[bpb_root_lba]
-    mov dx, cs:[bpb_root_secs]
+    mov di, cs:[bpb_root_lba + 2]
+    mov cx, cs:[bpb_root_secs]
 .ffd_sec:
-    test dx, dx
+    test cx, cx
     jz .ffd_fail
+    mov word ptr cs:[last_dir_lba + 2], di
     lea bx, [sector_buf]
     mov ax, bp
-    push dx
-    xor dx, dx
+    mov dx, di
+    push cx
     call fat12_read_lba
-    pop dx
+    pop cx
     jc .ffd_fail
     xor si, si
 .ffd_ent:
@@ -872,8 +916,10 @@ fat12_find_free_dirent:
     inc si
     jmp .ffd_ent
 .ffd_next:
-    inc bp
-    dec dx
+    mov di, word ptr cs:[last_dir_lba + 2]
+    add bp, 1
+    adc di, 0
+    dec cx
     jmp .ffd_sec
 .ffd_got:
     mov word ptr cs:[last_dir_lba], bp
@@ -931,8 +977,8 @@ fat12_create_dirent:
     mov word ptr es:[di + 28], 0
     mov word ptr es:[di + 30], 0
     mov ax, word ptr [last_dir_lba]
+    mov dx, word ptr [last_dir_lba + 2]
     lea bx, [sector_buf]
-    xor dx, dx
     call fat12_write_lba
     pop ds
     pop es
@@ -963,8 +1009,8 @@ fat12_update_dirent:
     push cs
     pop es
     mov ax, word ptr cs:[last_dir_lba]
+    mov dx, word ptr cs:[last_dir_lba + 2]
     lea bx, [sector_buf]
-    xor dx, dx
     call fat12_read_lba
     jc .fud_err
     mov bx, word ptr cs:[last_dir_idx]
@@ -977,8 +1023,8 @@ fat12_update_dirent:
     mov ax, word ptr cs:[last_size_hi]
     mov word ptr es:[di + 30], ax
     mov ax, word ptr cs:[last_dir_lba]
+    mov dx, word ptr cs:[last_dir_lba + 2]
     lea bx, [sector_buf]
-    xor dx, dx
     call fat12_write_lba
     jc .fud_err
     clc
@@ -1008,8 +1054,8 @@ fat12_delete_dirent:
     push cs
     pop es
     mov ax, word ptr cs:[last_dir_lba]
+    mov dx, word ptr cs:[last_dir_lba + 2]
     lea bx, [sector_buf]
-    xor dx, dx
     call fat12_read_lba
     jc .fdd_err
     mov bx, word ptr cs:[last_dir_idx]
@@ -1019,8 +1065,8 @@ fat12_delete_dirent:
     add di, bx
     mov byte ptr es:[di], 0xE5
     mov ax, word ptr cs:[last_dir_lba]
+    mov dx, word ptr cs:[last_dir_lba + 2]
     lea bx, [sector_buf]
-    xor dx, dx
     call fat12_write_lba
     jc .fdd_err
     clc
@@ -1050,8 +1096,9 @@ fat12_dir_sector:
     cmp bx, cs:[bpb_root_secs]
     jae .fds_err
     mov ax, cs:[bpb_root_lba]
+    mov dx, cs:[bpb_root_lba + 2]
     add ax, bx
-    xor dx, dx
+    adc dx, 0
     clc
     jmp .fds_done
 .fds_sub:
@@ -1165,8 +1212,9 @@ fat12_find_in_dir:
 
     lea bx, [sector_buf]
     call fat12_read_lba
+    mov word ptr cs:[last_dir_lba + 2], dx
     pop dx                       /* restore sector index */
-    mov bx, ax                   /* LBA low (read preserves AX) */
+    mov bx, ax                   /* LBA low (read preserves DX:AX) */
     jc .fid_nf
 
     xor si, si
@@ -1262,6 +1310,7 @@ fat12_find_free_in_dir:
     push ax
     lea bx, [sector_buf]
     call fat12_read_lba
+    mov word ptr cs:[last_dir_lba + 2], dx
     pop bx                       /* LBA low */
     pop dx                       /* sector index */
     jc .ffid_fail
@@ -1323,6 +1372,7 @@ fat12_find_free_in_dir:
     push ax
     call fat12_cluster_to_lba
     mov word ptr cs:[last_dir_lba], ax
+    mov word ptr cs:[last_dir_lba + 2], dx
     mov word ptr cs:[last_dir_idx], 0
     pop ax                       /* new cluster */
     call fat12_zero_cluster
@@ -1383,8 +1433,8 @@ fat12_create_dirent_attr:
     mov word ptr es:[di + 28], 0
     mov word ptr es:[di + 30], 0
     mov ax, word ptr [last_dir_lba]
+    mov dx, word ptr [last_dir_lba + 2]
     lea bx, [sector_buf]
-    xor dx, dx
     call fat12_write_lba
     pop ds
     pop es

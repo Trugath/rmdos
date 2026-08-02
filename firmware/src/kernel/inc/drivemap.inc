@@ -3,7 +3,7 @@
  * A:/B: are floppies; hard-disk DOS primaries (01/04/06) get C: onward
  * in slot order per disk, then logicals inside extended (05h/0Fh) EBR
  * chains; whole-disk FAT VBR gets one letter at LBA 0.
- * Base LBAs are 16-bit (hi word of partition LBA must be 0).
+ * Base LBAs are 32-bit physical LBAs.
  */
 
 .equ DRIVEMAP_MAX, CDS_COUNT
@@ -31,11 +31,13 @@ dos_rebuild_drivemap:
     je .drm_initial_done
     mov byte ptr [drive_map_bios], 0
     mov word ptr [drive_map_base], 0
+    mov word ptr [drive_map_base + 2], 0
     inc byte ptr [num_drives]
     cmp byte ptr [cfg_lastdrive], 1
     jbe .drm_initial_done
     mov byte ptr [drive_map_bios + 1], 1
-    mov word ptr [drive_map_base + 2], 0
+    mov word ptr [drive_map_base + 4], 0
+    mov word ptr [drive_map_base + 6], 0
     inc byte ptr [num_drives]
 .drm_initial_done:
 
@@ -78,9 +80,12 @@ dos_rebuild_drivemap:
     mov al, [sector_buf + si + 4]
     call drm_is_dos_type
     jnc .drm_add_pri_next
-    call drm_entry_lba16_ok
-    jnc .drm_add_pri_next
     mov ax, [sector_buf + si + 8]
+    mov dx, [sector_buf + si + 10]
+    or ax, dx
+    jz .drm_add_pri_next
+    mov ax, [sector_buf + si + 8]
+    mov dx, [sector_buf + si + 10]
     call drm_push
     jc .drm_done
 .drm_add_pri_next:
@@ -92,6 +97,10 @@ dos_rebuild_drivemap:
     mov word ptr [drm_ext_list + 2], 0
     mov word ptr [drm_ext_list + 4], 0
     mov word ptr [drm_ext_list + 6], 0
+    mov word ptr [drm_ext_list + 8], 0
+    mov word ptr [drm_ext_list + 10], 0
+    mov word ptr [drm_ext_list + 12], 0
+    mov word ptr [drm_ext_list + 14], 0
     xor di, di
     mov si, 0x1BE
     mov cx, 4
@@ -99,11 +108,15 @@ dos_rebuild_drivemap:
     mov al, [sector_buf + si + 4]
     call drm_is_ext_type
     jnc .drm_col_next
-    call drm_entry_lba16_ok
-    jnc .drm_col_next
     mov ax, [sector_buf + si + 8]
+    mov dx, [sector_buf + si + 10]
+    or ax, dx
+    jz .drm_col_next
+    mov ax, [sector_buf + si + 8]
+    mov dx, [sector_buf + si + 10]
     mov [drm_ext_list + di], ax
-    add di, 2
+    mov [drm_ext_list + di + 2], dx
+    add di, 4
 .drm_col_next:
     add si, 16
     loop .drm_col_ext
@@ -112,13 +125,17 @@ dos_rebuild_drivemap:
     mov cx, 4
 .drm_walk_list:
     mov ax, [drm_ext_list + di]
-    test ax, ax
+    mov dx, [drm_ext_list + di + 2]
+    or ax, dx
     jz .drm_walk_next
+    mov ax, [drm_ext_list + di]
+    mov dx, [drm_ext_list + di + 2]
     mov word ptr [drm_ext_base], ax
+    mov word ptr [drm_ext_base + 2], dx
     call drm_walk_extended
     jc .drm_done
 .drm_walk_next:
-    add di, 2
+    add di, 4
     loop .drm_walk_list
 
     cmp byte ptr [num_drives], 2
@@ -134,6 +151,7 @@ dos_rebuild_drivemap:
     cmp byte ptr [num_drives], 2
     jne .drm_next_disk
     xor ax, ax
+    xor dx, dx
     call drm_push
     jc .drm_done
 
@@ -165,9 +183,12 @@ drm_walk_extended:
     push dx
     push si
     mov ax, word ptr [drm_ext_base]
+    mov dx, word ptr [drm_ext_base + 2]
     mov word ptr [drm_ebr_lba], ax
+    mov word ptr [drm_ebr_lba + 2], dx
 .drm_ebr_loop:
     mov ax, word ptr [drm_ebr_lba]
+    mov dx, word ptr [drm_ebr_lba + 2]
     lea bx, [sector_buf]
     call drm_read_lba
     jc .drm_ebr_done_clc
@@ -179,11 +200,14 @@ drm_walk_extended:
     mov al, [sector_buf + si + 4]
     call drm_is_dos_type
     jnc .drm_ebr_link
-    call drm_entry_lba16_ok
-    jnc .drm_ebr_link
+    mov ax, [sector_buf + si + 8]
+    mov dx, [sector_buf + si + 10]
+    or ax, dx
+    jz .drm_ebr_link
     mov ax, word ptr [drm_ebr_lba]
     add ax, [sector_buf + si + 8]
-    jc .drm_ebr_link
+    mov dx, word ptr [drm_ebr_lba + 2]
+    adc dx, [sector_buf + si + 10]
     call drm_push
     jc .drm_ebr_full
 
@@ -192,14 +216,21 @@ drm_walk_extended:
     mov al, [sector_buf + si + 4]
     call drm_is_ext_type
     jnc .drm_ebr_done_clc
-    call drm_entry_lba16_ok
-    jnc .drm_ebr_done_clc
+    mov ax, [sector_buf + si + 8]
+    mov dx, [sector_buf + si + 10]
+    or ax, dx
+    jz .drm_ebr_done_clc
     mov ax, word ptr [drm_ext_base]
     add ax, [sector_buf + si + 8]
-    jc .drm_ebr_done_clc
+    mov dx, word ptr [drm_ext_base + 2]
+    adc dx, [sector_buf + si + 10]
     cmp ax, word ptr [drm_ebr_lba]
+    jne .drm_ebr_next
+    cmp dx, word ptr [drm_ebr_lba + 2]
     je .drm_ebr_done_clc
+.drm_ebr_next:
     mov word ptr [drm_ebr_lba], ax
+    mov word ptr [drm_ebr_lba + 2], dx
     jmp .drm_ebr_loop
 
 .drm_ebr_done_clc:
@@ -215,7 +246,7 @@ drm_walk_extended:
     pop ax
     ret
 
-/* AX=LBA, BX=buffer offset. Uses drm_bios_dl / drm_spt / drm_heads. */
+/* DX:AX=LBA, BX=buffer offset. Uses drm_bios_dl / drm_spt / drm_heads. */
 drm_read_lba:
     push ax
     push bx
@@ -223,7 +254,6 @@ drm_read_lba:
     push dx
     push si
     mov si, bx
-    xor dx, dx
     div word ptr [drm_spt]
     mov cl, dl
     inc cl
@@ -274,19 +304,7 @@ drm_is_ext_type:
     stc
     ret
 
-/* SI → partition entry. CF set if start LBA fits in 16 bits and nonzero. */
-drm_entry_lba16_ok:
-    cmp word ptr [sector_buf + si + 10], 0
-    jne .drm_lba_no
-    cmp word ptr [sector_buf + si + 8], 0
-    je .drm_lba_no
-    stc
-    ret
-.drm_lba_no:
-    clc
-    ret
-
-/* IN: DL ignored (use drm_bios_dl for map), AX=base_lba. CF if full. DS=CS. */
+/* IN: DL ignored (use drm_bios_dl for map), DX:AX=base_lba. CF if full. DS=CS. */
 drm_push:
     push bx
     push dx
@@ -298,10 +316,10 @@ drm_push:
     jae .drm_push_full
     xor bh, bh
     mov [drive_map_bios + bx], dl
-    push ax
     add bx, bx
-    pop ax
+    add bx, bx
     mov [drive_map_base + bx], ax
+    mov [drive_map_base + bx + 2], dx
     inc byte ptr [num_drives]
     clc
     pop dx
@@ -381,8 +399,11 @@ dos_bind_boot_drive:
     mov [boot_drive], al
     xor bh, bh
     add bx, bx
+    add bx, bx
     mov ax, [drive_map_base + bx]
     mov [vol_want_base], ax
+    mov ax, [drive_map_base + bx + 2]
+    mov [vol_want_base + 2], ax
     pop ds
     pop dx
     pop bx

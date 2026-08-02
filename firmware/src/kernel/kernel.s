@@ -31,6 +31,7 @@ _start:
     mov byte ptr [cur_drive], 0
     mov byte ptr [num_drives], 2
     mov word ptr [vol_want_base], 0
+    mov word ptr [vol_want_base + 2], 0
     mov byte ptr [com_active], 0
     mov byte ptr [com_depth], 0
     mov word ptr [current_psp], cs
@@ -211,15 +212,15 @@ bpb_spt:
 bpb_heads:
     .word 2
 bpb_fat1_lba:
-    .word 2
+    .word 2, 0
 bpb_fat2_lba:
-    .word 5
+    .word 5, 0
 bpb_root_lba:
-    .word 8
+    .word 8, 0
 bpb_root_secs:
     .word 7
 bpb_data_lba:
-    .word 15
+    .word 15, 0
 bpb_max_clust:
     .word 0x592
 fat_win_sec:
@@ -314,7 +315,7 @@ dta_seg:
 dta_off:
     .word 0
 last_dir_lba:
-    .word 0
+    .word 0, 0
 last_dir_idx:
     .word 0
 last_size_hi:
@@ -502,19 +503,19 @@ env_comspec:
 env_path:
     .asciz "PATH=A:\\BIN"
 vol_base_lba:
-    .word 0
+    .word 0, 0
 vol_want_base:
-    .word 0
+    .word 0, 0
 drive_map_bios:
     .space DRIVEMAP_MAX, 0
 drive_map_base:
-    .space DRIVEMAP_MAX * 2, 0
+    .space DRIVEMAP_MAX * 4, 0
 device_load_error:
     .byte 0
 drm_ext_base:
-    .word 0
+    .word 0, 0
 drm_ebr_lba:
-    .word 0
+    .word 0, 0
 drm_spt:
     .word 17
 drm_heads:
@@ -524,7 +525,7 @@ drm_bios_dl:
 drm_saw_mbr:
     .byte 0
 drm_ext_list:
-    .word 0, 0, 0, 0
+    .word 0, 0, 0, 0, 0, 0, 0, 0
 abs_write:
     .byte 0
 abs_saved_drv:
@@ -590,7 +591,7 @@ default_dta:
     .space 128, 0
 
 handles:
-    .space 1024, 0               /* 64 × 16 */
+    .space 1152, 0               /* 64 × 18 */
 
 max_handles:
     .word 20

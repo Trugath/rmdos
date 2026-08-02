@@ -559,6 +559,7 @@ get_geometry:
     pop es
     mov word ptr [bpb_totsec_hi], 0
     mov word ptr [vol_base_lba], 0
+    mov word ptr [vol_base_lba + 2], 0
     /* Cache CHS early so EBR walks use HD geometry (not floppy 9×2 default). */
     mov ah, 0x08
     mov dl, [drive_dl]
@@ -580,6 +581,7 @@ gg_chs_early_fb:
 gg_chs_early_done:
     mov dl, [drive_dl]
     mov ax, 0
+    xor dx, dx
     lea bx, [secbuf]
     call read_raw_lba
     jc gg_bios
@@ -601,14 +603,15 @@ gg_part:
     cmp al, 0x06
     jne gg_part_next
 gg_dos_part:
-    cmp word ptr [secbuf + si + 10], 0
-    jne gg_fail
     mov ax, [secbuf + si + 8]
-    test ax, ax
+    mov bx, [secbuf + si + 10]
+    or ax, bx
     jz gg_part_next
     test dl, dl
     jnz gg_part_skip
+    mov ax, [secbuf + si + 8]
     mov [vol_base_lba], ax
+    mov [vol_base_lba + 2], bx
     mov ax, [secbuf + si + 12]
     mov dx, [secbuf + si + 14]
     mov [bpb_totsec], ax
@@ -622,7 +625,9 @@ gg_part_next:
 
     /* Collect extended bases, then walk for remaining index in DL */
     mov word ptr [fmt_ext0], 0
+    mov word ptr [fmt_ext0 + 2], 0
     mov word ptr [fmt_ext1], 0
+    mov word ptr [fmt_ext1 + 2], 0
     xor di, di
     mov si, 0x1BE
     mov cx, 4
@@ -633,15 +638,16 @@ gg_col:
     cmp al, 0x0F
     jne gg_col_n
 gg_col_ext:
-    cmp word ptr [secbuf + si + 10], 0
-    jne gg_col_n
     mov ax, [secbuf + si + 8]
-    test ax, ax
+    mov bx, [secbuf + si + 10]
+    or ax, bx
     jz gg_col_n
-    cmp di, 4
+    cmp di, 8
     jae gg_col_n
+    mov ax, [secbuf + si + 8]
     mov [fmt_ext0 + di], ax
-    add di, 2
+    mov [fmt_ext0 + di + 2], bx
+    add di, 4
 gg_col_n:
     add si, 16
     loop gg_col
@@ -650,13 +656,16 @@ gg_col_n:
     mov cx, 2
 gg_walk_exts:
     mov ax, [fmt_ext0 + di]
-    test ax, ax
+    mov bx, [fmt_ext0 + di + 2]
+    or ax, bx
     jz gg_we_next
+    mov ax, [fmt_ext0 + di]
     mov [fmt_ext_base], ax
+    mov [fmt_ext_base + 2], bx
     call fmt_walk_logicals
     jc gg_chs_only                 /* CF set → found; vol_base/totsec set */
 gg_we_next:
-    add di, 2
+    add di, 4
     loop gg_walk_exts
     /* HD letter requested but no matching volume */
     jmp gg_fail
@@ -671,10 +680,14 @@ fmt_walk_logicals:
     push bx
     push cx
     push si
+    mov ch, dl
     mov ax, [fmt_ext_base]
+    mov dx, [fmt_ext_base + 2]
     mov [fmt_ebr_lba], ax
+    mov [fmt_ebr_lba + 2], dx
 .fwl_loop:
     mov ax, [fmt_ebr_lba]
+    mov dx, [fmt_ebr_lba + 2]
     lea bx, [secbuf]
     call read_raw_lba
     jc .fwl_miss
@@ -688,14 +701,14 @@ fmt_walk_logicals:
     cmp al, 0x06
     jne .fwl_link
 .fwl_dos:
-    cmp word ptr [secbuf + 0x1BE + 10], 0
-    jne .fwl_link
     mov ax, [fmt_ebr_lba]
+    mov dx, [fmt_ebr_lba + 2]
     add ax, [secbuf + 0x1BE + 8]
-    jc .fwl_link
-    test dl, dl
+    adc dx, [secbuf + 0x1BE + 10]
+    test ch, ch
     jnz .fwl_skip
     mov [vol_base_lba], ax
+    mov [vol_base_lba + 2], dx
     mov ax, [secbuf + 0x1BE + 12]
     mov bx, [secbuf + 0x1BE + 14]
     mov [bpb_totsec], ax
@@ -703,7 +716,7 @@ fmt_walk_logicals:
     stc
     jmp .fwl_ret
 .fwl_skip:
-    dec dl
+    dec ch
 .fwl_link:
     mov al, [secbuf + 0x1CE + 4]
     cmp al, 0x05
@@ -712,15 +725,21 @@ fmt_walk_logicals:
     jne .fwl_miss
 .fwl_next:
     mov ax, [fmt_ext_base]
+    mov dx, [fmt_ext_base + 2]
     add ax, [secbuf + 0x1CE + 8]
-    jc .fwl_miss
+    adc dx, [secbuf + 0x1CE + 10]
     cmp ax, [fmt_ebr_lba]
+    jne .fwl_set_next
+    cmp dx, [fmt_ebr_lba + 2]
     je .fwl_miss
+.fwl_set_next:
     mov [fmt_ebr_lba], ax
+    mov [fmt_ebr_lba + 2], dx
     jmp .fwl_loop
 .fwl_miss:
     clc
 .fwl_ret:
+    mov dl, ch
     pop si
     pop cx
     pop bx
@@ -958,7 +977,7 @@ cl_fail:
     stc
     ret
 
-/* AX = physical disk LBA, ES:BX = buffer. */
+/* DX:AX = physical disk LBA, ES:BX = buffer. */
 read_raw_lba:
     push ax
     push bx
@@ -969,7 +988,6 @@ read_raw_lba:
     push ds
     pop es
     mov si, bx
-    xor dx, dx
     mov cx, [bpb_spt]
     test cx, cx
     jnz rl_spt
@@ -1006,19 +1024,30 @@ rl_hd:
     pop ax
     ret
 
-/* AX = volume-relative LBA, ES:BX = buffer. Preserves relative AX. */
+/* AX = volume-relative LBA, ES:BX = buffer. Preserves AX:DX. */
 read_lba:
-    add ax, [vol_base_lba]
-    jmp read_raw_lba
-
-write_lba:
     push ax
+    push dx
+    xor dx, dx
     add ax, [vol_base_lba]
-    call write_raw_lba
+    adc dx, [vol_base_lba + 2]
+    call read_raw_lba
+    pop dx
     pop ax
     ret
 
-/* AX = absolute LBA, ES:BX = buffer. */
+write_lba:
+    push ax
+    push dx
+    xor dx, dx
+    add ax, [vol_base_lba]
+    adc dx, [vol_base_lba + 2]
+    call write_raw_lba
+    pop dx
+    pop ax
+    ret
+
+/* DX:AX = absolute LBA, ES:BX = buffer. */
 write_raw_lba:
     push ax
     push bx
@@ -1029,7 +1058,6 @@ write_raw_lba:
     push ds
     pop es
     mov si, bx
-    xor dx, dx
     mov cx, [bpb_spt]
     test cx, cx
     jnz wl_spt
@@ -1104,7 +1132,7 @@ ab_ts_done:
     mov [secbuf + 26], ax
     mov ax, [vol_base_lba]
     mov [secbuf + 28], ax
-    xor ax, ax
+    mov ax, [vol_base_lba + 2]
     mov [secbuf + 30], ax
     mov al, [drive_dl]
     mov [secbuf + 36], al
@@ -1157,11 +1185,12 @@ update_part_type:
     push di
     push es
     mov ax, [vol_base_lba]
-    test ax, ax
+    or ax, [vol_base_lba + 2]
     jz upt_done
     push ds
     pop es
     xor ax, ax
+    xor dx, dx
     lea bx, [secbuf]
     call read_raw_lba
     jc upt_done
@@ -1170,13 +1199,15 @@ update_part_type:
     mov si, 0x1BE
     mov cx, 4
     mov dx, [vol_base_lba]
+    mov di, [vol_base_lba + 2]
 upt_scan:
-    cmp word ptr [secbuf + si + 10], 0
-    jne upt_next
     cmp [secbuf + si + 8], dx
+    jne upt_try_ext
+    cmp [secbuf + si + 10], di
     jne upt_try_ext
     call upt_set_type
     xor ax, ax
+    xor dx, dx
     lea bx, [secbuf]
     call write_raw_lba
     jmp upt_done
@@ -1188,11 +1219,13 @@ upt_try_ext:
     jne upt_next
 upt_ext:
     mov ax, [secbuf + si + 8]
-    test ax, ax
+    mov bx, [secbuf + si + 10]
+    or ax, bx
     jz upt_next
     push si
     push cx
     mov [fmt_ext_base], ax
+    mov [fmt_ext_base + 2], bx
     call upt_logical
     pop cx
     pop si
@@ -1235,22 +1268,29 @@ upt_logical:
     push dx
     push si
     mov ax, [fmt_ext_base]
+    mov dx, [fmt_ext_base + 2]
     mov [fmt_ebr_lba], ax
-    mov dx, [vol_base_lba]
+    mov [fmt_ebr_lba + 2], dx
 .ul_loop:
     mov ax, [fmt_ebr_lba]
+    mov dx, [fmt_ebr_lba + 2]
     lea bx, [secbuf]
     call read_raw_lba
     jc .ul_miss
     cmp word ptr [secbuf + 510], 0xAA55
     jne .ul_miss
     mov ax, [fmt_ebr_lba]
+    mov dx, [fmt_ebr_lba + 2]
     add ax, [secbuf + 0x1BE + 8]
-    cmp ax, dx
+    adc dx, [secbuf + 0x1BE + 10]
+    cmp ax, [vol_base_lba]
+    jne .ul_link
+    cmp dx, [vol_base_lba + 2]
     jne .ul_link
     lea si, [secbuf + 0x1BE]
     call upt_set_type
     mov ax, [fmt_ebr_lba]
+    mov dx, [fmt_ebr_lba + 2]
     lea bx, [secbuf]
     call write_raw_lba
     stc
@@ -1263,10 +1303,16 @@ upt_logical:
     jne .ul_miss
 .ul_next:
     mov ax, [fmt_ext_base]
+    mov dx, [fmt_ext_base + 2]
     add ax, [secbuf + 0x1CE + 8]
+    adc dx, [secbuf + 0x1CE + 10]
     cmp ax, [fmt_ebr_lba]
+    jne .ul_set_next
+    cmp dx, [fmt_ebr_lba + 2]
     je .ul_miss
+.ul_set_next:
     mov [fmt_ebr_lba], ax
+    mov [fmt_ebr_lba + 2], dx
     jmp .ul_loop
 .ul_miss:
     clc
@@ -1974,13 +2020,18 @@ drive_idx:
     .byte 0
 vol_base_lba:
     .word 0
+    .word 0
 fmt_ext_base:
+    .word 0
     .word 0
 fmt_ebr_lba:
     .word 0
+    .word 0
 fmt_ext0:
     .word 0
+    .word 0
 fmt_ext1:
+    .word 0
     .word 0
 bpb_spc:
     .byte 1

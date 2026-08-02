@@ -221,7 +221,7 @@ non-null BUFFERS + SFTE LoL walk, and LoL LASTDRIVE).
 | `DEVICE=` | Character `.SYS` only (≤8 KiB); **block drivers intentional OOS** (reject + clear CONFIG text; follow-on) |
 | `LASTDRIVE=` | Raises CDS count (compile max 16; default 8) |
 | Unknown `CONFIG.SYS` lines | Printed as `CONFIG: ignored …` |
-| FAT16 volume size | Hard ceiling **128 MiB** (raising needs 32-bit LBA throughout drivemap) |
+| FAT16 volume size | Hard ceiling **128 MiB**; partition bases and HiddenSectors are 32-bit |
 | `MODE LPT1:=COM1` | Honest fail (`Redirect not supported`, ERRORLEVEL 1) |
 | INT 60h `AH=B8h` | rmDOS-only net mux (not packet-driver / redirector) |
 | INT 10h gfx AH=08/09/0A/13 | Plane glyph plot/match (units `bt_gfx_char`); high ASCII via INT 1Fh |
@@ -369,8 +369,9 @@ one letter at LBA 0. `PARTEDIT` lists HD addresses and volumes (with letters),
 and supports scriptable `/CREATE` `/CREATEEXT` `/CREATELOG` `/LIST` (optional
 `/SIZE`). `PARTEDIT /CREATE` creates an active primary (leaving track zero for
 an MBR) and picks type by size (`01`/`04`/`06`); `FORMAT` rewrites that type to
-match the filesystem it built. Hard disks are limited to **128 MB** by design (32-bit LBA / larger drivemap
-is follow-on); larger geometries are rejected. The kernel uses a windowed FAT
+match the filesystem it built. Hard disks are limited to **128 MB** by design;
+partition start LBAs and BPB HiddenSectors are 32-bit (bases past 64K sectors
+are supported). Larger geometries are rejected. The kernel uses a windowed FAT
 cache and remounts when the current drive changes.
 
 ### Floppy image layout

@@ -495,8 +495,8 @@ path_read_attr:
     push cs
     pop es
     mov ax, word ptr cs:[last_dir_lba]
+    mov dx, word ptr cs:[last_dir_lba + 2]
     lea bx, [sector_buf]
-    xor dx, dx
     call fat12_read_lba
     jc .pra_err
     mov bx, word ptr cs:[last_dir_idx]
@@ -531,8 +531,8 @@ path_write_attr:
     add di, bx
     mov es:[di + 11], al
     mov ax, word ptr cs:[last_dir_lba]
+    mov dx, word ptr cs:[last_dir_lba + 2]
     lea bx, [sector_buf]
-    xor dx, dx
     call fat12_write_lba
     pop es
     pop di
@@ -1178,6 +1178,7 @@ dos_ah56:
     jc .a56_err
     mov bx, dx                   /* old parent */
     push word ptr cs:[last_dir_lba]
+    push word ptr cs:[last_dir_lba + 2]
     push word ptr cs:[last_dir_idx]
 
     push ds
@@ -1198,13 +1199,14 @@ dos_ah56:
     jnc .a56_fail_pop2
 
     pop word ptr cs:[last_dir_idx]
+    pop word ptr cs:[last_dir_lba + 2]
     pop word ptr cs:[last_dir_lba]
 
     push cs
     pop es
     mov ax, word ptr cs:[last_dir_lba]
+    mov dx, word ptr cs:[last_dir_lba + 2]
     lea bx, [sector_buf]
-    xor dx, dx
     call fat12_read_lba
     jc .a56_err
     mov bx, word ptr cs:[last_dir_idx]
@@ -1222,8 +1224,8 @@ dos_ah56:
     pop ds
     pop di
     mov ax, word ptr cs:[last_dir_lba]
+    mov dx, word ptr cs:[last_dir_lba + 2]
     lea bx, [sector_buf]
-    xor dx, dx
     call fat12_write_lba
     jc .a56_err
 
@@ -1241,7 +1243,7 @@ dos_ah56:
     jmp int21_iret
 
 .a56_fail_pop2:
-    add sp, 4
+    add sp, 6
 .a56_err:
     call dos_remount_current
     pop bp

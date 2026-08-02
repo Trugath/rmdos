@@ -1,16 +1,17 @@
 /*
  * INT 21h file + device handles (FAT12 + CON/NUL/AUX/PRN).
  *
- * Entry (16 bytes):
+ * Entry (18 bytes):
  *   +0  used: 0 free, 1 file, 2 CON, 3 NUL, 4 AUX, 5 PRN
  *   +1  mode: 0=R 1=W 2=RW
  *   +2  start_cluster
  *   +4  file_size_lo / +6 size_hi
  *   +8  file_pos_lo  / +10 pos_hi
- *   +12 dir_lba / +14 dir_idx (byte) / +15 drive (0=A)
+ *   +12 dir_lba_lo / +14 dir_lba_hi
+ *   +16 dir_idx (byte) / +17 drive (0=A)
  */
 
-.equ HANDLE_SIZE, 16
+.equ HANDLE_SIZE, 18
 .equ MAX_HANDLES_CAP, 64
 .equ H_FILE, 1
 .equ H_CON, 2
@@ -22,11 +23,14 @@ handle_index:
     cmp bx, word ptr cs:[max_handles]
     jae .hi_bad
     mov ax, bx
-    /* ×16 without touching CX — AH=46 keeps the dest handle in CX */
+    /* ×18 without touching CX — AH=46 keeps the dest handle in CX */
     shl ax, 1
     shl ax, 1
     shl ax, 1
     shl ax, 1
+    mov di, bx
+    shl di, 1
+    add ax, di
     lea di, [handles]
     add di, ax
     clc
@@ -55,14 +59,17 @@ handles_mirror:
     je .hm_next
     cmp byte ptr es:[di], H_FILE
     jne .hm_next
-    mov al, es:[di + 15]
-    cmp al, es:[si + 15]
+    mov al, es:[di + 17]
+    cmp al, es:[si + 17]
     jne .hm_next
     mov ax, es:[di + 12]
     cmp ax, es:[si + 12]
     jne .hm_next
-    mov al, es:[di + 14]
-    cmp al, es:[si + 14]
+    mov ax, es:[di + 14]
+    cmp ax, es:[si + 14]
+    jne .hm_next
+    mov al, es:[di + 16]
+    cmp al, es:[si + 16]
     jne .hm_next
     push si
     push di
@@ -98,7 +105,9 @@ handle_flush_file:
     jc .hff_pop
     mov ax, word ptr es:[di + 12]
     mov word ptr cs:[last_dir_lba], ax
-    mov al, byte ptr es:[di + 14]
+    mov ax, word ptr es:[di + 14]
+    mov word ptr cs:[last_dir_lba + 2], ax
+    mov al, byte ptr es:[di + 16]
     xor ah, ah
     mov word ptr cs:[last_dir_idx], ax
     mov ax, word ptr es:[di + 2]
@@ -186,10 +195,12 @@ dos_ah3d:
     mov word ptr es:[di + 10], ax
     mov ax, word ptr cs:[last_dir_lba]
     mov word ptr es:[di + 12], ax
+    mov ax, word ptr cs:[last_dir_lba + 2]
+    mov word ptr es:[di + 14], ax
     mov ax, word ptr cs:[last_dir_idx]
-    mov byte ptr es:[di + 14], al
+    mov byte ptr es:[di + 16], al
     mov al, byte ptr cs:[path_resolve_drive]
-    mov byte ptr es:[di + 15], al
+    mov byte ptr es:[di + 17], al
     mov ax, word ptr cs:[xfer_cnt]
     jmp .a3d_ok
 
@@ -498,10 +509,12 @@ dos_ah3c:
     mov word ptr es:[di + 10], ax
     mov ax, word ptr cs:[last_dir_lba]
     mov word ptr es:[di + 12], ax
+    mov ax, word ptr cs:[last_dir_lba + 2]
+    mov word ptr es:[di + 14], ax
     mov ax, word ptr cs:[last_dir_idx]
-    mov byte ptr es:[di + 14], al
+    mov byte ptr es:[di + 16], al
     mov al, byte ptr cs:[path_resolve_drive]
-    mov byte ptr es:[di + 15], al
+    mov byte ptr es:[di + 17], al
     mov ax, word ptr cs:[xfer_cnt]
 .a3c_dev_ok:
     mov bx, ax
@@ -538,7 +551,7 @@ handle_mount_drive:
     push dx
     cmp byte ptr es:[di], H_FILE
     jne .hmd_ok
-    mov dl, es:[di + 15]
+    mov dl, es:[di + 17]
     call dos_mount_drive
 .hmd_ok:
     pop dx
@@ -562,7 +575,9 @@ dos_ah3e:
     jc .a3e_err
     mov ax, word ptr es:[di + 12]
     mov word ptr cs:[last_dir_lba], ax
-    mov al, byte ptr es:[di + 14]
+    mov ax, word ptr es:[di + 14]
+    mov word ptr cs:[last_dir_lba + 2], ax
+    mov al, byte ptr es:[di + 16]
     xor ah, ah
     mov word ptr cs:[last_dir_idx], ax
     mov ax, word ptr es:[di + 2]
@@ -1019,10 +1034,10 @@ dos_ah41:
     jc .a41_err
     push ax
     mov ax, word ptr cs:[last_dir_lba]
+    mov dx, word ptr cs:[last_dir_lba + 2]
     push cs
     pop es
     lea bx, [sector_buf]
-    xor dx, dx
     call fat12_read_lba
     mov bx, word ptr cs:[last_dir_idx]
     mov cl, 5
@@ -1580,11 +1595,11 @@ dos_ah57:
     call handle_mount_drive
     jc .a57_err
     mov ax, word ptr es:[di + 12]
-    mov bl, byte ptr es:[di + 14]
+    mov dx, word ptr es:[di + 14]
+    mov bl, byte ptr es:[di + 16]
     xor bh, bh
     mov si, bx
     lea bx, [sector_buf]
-    xor dx, dx
     call fat12_read_lba
     jc .a57_err
     mov ax, si
@@ -1626,11 +1641,11 @@ dos_ah57:
     jc .a57_serr
     mov ax, word ptr es:[di + 12]
     mov word ptr cs:[a57_lba], ax
-    mov bl, byte ptr es:[di + 14]
+    mov dx, word ptr es:[di + 14]
+    mov bl, byte ptr es:[di + 16]
     xor bh, bh
     mov si, bx
     lea bx, [sector_buf]
-    xor dx, dx
     call fat12_read_lba
     jc .a57_serr
     mov ax, si
@@ -1646,7 +1661,6 @@ dos_ah57:
     mov [si + 24], ax
     mov ax, word ptr cs:[a57_lba]
     lea bx, [sector_buf]
-    xor dx, dx
     call fat12_write_lba
     jc .a57_serr
     call dos_remount_current
@@ -2067,6 +2081,9 @@ sft_name_from_handle:
     mov cl, 4
     shl ax, cl
     pop cx
+    mov dx, bx
+    add dx, dx
+    add ax, dx
     lea si, [handles]
     add si, ax
     mov al, [si]
@@ -2145,6 +2162,9 @@ sft_refresh_table:
     mov cl, 4
     shl ax, cl
     pop cx
+    mov dx, bx
+    add dx, dx
+    add ax, dx
     lea si, [handles]
     add si, ax
     mov al, [si]
@@ -2163,7 +2183,7 @@ sft_refresh_table:
     mov word ptr [di + 5], 0x80C4
     jmp .sft_dev_name
 .sft_file:
-    mov al, [si + 15]
+    mov al, [si + 17]
     and ax, 0x003F
     mov word ptr [di + 5], ax
     mov ax, [si + 2]
@@ -2178,7 +2198,7 @@ sft_refresh_table:
     mov word ptr [di + 0x17], ax
     mov ax, [si + 12]
     mov word ptr [di + 0x1D], ax
-    mov al, [si + 14]
+    mov al, [si + 16]
     mov byte ptr [di + 0x1F], al
 .sft_dev_name:
     push si
@@ -2240,6 +2260,9 @@ handles_set_max:
     shl ax, 1
     shl ax, 1
     shl ax, 1
+    mov si, di
+    shl si, 1
+    add ax, si
     lea si, [handles]
     add si, ax
     cmp byte ptr es:[si], 0
