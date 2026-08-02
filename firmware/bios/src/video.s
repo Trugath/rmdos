@@ -2078,7 +2078,25 @@ cursor_to_page_offset:
     mov al, dh
     xor ah, ah
     mov bl, byte ptr [BDA_CRT_COLS]
+    cmp bl, 80
+    jne .ctpo_mul_cols
+    /* row*80 = (row<<6)+(row<<4) */
+    mov bx, ax
+    shl ax, 1
+    shl ax, 1
+    shl ax, 1
+    shl ax, 1
+    shl ax, 1
+    shl ax, 1                    /* row<<6 */
+    shl bx, 1
+    shl bx, 1
+    shl bx, 1
+    shl bx, 1                    /* row<<4 */
+    add ax, bx
+    jmp .ctpo_add_col
+.ctpo_mul_cols:
     mul bl
+.ctpo_add_col:
     mov bl, dl
     xor bh, bh
     add ax, bx

@@ -160,7 +160,7 @@ live in [`firmware/src/dos/inc/dos.h`](../firmware/src/dos/inc/dos.h).
 
 | Built with wcc (C) | Left as assembly |
 |--------------------|------------------|
-| `COMMAND.COM`, DIR, TYPE, COPY, DEL, ATTRIB, LABEL, MOVE, XCOPY, CHKDSK, FIND, CHOICE, MORE, MEM, FC, TREE, SORT, EDIT, DEBUG, MODE, SUBST, COMP, ASSIGN, DEMO/STAR | Boot, kernel, BIOS; FORMAT, PARTEDIT, SYS; PING, DHCP, TELNET, NET; GZIP, GUNZIP; HELLO, COMPAT; MOUSE, MOUSETST |
+| `COMMAND.COM`, DIR, TYPE, COPY, DEL, ATTRIB, LABEL, MOVE, XCOPY, CHKDSK, FIND, CHOICE, MORE, MEM, FC, TREE, SORT, EDIT, DEBUG, MODE, SUBST, COMP, ASSIGN, DEMO/STAR | Boot, kernel, BIOS; FORMAT, PARTEDIT, SYS; PING, DHCP, TELNET, NET; GZIP, GUNZIP; HELLO, COMPAT; MOUSE, MOUSETST; CLOCK |
 
 Keep assembly where fixed layout, interrupt ABI, or dense hardware I/O dominate
 (boot sector, kernel IVT/`iret`/EXEC, NE2000, INT 13h format/partition tools).
@@ -386,12 +386,17 @@ A:\
   BIN\     DIR TYPE COPY DEL ATTRIB LABEL MOVE XCOPY CHKDSK SYS PARTEDIT
            FORMAT FIND CHOICE MORE MEM FC TREE SORT EDIT DEBUG DISKCOPY
            DISKCOMP MODE SUBST COMP ASSIGN PING DHCP TELNET NET GZIP GUNZIP
-           ANSI.SYS EMM.SYS MOUSE.COM
+           ANSI.SYS EMM.SYS MOUSE.COM CLOCK.COM
             (os-net.img also: NETTEST)
   DEMO\    HELLO.COM HELLO.EXE COMPAT.COM INT21X.COM ANSITST.COM EMSTST.COM
            MOUSETST.COM STAR.COM
   TEST\    SAMPLE.TXT DBG.SCR BIG.TXT
 ```
+
+Builtin CON in text mode writes the CGA regen buffer directly and programs the CRTC
+once per OUTPUT batch (INT 21h AH=09 is one CON write). CON still mirrors each byte
+to COM1 so host `--serial-log` e2e gates keep working. `BIN\CLOCK.COM` reads an
+MM58167-style RTC at I/O `2C0h` and sets DOS date/time (AH=2B/2D).
 
 Packing fixtures live in [`fixtures/guest/`](../fixtures/guest/README.md)
 (AUTOEXEC variants for compat / ping / dhcp / telnet / net / star / batch / disk / format /
@@ -434,7 +439,7 @@ entry, Shift+PrtSc, AH=05 buffer-full CF (`bt_kbd_full`), INT 17h LPT1 success
 + missing-port timeout (`bt_misc`), INT 05h/INT 18h no-BASIC, INT 19h floppy→HD
 fallback (`bt_int19_hd`), ROM identity/checksum, IBM entry trampolines,
 Ctrl-Break→INT 1Bh (`bt_brk`), INT 13h AH=17/18 (`bt_fdc_type`), plus
-`bt_readchar`/`bt_writech`/`bt_tty`/`bt_kbd_read`/`bt_int13_err`/`bt_hd_verify`/
+`bt_readchar`/`bt_writech`/`bt_tty`/`bt_tty2`/`bt_kbd_read`/`bt_int13_err`/`bt_hd_verify`/
 `bt_motor`/`bt_timer_of`. Host-only inject assists: `0x8901` scancode,
 `0x8902` FDC disk-change, `0x8903` Microsoft serial mouse event (buttons, dx,
 dy → COM1 RX). COM2/LPT2 work when ISA cards populate BDA bases
