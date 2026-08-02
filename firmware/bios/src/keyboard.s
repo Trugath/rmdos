@@ -32,6 +32,13 @@ isr_09:
     test ah, 0x80
     jnz .k09_break
 
+    /* Any make ends Ctrl+NumLock pause (hold state). */
+    test byte ptr [BDA_KBD_FLAG1], 0x08
+    jz .k09_cad
+    and byte ptr [BDA_KBD_FLAG1], 0xF7
+    jmp .k09_eoi
+
+.k09_cad:
     cmp ah, 0x53
     jne .k09_flags
     test byte ptr [BDA_KBD_FLAG0], 0x0C
@@ -43,6 +50,7 @@ isr_09:
     cmp ah, 0x1D                      /* Ctrl */
     jne .k09_not_ctrl
     or byte ptr [BDA_KBD_FLAG0], 0x04
+    or byte ptr [BDA_KBD_FLAG1], 0x01  /* left Ctrl held */
     jmp .k09_eoi
 .k09_not_ctrl:
     cmp ah, 0x38                      /* Alt */
@@ -50,6 +58,7 @@ isr_09:
     test byte ptr [BDA_KBD_FLAG0], 0x08
     jnz .k09_eoi
     or byte ptr [BDA_KBD_FLAG0], 0x08
+    or byte ptr [BDA_KBD_FLAG1], 0x02  /* left Alt held */
     mov byte ptr [BDA_KBD_ALT_NUM], 0
     jmp .k09_eoi
 .k09_not_alt:
@@ -66,11 +75,32 @@ isr_09:
     cmp ah, 0x3A                      /* Caps Lock */
     jne .k09_not_caps
     xor byte ptr [BDA_KBD_FLAG0], 0x40
+    /* Mirror Caps toggle into FLAG1 bit6 (held/active sense for AH=12). */
+    mov al, [BDA_KBD_FLAG0]
+    and al, 0x40
+    jz .k09_caps_clr
+    or byte ptr [BDA_KBD_FLAG1], 0x40
+    jmp .k09_eoi
+.k09_caps_clr:
+    and byte ptr [BDA_KBD_FLAG1], 0xBF
     jmp .k09_eoi
 .k09_not_caps:
     cmp ah, 0x45                      /* Num Lock */
     jne .k09_not_num
+    /* Ctrl+NumLock → pause until next make (classic hold state). */
+    test byte ptr [BDA_KBD_FLAG0], 0x04
+    jz .k09_num_toggle
+    or byte ptr [BDA_KBD_FLAG1], 0x08  /* pause/hold active */
+    jmp .k09_eoi
+.k09_num_toggle:
     xor byte ptr [BDA_KBD_FLAG0], 0x20
+    mov al, [BDA_KBD_FLAG0]
+    and al, 0x20
+    jz .k09_num_clr
+    or byte ptr [BDA_KBD_FLAG1], 0x20
+    jmp .k09_eoi
+.k09_num_clr:
+    and byte ptr [BDA_KBD_FLAG1], 0xDF
     jmp .k09_eoi
 .k09_not_num:
     cmp ah, 0x46                      /* Scroll Lock / Break */
@@ -83,6 +113,13 @@ isr_09:
     jmp .k09_eoi
 .k09_scroll:
     xor byte ptr [BDA_KBD_FLAG0], 0x10
+    mov al, [BDA_KBD_FLAG0]
+    and al, 0x10
+    jz .k09_scr_clr
+    or byte ptr [BDA_KBD_FLAG1], 0x10
+    jmp .k09_eoi
+.k09_scr_clr:
+    and byte ptr [BDA_KBD_FLAG1], 0xEF
     jmp .k09_eoi
 
 .k09_post_esc:
@@ -140,11 +177,13 @@ isr_09:
     cmp ah, 0x1D
     jne .k09_brk_alt
     and byte ptr [BDA_KBD_FLAG0], 0xFB
+    and byte ptr [BDA_KBD_FLAG1], 0xFE  /* clear left Ctrl held */
     jmp .k09_eoi
 .k09_brk_alt:
     cmp ah, 0x38
     jne .k09_brk_shift
     and byte ptr [BDA_KBD_FLAG0], 0xF7
+    and byte ptr [BDA_KBD_FLAG1], 0xFD  /* clear left Alt held */
     mov al, [BDA_KBD_ALT_NUM]
     mov byte ptr [BDA_KBD_ALT_NUM], 0
     test al, al
@@ -172,6 +211,11 @@ isr_09:
     xor byte ptr [BDA_KBD_FLAG0], 0x80
 .k09_do_xlat:
     call scancode_to_ascii
+    /* Alt+non-keypad: classic AL=0 with the make scancode (menus). */
+    test byte ptr [BDA_KBD_FLAG0], 0x08
+    jz .k09_enq_go
+    xor al, al
+.k09_enq_go:
     call kbd_enqueue
 
 .k09_eoi:
@@ -289,13 +333,13 @@ kbd_enqueue:
 
 int16_handler:
     sti
-    /* AH=10h/11h/12h → 00h/01h/02h (enhanced API probes). */
+    /* AH=10h/11h → 00h/01h; AH=12h returns extended shift (FLAG0+FLAG1). */
     cmp ah, 0x10
-    jb .i16_std
+    je .i16_read
+    cmp ah, 0x11
+    je .i16_status
     cmp ah, 0x12
-    ja .i16_std
-    and ah, 0x0F
-.i16_std:
+    je .i16_shift_ext
     cmp ah, 0x00
     je .i16_read
     cmp ah, 0x01
@@ -362,6 +406,16 @@ int16_handler:
     mov ax, BDA_SEG
     mov ds, ax
     mov al, [BDA_KBD_FLAG0]
+    pop ds
+    iret
+
+/* AH=12h: AL = FLAG0 (40:17), AH = FLAG1 (40:18). */
+.i16_shift_ext:
+    push ds
+    mov ax, BDA_SEG
+    mov ds, ax
+    mov al, [BDA_KBD_FLAG0]
+    mov ah, [BDA_KBD_FLAG1]
     pop ds
     iret
 

@@ -138,6 +138,8 @@ init_ivt:
     mov word ptr [0x1A * 4 + 2], BIOS_SEG
     mov word ptr [0x1E * 4], offset disk_base_table
     mov word ptr [0x1E * 4 + 2], BIOS_SEG
+    mov word ptr [0x1F * 4], offset bios_font_hi
+    mov word ptr [0x1F * 4 + 2], BIOS_SEG
 
     pop ds
     pop es

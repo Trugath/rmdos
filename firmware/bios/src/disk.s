@@ -51,10 +51,26 @@ int13_handler:
     push cx
     push dx
     call fdc_reset
-    /* Recalibrate drive 0 (and 1 if equipment says so) */
-    xor dl, dl
+    /* Recalibrate the caller's drive (DL). If equipment advertises two
+     * floppies and DL=0, also recalibrate drive 1 (classic dual-drive reset). */
+    and dl, 0x01
     xor ch, ch
     call fdc_seek
+    pop dx
+    push dx
+    test dl, dl
+    jnz .i13_reset_done
+    push ds
+    mov ax, BDA_SEG
+    mov ds, ax
+    mov al, [BDA_EQUIP]
+    pop ds
+    and al, 0xC0
+    jz .i13_reset_done
+    mov dl, 1
+    xor ch, ch
+    call fdc_seek
+.i13_reset_done:
     pop dx
     pop cx
     pop bx
@@ -78,7 +94,7 @@ int13_handler:
 
 .i13_read:
     mov ah, 0
-    call fdc_do_rw
+    call disk_rw_retry
     call fdc_store_status
     pushf
     /* Upgrade 360K → 720K when guest seeks past 40 cyl (same as classic). */
@@ -98,15 +114,64 @@ int13_handler:
 
 .i13_write:
     mov ah, 1
-    call fdc_do_rw
+    call disk_rw_retry
     call fdc_store_status
     jmp .i13_ret
 
 .i13_verify:
     mov ah, 2
-    call fdc_do_rw
+    call disk_rw_retry
     call fdc_store_status
     jmp .i13_ret
+
+/*
+ * Call fdc_do_rw up to 3 times; reset+recal between soft failures.
+ * IN: AH = op (0=read,1=write,2=verify); CX/DX/ES:BX as INT 13h.
+ * OUT: CF/AH as fdc_do_rw.
+ */
+disk_rw_retry:
+    push bx
+    push cx
+    push dx
+    push si
+    mov si, 3
+.drr_try:
+    push ax                      /* AH = op */
+    call fdc_do_rw
+    jnc .drr_ok
+    mov bl, ah                   /* BL = error status */
+    pop ax                       /* restore op in AH */
+    dec si
+    jz .drr_fail
+    push ax
+    push bx
+    push cx
+    push dx
+    call fdc_reset
+    and dl, 0x01
+    xor ch, ch
+    call fdc_seek
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    jmp .drr_try
+.drr_ok:
+    add sp, 2                    /* drop saved op */
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    clc
+    ret
+.drr_fail:
+    mov ah, bl                   /* last error */
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    stc
+    ret
 
 .i13_format:
     call fdc_do_format

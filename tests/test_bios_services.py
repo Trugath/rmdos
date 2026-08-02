@@ -24,6 +24,7 @@ DESTRUCTIVE_DISK_TESTS = frozenset({
     "bt_hd_rw",
     "bt_hd_verify",
     "bt_int19_hd",
+    "bt_disk_retry",
 })
 
 # Attach a blank XT ~10MB HD so C800 Fixed Disk ROM is exercised (DL=80).
@@ -97,6 +98,10 @@ TESTS = [
     "bt_kbd_locks",
     "bt_kbd_full",
     "bt_int19_hd",
+    "bt_gfx_char",
+    "bt_font",
+    "bt_kbd_alt",
+    "bt_disk_retry",
 ]
 
 

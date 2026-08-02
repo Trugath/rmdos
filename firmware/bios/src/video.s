@@ -364,8 +364,13 @@ int10_handler:
     push ds
     push es
     push di
+    push bx
+    push cx
+    push dx
     mov di, BDA_SEG
     mov ds, di
+    cmp byte ptr [BDA_CRT_MODE], 4
+    jae .i10_rc_gfx
     mov al, bh
     mov bl, bh
     xor bh, bh
@@ -375,6 +380,13 @@ int10_handler:
     mov ax, CGA_SEG
     mov es, ax
     mov ax, es:[di]
+    jmp .i10_rc_done
+.i10_rc_gfx:
+    call gfx_read_char           /* AL=matched char, AH=0 */
+.i10_rc_done:
+    pop dx
+    pop cx
+    pop bx
     pop di
     pop es
     pop ds
@@ -384,10 +396,15 @@ int10_handler:
     push ds
     push es
     push di
+    push si
     push ax
+    push bx
     push cx
+    push dx
     mov di, BDA_SEG
     mov ds, di
+    cmp byte ptr [BDA_CRT_MODE], 4
+    jae .i10_wc_gfx
     push bx
     mov bl, bh
     xor bh, bh
@@ -398,7 +415,9 @@ int10_handler:
     call cursor_to_page_offset
     mov ax, CGA_SEG
     mov es, ax
+    pop dx
     pop cx
+    pop bx
     pop ax
     mov ah, bl
     jcxz .i10_wc_done
@@ -406,7 +425,30 @@ int10_handler:
     mov es:[di], ax
     add di, 2
     loop .i10_wc_loop
+    jmp .i10_wc_done
+.i10_wc_gfx:
+    /* AL=char, BL=color, CX=count; write at cursor without advancing. */
+    pop dx
+    pop cx                       /* count */
+    pop bx
+    pop ax                       /* AL=char */
+    mov si, cx
+    jcxz .i10_wc_done
+    mov cl, bl                   /* color → CL for gfx_tty_glyph */
+.i10_wc_gfx_loop:
+    push ax
+    push bx
+    push cx
+    push si
+    call gfx_tty_glyph
+    pop si
+    pop cx
+    pop bx
+    pop ax
+    dec si
+    jnz .i10_wc_gfx_loop
 .i10_wc_done:
+    pop si
     pop di
     pop es
     pop ds
@@ -416,10 +458,15 @@ int10_handler:
     push ds
     push es
     push di
+    push si
     push ax
+    push bx
     push cx
+    push dx
     mov di, BDA_SEG
     mov ds, di
+    cmp byte ptr [BDA_CRT_MODE], 4
+    jae .i10_wco_gfx
     push bx
     mov bl, bh
     xor bh, bh
@@ -430,14 +477,39 @@ int10_handler:
     call cursor_to_page_offset
     mov ax, CGA_SEG
     mov es, ax
+    pop dx
     pop cx
+    pop bx
     pop ax
     jcxz .i10_wco_done
 .i10_wco_loop:
     mov es:[di], al
     add di, 2
     loop .i10_wco_loop
+    jmp .i10_wco_done
+.i10_wco_gfx:
+    /* Same plane write as AH=09 (BL supplies color in graphics). */
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    mov si, cx
+    jcxz .i10_wco_done
+    mov cl, bl
+.i10_wco_gfx_loop:
+    push ax
+    push bx
+    push cx
+    push si
+    call gfx_tty_glyph
+    pop si
+    pop cx
+    pop bx
+    pop ax
+    dec si
+    jnz .i10_wco_gfx_loop
 .i10_wco_done:
+    pop si
     pop di
     pop es
     pop ds
@@ -679,6 +751,9 @@ int10_handler:
 
     jcxz .i10_ws_finish
 
+    cmp byte ptr [BDA_CRT_MODE], 4
+    jae .i10_ws_gfx
+
     mov al, bh
     call cursor_to_page_offset   /* DI = regen byte offset */
     push ds                      /* BDA */
@@ -700,6 +775,53 @@ int10_handler:
     loop .i10_ws_loop
 
     pop ds                       /* DS = BDA */
+    jmp .i10_ws_finish
+
+.i10_ws_gfx:
+    /* Graphics plane string: plot glyphs and advance BDA cursor. */
+    push es
+    pop ds                       /* DS:SI = string; ES was string seg */
+    mov ax, BDA_SEG
+    mov es, ax                   /* ES = BDA for cursor updates */
+.i10_ws_gfx_loop:
+    test bp, 2
+    jnz .i10_ws_gfx_pair
+    lodsb
+    mov ah, bl                   /* color/attr */
+    jmp .i10_ws_gfx_plot
+.i10_ws_gfx_pair:
+    lodsw                        /* AL=char AH=color */
+.i10_ws_gfx_plot:
+    push ds
+    push es
+    push ax
+    push bx
+    push cx
+    push bp
+    push si
+    mov bx, BDA_SEG
+    mov ds, bx
+    mov cl, ah                   /* color */
+    call gfx_tty_glyph
+    /* Advance cursor one column (wrap). */
+    mov al, [BDA_CURSOR_POS]
+    inc al
+    cmp al, [BDA_CRT_COLS]
+    jb .i10_ws_gfx_setc
+    xor al, al
+    inc byte ptr [BDA_CURSOR_POS + 1]
+.i10_ws_gfx_setc:
+    mov [BDA_CURSOR_POS], al
+    pop si
+    pop bp
+    pop cx
+    pop bx
+    pop ax
+    pop es
+    pop ds
+    loop .i10_ws_gfx_loop
+    mov ax, BDA_SEG
+    mov ds, ax
 
 .i10_ws_finish:
     mov al, bh
@@ -756,6 +878,37 @@ int10_handler:
     iret
 
 /*
+ * Resolve 8×8 glyph for AL → ES:SI.
+ * 00–7F: F000:FA6E; 80–FF: INT 1Fh table + (AL-80h)*8.
+ * Clobbers AX,BX.
+ */
+gfx_font_ptr:
+    mov ah, 0
+    mov bx, ax
+    test al, 0x80
+    jnz .gfp_hi
+    shl bx, 1
+    shl bx, 1
+    shl bx, 1                    /* BX = AL*8 */
+    mov ax, BIOS_SEG
+    mov es, ax
+    mov si, 0xFA6E
+    add si, bx
+    ret
+.gfp_hi:
+    and bx, 0x7F
+    shl bx, 1
+    shl bx, 1
+    shl bx, 1
+    push ds
+    xor ax, ax
+    mov ds, ax
+    les si, [0x1F * 4]
+    pop ds
+    add si, bx
+    ret
+
+/*
  * Plot 8×8 glyph AL at BDA cursor in CGA graphics (modes 4–6).
  * CL = foreground (low bits); bit7 → XOR. DS = BDA on entry.
  * Clobbers AX,BX,DX,SI,DI,ES.
@@ -765,16 +918,7 @@ gfx_tty_glyph:
     mov bp, sp
     push cx                      /* [bp-2] color */
 
-    and al, 0x7F                 /* ROM font is 0..127 */
-    mov ah, 0
-    mov bx, ax
-    shl bx, 1
-    shl bx, 1
-    shl bx, 1                    /* BX = AL*8 */
-    mov ax, BIOS_SEG
-    mov es, ax
-    mov si, 0xFA6E
-    add si, bx                   /* ES:SI → glyph */
+    call gfx_font_ptr            /* ES:SI → glyph */
 
     mov al, [BDA_CURSOR_POS]     /* col */
     mov ah, 0
@@ -798,6 +942,8 @@ gfx_tty_glyph:
     jnz .gtg45_draw
     push dx
     push bx
+    push si
+    push es
     mov cx, 8
 .gtg45_clr_y:
     push cx
@@ -819,12 +965,11 @@ gfx_tty_glyph:
     inc bx
     pop cx
     loop .gtg45_clr_y
+    pop es
+    pop si
     pop bx
     pop dx
 .gtg45_draw:
-    /* cga_plot_m4 leaves ES=B800 — restore font segment */
-    mov ax, BIOS_SEG
-    mov es, ax
     mov cx, 8
 .gtg45_scan:
     push cx
@@ -894,6 +1039,118 @@ gfx_tty_glyph:
 .gtg_done:
     mov sp, bp
     pop bp
+    ret
+
+/*
+ * Read graphics cell at BDA cursor by matching against ROM/INT1Fh fonts.
+ * DS=BDA. OUT: AL=char (0 if no match), AH=0. Clobbers BX,CX,DX,SI,DI,ES.
+ * Uses BDA 40:AC..40:B3 as an 8-byte capture scratch (XT-unused).
+ */
+gfx_read_char:
+    push ds
+    mov ax, BDA_SEG
+    mov ds, ax
+
+    mov al, [BDA_CURSOR_POS]
+    mov ah, 0
+    mov si, ax
+    shl si, 1
+    shl si, 1
+    shl si, 1
+    mov al, [BDA_CURSOR_POS + 1]
+    mov ah, 0
+    mov bx, ax
+    shl bx, 1
+    shl bx, 1
+    shl bx, 1
+
+    mov di, 0xAC
+    mov cx, 8
+.grc_cap_row:
+    push cx
+    push bx
+    xor ah, ah
+    mov dx, si
+    mov cx, 8
+.grc_cap_pix:
+    push ax
+    push bx
+    push cx
+    push dx
+    push si
+    push di
+    push ds
+    cmp byte ptr [BDA_CRT_MODE], 6
+    je .grc_rd6
+    call cga_read_m4
+    jmp .grc_rd_have
+.grc_rd6:
+    call cga_read_m6
+.grc_rd_have:
+    pop ds
+    pop di
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    test al, al                  /* AL still holds pixel color */
+    pop ax                       /* restore row builder in AH */
+    pushf
+    shl ah, 1
+    popf
+    jz .grc_cap_next
+    or ah, 1
+.grc_cap_next:
+    inc dx
+    loop .grc_cap_pix
+    mov [di], ah
+    inc di
+    pop bx
+    inc bx
+    pop cx
+    loop .grc_cap_row
+
+    /* Prefer non-blank matches: scan 1..255 then 0. */
+    mov bx, 1
+.grc_match:
+    mov al, bl
+    push bx
+    call gfx_font_ptr
+    pop bx
+    mov di, 0xAC
+    mov cx, 8
+.grc_cmp:
+    mov al, es:[si]
+    cmp al, [di]
+    jne .grc_next
+    inc si
+    inc di
+    loop .grc_cmp
+    mov al, bl
+    xor ah, ah
+    pop ds
+    ret
+.grc_next:
+    inc bx
+    cmp bx, 256
+    jb .grc_match
+    xor al, al
+    call gfx_font_ptr
+    mov di, 0xAC
+    mov cx, 8
+.grc_blank:
+    mov al, es:[si]
+    cmp al, [di]
+    jne .grc_nomatch
+    inc si
+    inc di
+    loop .grc_blank
+    xor ax, ax
+    pop ds
+    ret
+.grc_nomatch:
+    xor ax, ax
+    pop ds
     ret
 
 /*
