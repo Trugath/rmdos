@@ -554,25 +554,70 @@ load_setup_exe:
     ret
 
 /*
- * Fill the standard 20-byte PSP Job File Table.
- * IN: ES = target PSP. A valid parent contributes its current JFT; otherwise
- * use the classic CON/CON/CON/AUX/PRN SFT indices and FFh padding.
+ * Fill a PSP Job File Table sized to CS:max_handles (5..64).
+ * IN: ES = target PSP. A valid parent contributes its far JFT; otherwise use
+ * the classic CON/CON/CON/AUX/PRN indices and FFh padding. Tables over 20
+ * entries live in their own AH=48 block.
  */
 psp_fill_jft:
+    push bp
+    mov bp, sp
+    sub sp, 8                    /* PSP, count, destination off/seg */
     push ax
     push bx
     push cx
+    push dx
     push si
     push di
     push ds
+    push es
 
-    mov word ptr es:[0x32], 20
-    mov word ptr es:[0x34], 0x18
     mov ax, es
+    mov word ptr [bp - 2], ax
+    mov cx, word ptr cs:[max_handles]
+    cmp cx, 5
+    jae .pfj_count_lo
+    mov cx, 5
+.pfj_count_lo:
+    cmp cx, MAX_HANDLES_CAP
+    jbe .pfj_count_hi
+    mov cx, MAX_HANDLES_CAP
+.pfj_count_hi:
+    mov word ptr [bp - 4], cx
+    cmp cx, 20
+    jbe .pfj_inline
+
+    mov bx, cx
+    add bx, 15
+    mov cl, 4
+    shr bx, cl
+    mov ah, 0x48
+    int 0x21
+    jc .pfj_alloc_fallback
+    mov word ptr [bp - 6], 0
+    mov word ptr [bp - 8], ax
+    jmp .pfj_set_fields
+
+.pfj_alloc_fallback:
+    /* Keep the PSP usable if the tiny auxiliary allocation cannot be made. */
+    mov word ptr [bp - 4], 20
+.pfj_inline:
+    mov word ptr [bp - 6], 0x18
+    mov ax, word ptr [bp - 2]
+    mov word ptr [bp - 8], ax
+
+.pfj_set_fields:
+    mov es, word ptr [bp - 2]
+    mov ax, word ptr [bp - 4]
+    mov word ptr es:[0x32], ax
+    mov ax, word ptr [bp - 6]
+    mov word ptr es:[0x34], ax
+    mov ax, word ptr [bp - 8]
     mov word ptr es:[0x36], ax
 
-    mov di, 0x18
-    mov cx, 20
+    mov es, word ptr [bp - 8]
+    mov di, word ptr [bp - 6]
+    mov cx, word ptr [bp - 4]
     mov al, 0xFF
     cld
     rep stosb
@@ -580,8 +625,7 @@ psp_fill_jft:
     mov ax, word ptr cs:[current_psp]
     test ax, ax
     jz .pfj_defaults
-    mov bx, es
-    cmp ax, bx
+    cmp ax, word ptr [bp - 2]
     je .pfj_defaults
     mov ds, ax
     cmp word ptr [0], 0x20CD
@@ -589,31 +633,261 @@ psp_fill_jft:
     mov cx, word ptr [0x32]
     test cx, cx
     jz .pfj_defaults
-    cmp cx, 20
-    jbe .pfj_count_ok
-    mov cx, 20
-.pfj_count_ok:
+    cmp cx, MAX_HANDLES_CAP
+    jbe .pfj_parent_hi
+    mov cx, MAX_HANDLES_CAP
+.pfj_parent_hi:
+    cmp cx, word ptr [bp - 4]
+    jbe .pfj_parent_count
+    mov cx, word ptr [bp - 4]
+.pfj_parent_count:
     mov si, word ptr [0x34]
     mov ax, word ptr [0x36]
     test ax, ax
     jz .pfj_defaults
     mov ds, ax
-    mov di, 0x18
+    mov es, word ptr [bp - 8]
+    mov di, word ptr [bp - 6]
     rep movsb
     jmp .pfj_done
 
 .pfj_defaults:
-    mov byte ptr es:[0x18], 0x01
-    mov byte ptr es:[0x19], 0x01
-    mov byte ptr es:[0x1A], 0x01
-    mov byte ptr es:[0x1B], 0x00
-    mov byte ptr es:[0x1C], 0x02
+    mov es, word ptr [bp - 8]
+    mov di, word ptr [bp - 6]
+    call psp_jft_defaults
 
 .pfj_done:
+    pop es
     pop ds
     pop di
     pop si
+    pop dx
     pop cx
+    pop bx
+    pop ax
+    mov sp, bp
+    pop bp
+    ret
+
+/* IN: ES:DI = JFT destination. */
+psp_jft_defaults:
+    mov byte ptr es:[di], 0x01
+    mov byte ptr es:[di + 1], 0x01
+    mov byte ptr es:[di + 2], 0x01
+    mov byte ptr es:[di + 3], 0x00
+    mov byte ptr es:[di + 4], 0x02
+    ret
+
+/*
+ * Resize the current PSP's JFT to BX entries. Invalid kernel pseudo-PSPs are
+ * ignored. A new external block is committed before the old one is released.
+ * OUT: CF set only when an external allocation fails. Preserves registers.
+ */
+psp_resize_current_jft:
+    push bp
+    mov bp, sp
+    sub sp, 14                   /* PSP, new count, old count/off/seg/ext, new seg */
+    push ax
+    push bx
+    push cx
+    push dx
+    push si
+    push di
+    push ds
+    push es
+
+    cmp bx, 5
+    jae .prj_count_lo
+    mov bx, 5
+.prj_count_lo:
+    cmp bx, MAX_HANDLES_CAP
+    jbe .prj_count_hi
+    mov bx, MAX_HANDLES_CAP
+.prj_count_hi:
+    mov word ptr [bp - 4], bx
+
+    mov ax, word ptr cs:[current_psp]
+    test ax, ax
+    jz .prj_ok
+    mov word ptr [bp - 2], ax
+    mov es, ax
+    cmp word ptr es:[0], 0x20CD
+    jne .prj_ok
+
+    mov ax, word ptr es:[0x32]
+    cmp ax, MAX_HANDLES_CAP
+    jbe .prj_old_count
+    mov ax, MAX_HANDLES_CAP
+.prj_old_count:
+    mov word ptr [bp - 6], ax
+    mov ax, word ptr es:[0x34]
+    mov word ptr [bp - 8], ax
+    mov ax, word ptr es:[0x36]
+    mov word ptr [bp - 10], ax
+    mov word ptr [bp - 12], 0
+    cmp word ptr [bp - 8], 0x18
+    jne .prj_old_external
+    cmp ax, word ptr [bp - 2]
+    je .prj_old_ready
+.prj_old_external:
+    test ax, ax
+    jz .prj_old_ready
+    mov word ptr [bp - 12], 1
+.prj_old_ready:
+    cmp word ptr [bp - 4], 20
+    jbe .prj_to_inline
+
+    mov bx, word ptr [bp - 4]
+    add bx, 15
+    mov cl, 4
+    shr bx, cl
+    mov ah, 0x48
+    int 0x21
+    jc .prj_fail
+    mov word ptr [bp - 14], ax
+
+    mov es, ax
+    xor di, di
+    mov cx, word ptr [bp - 4]
+    mov al, 0xFF
+    cld
+    rep stosb
+
+    mov cx, word ptr [bp - 6]
+    test cx, cx
+    jz .prj_external_defaults
+    cmp cx, word ptr [bp - 4]
+    jbe .prj_external_count
+    mov cx, word ptr [bp - 4]
+.prj_external_count:
+    mov ax, word ptr [bp - 10]
+    test ax, ax
+    jz .prj_external_defaults
+    mov ds, ax
+    mov si, word ptr [bp - 8]
+    mov es, word ptr [bp - 14]
+    xor di, di
+    rep movsb
+    jmp .prj_external_commit
+.prj_external_defaults:
+    mov es, word ptr [bp - 14]
+    xor di, di
+    call psp_jft_defaults
+
+.prj_external_commit:
+    mov es, word ptr [bp - 2]
+    mov ax, word ptr [bp - 4]
+    mov word ptr es:[0x32], ax
+    mov word ptr es:[0x34], 0
+    mov ax, word ptr [bp - 14]
+    mov word ptr es:[0x36], ax
+    jmp .prj_free_old
+
+.prj_to_inline:
+    cmp word ptr [bp - 12], 0
+    je .prj_inline_existing
+
+    mov es, word ptr [bp - 2]
+    mov di, 0x18
+    mov cx, 20
+    mov al, 0xFF
+    cld
+    rep stosb
+    mov cx, word ptr [bp - 6]
+    cmp cx, 20
+    jbe .prj_inline_count
+    mov cx, 20
+.prj_inline_count:
+    test cx, cx
+    jz .prj_inline_defaults
+    mov ax, word ptr [bp - 10]
+    test ax, ax
+    jz .prj_inline_defaults
+    mov ds, ax
+    mov si, word ptr [bp - 8]
+    mov es, word ptr [bp - 2]
+    mov di, 0x18
+    rep movsb
+    jmp .prj_inline_commit
+
+.prj_inline_existing:
+    cmp word ptr [bp - 6], 0
+    jne .prj_inline_commit
+    mov es, word ptr [bp - 2]
+    mov di, 0x18
+    mov cx, 20
+    mov al, 0xFF
+    cld
+    rep stosb
+.prj_inline_defaults:
+    mov es, word ptr [bp - 2]
+    mov di, 0x18
+    call psp_jft_defaults
+
+.prj_inline_commit:
+    mov es, word ptr [bp - 2]
+    mov ax, word ptr [bp - 4]
+    mov word ptr es:[0x32], ax
+    mov word ptr es:[0x34], 0x18
+    mov ax, word ptr [bp - 2]
+    mov word ptr es:[0x36], ax
+
+.prj_free_old:
+    cmp word ptr [bp - 12], 0
+    je .prj_ok
+    mov ax, word ptr [bp - 10]
+    test ax, ax
+    jz .prj_ok
+    mov es, ax
+    mov ah, 0x49
+    int 0x21
+
+.prj_ok:
+    pop es
+    pop ds
+    pop di
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    mov sp, bp
+    pop bp
+    clc
+    ret
+.prj_fail:
+    pop es
+    pop ds
+    pop di
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    mov sp, bp
+    pop bp
+    stc
+    ret
+
+/* IN: ES = PSP. Free its external JFT, if any. Preserves registers and ES. */
+psp_free_external_jft:
+    push ax
+    push bx
+    push es
+    mov bx, es
+    cmp word ptr es:[0x34], 0x18
+    jne .pfej_free
+    cmp word ptr es:[0x36], bx
+    je .pfej_done
+.pfej_free:
+    mov ax, word ptr es:[0x36]
+    test ax, ax
+    jz .pfej_done
+    mov es, ax
+    mov ah, 0x49
+    int 0x21
+.pfej_done:
+    pop es
     pop bx
     pop ax
     ret
@@ -938,12 +1212,13 @@ com_resume_kernel:
     mov word ptr [current_psp], ax
     pop bx
 
-    /* free this level's PSP block (also frees env if we tracked it — skip) */
+    /* Free this level's auxiliary blocks, then its PSP arena. */
     push bx
     mov ax, word ptr [psp_tbl + bx]
-    /* free env block if non-zero */
     push es
     mov es, ax
+    call psp_free_external_jft
+    /* free env block if non-zero */
     mov ax, word ptr es:[0x2C]
     test ax, ax
     jz .crk_no_env

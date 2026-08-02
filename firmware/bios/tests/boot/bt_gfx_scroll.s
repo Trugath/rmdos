@@ -55,8 +55,50 @@ _start:
     cmp al, 0
     jne .fail_clear
 
-    mov ax, 0x0003
+    /* AH=06 partial window: move both banks, clear bottom, preserve outside. */
+    mov ax, 0xB800
+    mov es, ax
+    mov byte ptr es:[320], 0xCC
+    mov byte ptr es:[642], 0xA5
+    mov byte ptr es:[0x2282], 0x5A
+    mov ax, 0x0601
+    mov cx, 0x0101
+    mov dx, 0x0202
     int 0x10
+    cmp byte ptr es:[322], 0xA5
+    jne .fail_window
+    cmp byte ptr es:[0x2142], 0x5A
+    jne .fail_window
+    cmp byte ptr es:[642], 0
+    jne .fail_window
+    cmp byte ptr es:[320], 0xCC
+    jne .fail_window
+
+    /* AH=07 moves the same window down and clears its new top row. */
+    mov ax, 0x0701
+    mov cx, 0x0101
+    mov dx, 0x0202
+    int 0x10
+    cmp byte ptr es:[642], 0xA5
+    jne .fail_window
+    cmp byte ptr es:[0x2282], 0x5A
+    jne .fail_window
+    cmp byte ptr es:[322], 0
+    jne .fail_window
+
+    /* Mode 6 full-width path uses one byte per character column. */
+    mov ax, 0x0006
+    int 0x10
+    mov byte ptr es:[320], 0x80
+    mov byte ptr es:[0x2140], 0x40
+    mov ax, 0x0601
+    xor cx, cx
+    mov dx, 0x184F
+    int 0x10
+    cmp byte ptr es:[0], 0x80
+    jne .fail_window
+    cmp byte ptr es:[0x2000], 0x40
+    jne .fail_window
 
     push cs
     pop ds
@@ -73,6 +115,11 @@ _start:
     pop ds
     mov si, offset msg_clear
     call fail_and_halt
+.fail_window:
+    push cs
+    pop ds
+    mov si, offset msg_window
+    call fail_and_halt
 
 name:
     .asciz "bt_gfx_scroll"
@@ -80,5 +127,7 @@ msg_moved:
     .asciz "bt_gfx_scroll:moved"
 msg_clear:
     .asciz "bt_gfx_scroll:clear"
+msg_window:
+    .asciz "bt_gfx_scroll:w"
 
 .include "firmware/bios/tests/boot/common.inc"

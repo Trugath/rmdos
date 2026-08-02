@@ -1974,6 +1974,8 @@ handles_set_max:
     stc
     ret
 .hsm_ok:
+    call psp_resize_current_jft
+    jc .hsm_fail
     mov word ptr cs:[max_handles], bx
     pop es
     pop di

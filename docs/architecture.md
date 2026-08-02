@@ -73,11 +73,11 @@ Sources live under `firmware/bios/src/` (`post`, `init`, `video`, `keyboard`,
 - Equipment word (INT 11h) and conventional memory size (INT 12h)
 - INT 10h (text + CGA modes 0–6): AH=00–0F including light-pen stub (`04h` →
   AH=0), pixel read/write (`0Ch`/`0Dh`), write string (`13h` AL=0/1 chars+BL
-  attr; AL=2/3 char+attr pairs), CRTC cursor programming on set cursor/type,
-  BEL beep, graphics teletype scroll, and AH=05 active-page select clamped to
-  CGA regen (unit `bt_page`). AH=08/09/0A/13 intentionally remain on the
-  text-cell path in graphics modes; direct graphics-plane character I/O is
-  deferred.
+  attr; AL=2/3 char+attr pairs), text and CGA-plane window scrolling
+  (`06h`/`07h`), CRTC cursor programming on set cursor/type, BEL beep, graphics
+  teletype scroll, and AH=05 active-page select clamped to CGA regen (unit
+  `bt_page`). AH=08/09/0A/13 intentionally remain on the text-cell path in
+  graphics modes; direct graphics-plane character I/O is deferred.
 - INT 13h floppy via onboard FDC (DMA ch2 / IRQ6): AH=00–05, 08, 15–18 with
   360K/720K/1.2M/1.44M media via BDA `40:8B` hint + INT 1Eh tables (FDC follows
   the live DPT; AH=08 returns the equipment-word floppy count in DL; AH=17
@@ -96,7 +96,8 @@ Sources live under `firmware/bios/src/` (`post`, `init`, `video`, `keyboard`,
 - IRQ0 timer (INT 08h → INT 1Ch; floppy motor timeout) and IRQ1 keyboard (INT 09h);
   Ctrl-Break (Ctrl+scancode 46h) latches BDA `40:18` bit7 and invokes INT 1Bh
   (DOS hooks INT 1Bh to raise INT 23h when BREAK ON);
-  IRQ6 → INT 0Eh for FDC completion; IRQ5 → INT 0Dh for Fixed Disk (guest ROM)
+  IRQ6 → INT 0Eh for FDC completion (POST PIC test restores IMR `0xBC` so IRQ6
+  stays unmasked with IRQ0+1); IRQ5 → INT 0Dh for Fixed Disk (guest ROM)
 - Option ROM scan `C000–F400` (`AA55`, checksum, far call +3); Fixed Disk ROM at `C800`
 - INT 18h prints a short “no BASIC” message (U19 is not an interpreter)
 - INT 1Eh diskette parameter table (720K default; 360K / 1.2M / 1.44M selectable)
@@ -200,7 +201,7 @@ BUFFERS pointer, and LoL LASTDRIVE).
 | IOCTL AL=04/05/0Dh | CF + AX=1 (control channels unsupported) |
 | IOCTL AL=09/0Ah | Success AX=0 (treat as local); AL=06/07 always ready (`FFh`) |
 | SysVars SFT chain (`AH=52h`) | Header only (terminating link + handle count); no public per-file SFT entries |
-| PSP JFT (`18h`/`32h`/`34h`) | 20-byte inline table inherited from a valid parent; otherwise `01 01 01 00 02` + `FF` padding |
+| PSP JFT (`18h`/`32h`/`34h`) | Sized to `FILES=` / AH=67 (`max_handles`, 5..64); ≤20 entries inline at PSP:18h, larger tables in an AH=48 block; resized on handle growth; inherited from parent when present |
 | INT 25h/26h `CX=FFFFh` | DOS 3.31 packet (`DWORD` sector, `WORD` count, far buffer); classic register form remains supported |
 | Network/server `AH=5Dh`/`5Eh`/`5Fh` | CF + AX=1 (redirector not installed) |
 | `BUFFERS=` | Parsed; LoL buffer pointer stays `0000:0000`; FAT uses a windowed cache |
@@ -226,8 +227,9 @@ is ignored). Supported lines: `INSTALL=` (load+run a COM with its trailing
 arguments in the child PSP command tail), `DEVICE=` (character `.SYS` only via
 the SYS ABI — INIT + INPUT + OUTPUT; block drivers print
 `CONFIG: DEVICE is not a character driver` and continue — intentional OOS),
-`FILES=` / `BUFFERS=` (`FILES=` clamps 5..64 into the handle table
-after CONFIG; default 20), `LASTDRIVE=` (letter or count, max 16), `BREAK=`,
+`FILES=` / `BUFFERS=` (`FILES=` clamps 5..64 into the handle table and current
+PSP JFT after CONFIG; default 20; AH=67 grows both), `LASTDRIVE=` (letter or
+count, max 16), `BREAK=`,
 `SHELL=` (path only; `/P`/`/E:` discarded), and advisory no-ops `STACKS=` /
 `FCBS=` / `COUNTRY=` / `DRIVPARM=`. Unknown directives print
 `CONFIG: ignored …`. Comments (`;`) and blank lines are skipped. Builtin
@@ -262,8 +264,9 @@ drive/cwd. Wave-1 utilities present:
 `MEM`, `FC`, `TREE`, `SORT`. Wave-2: `EDIT` (16 KiB heap buffer, find, `/Q` smoke),
 `DEBUG` (debuggee arena, R/G/T/P), `DISKCOPY` / `DISKCOMP`, `MODE` (COM1 baud;
 `40`/`80`/`BW80`/`CO80`; CON columns; `LPT1:=COM1` reports unsupported), `COPY`
-(`/V` VERIFY; `/A`/`/B`; wildcards/concat), `XCOPY` with real `/S`, `FIND` (file or
-stdin), `SUBST` (drive→path via INT 2Fh `12E0h`/`12E1h`). `BIN\ANSI.SYS` is packed
+(`/V` VERIFY; `/A`/`/B`; wildcards/concat), `XCOPY` with real `/S`, `FIND` with
+`/V`/`/C`/`/N` (file or stdin), `SUBST` (drive→path via INT 2Fh `12E0h`/`12E1h`).
+`BIN\ANSI.SYS` is packed
 for optional `DEVICE=` load (off by default).
 
 `CHKDSK [d:] [/F]` audits the volume via INT 25h: BPB sanity, FAT1↔FAT2 compare,
@@ -386,9 +389,10 @@ make run / make run-fd
 
 BIOS service units are boot-sector images under `firmware/bios/tests/boot/`; they
 print `PASS`/`FAIL` on COM1 and shut down via port `0x8900`. Coverage includes
-equipment/BDA, INT 10h text/graphics (modes, scroll, pixels, CRTC cursor/type,
-AH=08/0A read/write char, graphics teletype scroll, active page, palette, BEL,
-AH=13 AL=0–3; AH=05 page clamp `bt_page`), INT 13h floppy via FDC with shim off
+equipment/BDA, INT 10h text/graphics (modes, AH=06/07 window scroll in both CGA
+banks, pixels, CRTC cursor/type, AH=08/0A read/write char, graphics teletype
+scroll, active page, palette, BEL, AH=13 AL=0–3; AH=05 page clamp `bt_page`),
+INT 13h floppy via FDC with shim off
 (reset/read/write/format/DASD/status, unsupported-AH CF, 360K/720K/1.2M/1.44M
 AH=08, 360→720 upgrade, change-line, motor timeout), C800 Fixed Disk
 AH=08/R/W/verify plus AH=05 format, AH=09/0C/0D/15 (`bt_hd_svc`/`bt_hd_fmt`),

@@ -1834,14 +1834,21 @@ int print_last_set_value(char *name)
 }
 
 /* ECHO remainder — %VAR% already expanded on the command line. */
+void echo_char(int c)
+{
+    buf_set(copybuf, 0, c);
+    dos_write(1, copybuf, 1);
+}
+
 void echo_tail(void)
 {
     skip_spaces();
     while (peek_byte(cursor) != 0) {
-        print_char(peek_byte(cursor));
+        echo_char(peek_byte(cursor));
         cursor = cursor + 1;
     }
-    print_crlf();
+    echo_char(13);
+    echo_char(10);
 }
 
 void do_batch(char *name)

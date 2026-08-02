@@ -309,7 +309,17 @@ int10_handler:
     push di
     push ds
     push es
+    push ax
+    mov ax, BDA_SEG
+    mov es, ax
+    cmp byte ptr es:[BDA_CRT_MODE], 4
+    pop ax
+    jb .i10_scroll_up_text
+    call gfx_scroll_up
+    jmp .i10_scroll_up_done
+.i10_scroll_up_text:
     call video_scroll_up
+.i10_scroll_up_done:
     pop es
     pop ds
     pop di
@@ -329,7 +339,17 @@ int10_handler:
     push di
     push ds
     push es
+    push ax
+    mov ax, BDA_SEG
+    mov es, ax
+    cmp byte ptr es:[BDA_CRT_MODE], 4
+    pop ax
+    jb .i10_scroll_dn_text
+    call gfx_scroll_dn
+    jmp .i10_scroll_dn_done
+.i10_scroll_dn_text:
     call video_scroll_dn
+.i10_scroll_dn_done:
     pop es
     pop ds
     pop di
@@ -1087,6 +1107,226 @@ gfx_scroll_up_row:
     pop si
     pop cx
     pop ax
+    ret
+
+/*
+ * Scroll a CGA graphics character window. Each character row is eight pixel
+ * scanlines, represented by four contiguous 80-byte lines in each CGA bank.
+ * Mode 4/5 columns span two bytes; mode 6 columns span one byte.
+ * IN: AL=rows (0=clear), CH/CL=upper-left, DH/DL=lower-right.
+ */
+gfx_scroll_up:
+    xor si, si
+    jmp gfx_scroll_window
+
+gfx_scroll_dn:
+    mov si, 1
+
+gfx_scroll_window:
+    push bp
+    mov bp, sp
+    sub sp, 24
+    mov word ptr [bp - 2], ax    /* input AX */
+    mov word ptr [bp - 4], bx    /* input BX */
+    mov word ptr [bp - 6], cx    /* input CX */
+    mov word ptr [bp - 8], dx    /* input DX */
+    mov word ptr [bp - 24], si   /* 0=up, 1=down */
+    push ax
+    push bx
+    push cx
+    push dx
+    push si
+    push di
+    push ds
+    push es
+
+    mov ax, BDA_SEG
+    mov ds, ax
+    mov al, byte ptr [BDA_CRT_MODE]
+    cmp al, 4
+    jb .gsw_done
+    cmp al, 6
+    ja .gsw_done
+
+    /* Clamp the character rectangle to the 25-row graphics screen. */
+    mov al, byte ptr [bp - 5]    /* CH */
+    cmp al, 24
+    ja .gsw_done
+    mov ah, byte ptr [bp - 7]    /* DH */
+    cmp ah, 24
+    jbe .gsw_rows_clamped
+    mov ah, 24
+    mov byte ptr [bp - 7], ah
+.gsw_rows_clamped:
+    cmp al, ah
+    ja .gsw_done
+
+    mov bl, byte ptr [BDA_CRT_COLS]
+    mov al, byte ptr [bp - 6]    /* CL */
+    cmp al, bl
+    jae .gsw_done
+    mov ah, byte ptr [bp - 8]    /* DL */
+    cmp ah, bl
+    jb .gsw_cols_clamped
+    mov ah, bl
+    dec ah
+    mov byte ptr [bp - 8], ah
+.gsw_cols_clamped:
+    cmp al, ah
+    ja .gsw_done
+
+    mov dl, 1                    /* bytes per character column */
+    cmp byte ptr [BDA_CRT_MODE], 6
+    je .gsw_bpc_ready
+    mov dl, 2
+.gsw_bpc_ready:
+    mov al, byte ptr [bp - 6]
+    mul dl
+    mov word ptr [bp - 10], ax   /* x byte offset */
+    mov al, byte ptr [bp - 8]
+    sub al, byte ptr [bp - 6]
+    inc al
+    mul dl
+    mov word ptr [bp - 12], ax   /* width in bytes */
+
+    mov al, byte ptr [bp - 5]
+    xor ah, ah
+    shl ax, 1
+    shl ax, 1
+    mov word ptr [bp - 14], ax   /* first per-bank scanline */
+    mov al, byte ptr [bp - 7]
+    sub al, byte ptr [bp - 5]
+    inc al
+    xor ah, ah
+    shl ax, 1
+    shl ax, 1
+    mov word ptr [bp - 16], ax   /* per-bank height */
+
+    mov al, byte ptr [bp - 2]
+    xor ah, ah
+    test ax, ax
+    jz .gsw_clear_all
+    shl ax, 1
+    shl ax, 1
+    cmp ax, word ptr [bp - 16]
+    jb .gsw_shift_ready
+.gsw_clear_all:
+    mov ax, word ptr [bp - 16]
+.gsw_shift_ready:
+    mov word ptr [bp - 18], ax   /* per-bank shift */
+    mov dx, word ptr [bp - 16]
+    sub dx, ax
+    mov word ptr [bp - 20], dx   /* lines to copy */
+
+    mov ax, CGA_SEG
+    mov ds, ax
+    mov es, ax
+    cld
+    cmp word ptr [bp - 24], 0
+    jne .gsw_down_start
+
+    mov word ptr [bp - 22], 0
+.gsw_up_bank:
+    mov ax, word ptr [bp - 14]
+    mov bx, 80
+    mul bx
+    add ax, word ptr [bp - 10]
+    add ax, word ptr [bp - 22]
+    mov di, ax
+    mov si, ax
+    mov ax, word ptr [bp - 18]
+    mov bx, 80
+    mul bx
+    add si, ax
+    mov dx, word ptr [bp - 20]
+.gsw_up_copy:
+    test dx, dx
+    jz .gsw_up_clear_start
+    mov cx, word ptr [bp - 12]
+    rep movsb
+    mov ax, 80
+    sub ax, word ptr [bp - 12]
+    add si, ax
+    add di, ax
+    dec dx
+    jmp .gsw_up_copy
+.gsw_up_clear_start:
+    mov dx, word ptr [bp - 18]
+.gsw_up_clear:
+    test dx, dx
+    jz .gsw_up_next_bank
+    xor al, al
+    mov cx, word ptr [bp - 12]
+    rep stosb
+    mov ax, 80
+    sub ax, word ptr [bp - 12]
+    add di, ax
+    dec dx
+    jmp .gsw_up_clear
+.gsw_up_next_bank:
+    cmp word ptr [bp - 22], 0
+    jne .gsw_done
+    mov word ptr [bp - 22], 0x2000
+    jmp .gsw_up_bank
+
+.gsw_down_start:
+    mov word ptr [bp - 22], 0
+.gsw_down_bank:
+    mov ax, word ptr [bp - 14]
+    add ax, word ptr [bp - 16]
+    dec ax
+    mov bx, 80
+    mul bx
+    add ax, word ptr [bp - 10]
+    add ax, word ptr [bp - 22]
+    mov di, ax
+    mov si, ax
+    mov ax, word ptr [bp - 18]
+    mov bx, 80
+    mul bx
+    sub si, ax
+    mov dx, word ptr [bp - 20]
+.gsw_down_copy:
+    test dx, dx
+    jz .gsw_down_clear_start
+    mov cx, word ptr [bp - 12]
+    rep movsb
+    mov ax, 80
+    add ax, word ptr [bp - 12]
+    sub si, ax
+    sub di, ax
+    dec dx
+    jmp .gsw_down_copy
+.gsw_down_clear_start:
+    mov dx, word ptr [bp - 18]
+.gsw_down_clear:
+    test dx, dx
+    jz .gsw_down_next_bank
+    xor al, al
+    mov cx, word ptr [bp - 12]
+    rep stosb
+    mov ax, 80
+    add ax, word ptr [bp - 12]
+    sub di, ax
+    dec dx
+    jmp .gsw_down_clear
+.gsw_down_next_bank:
+    cmp word ptr [bp - 22], 0
+    jne .gsw_done
+    mov word ptr [bp - 22], 0x2000
+    jmp .gsw_down_bank
+
+.gsw_done:
+    pop es
+    pop ds
+    pop di
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    mov sp, bp
+    pop bp
     ret
 
 /*

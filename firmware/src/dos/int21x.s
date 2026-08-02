@@ -1138,6 +1138,28 @@ _start:
     int 0x21
     cmp bx, 40
     jne .x_67f
+    mov ah, 0x62
+    int 0x21
+    mov dx, bx
+    mov es, bx
+    cmp word ptr es:[0x32], 40
+    jne .x_67f
+    mov di, word ptr es:[0x34]
+    mov ax, word ptr es:[0x36]
+    test ax, ax
+    jz .x_67f
+    cmp ax, dx
+    jne .x_67_ptr
+    cmp di, 0x18
+    je .x_67f
+.x_67_ptr:
+    mov es, ax
+    cmp byte ptr es:[di], 0x01
+    jne .x_67f
+    cmp byte ptr es:[di + 1], 0x01
+    jne .x_67f
+    cmp byte ptr es:[di + 2], 0x01
+    jne .x_67f
     mov bx, 20
     mov ax, 0x6701
     int 0x21

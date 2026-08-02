@@ -271,17 +271,19 @@ post_test_pic:
     in al, PORT_PIC_DATA
     cmp al, 0xFF
     jne .ptpic_fail
-    mov al, 0xFC                 /* unmask IRQ0+IRQ1 */
+    mov al, 0xFC                 /* exercise IRQ0+IRQ1 mask readback */
     out PORT_PIC_DATA, al
     jmp .+2
     jmp .+2
     in al, PORT_PIC_DATA
     cmp al, 0xFC
     jne .ptpic_fail
+    mov al, 0xBC                 /* runtime mask: IRQ0+IRQ1+IRQ6 */
+    out PORT_PIC_DATA, al
     popf
     ret
 .ptpic_fail:
-    mov al, 0xFC
+    mov al, 0xBC                 /* leave FDC IRQ6 enabled after restore */
     out PORT_PIC_DATA, al
     popf
     mov ax, 101
@@ -698,7 +700,7 @@ post_beep_ok:
 .pbo_delay:
     loop .pbo_delay
     mov al, ah
-    and al, 0xFC
+    and al, 0xFC                 /* clear PPI speaker gates, not the PIC IMR */
     out PORT_PPI_B, al
     pop dx
     pop cx
