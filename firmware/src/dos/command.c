@@ -154,6 +154,14 @@ int dos_current_drive(void)
     asm("mov ah, 0");
 }
 
+/* AH=0Eh select drive DL (0=A). Always returns; unavailable letters stay put. */
+void dos_set_drive(int drive)
+{
+    asm("mov dl, byte ptr [bp+4]");
+    asm("mov ah, 0x0E");
+    asm("int 0x21");
+}
+
 int dos_exit_code(void)
 {
     asm("mov ah, 0x4D");
@@ -619,8 +627,67 @@ int try_exec_name(void)
             last_errorlevel = dos_exit_code();
             return 1;
         }
+        /* Restore basename for .BAT try by caller */
+        buf_set(prog, i, 0);
     }
     return 0;
+}
+
+void do_if(void);
+void dispatch(void);
+void do_batch(char *name);
+void collect_batch_args(void);
+
+/* If prog has no extension, try prog.BAT via the batch interpreter. */
+int try_batch_name(void)
+{
+    int i;
+    int h;
+    if (has_dot(prog)) {
+        return 0;
+    }
+    i = str_len(prog);
+    buf_set(prog, i, '.');
+    buf_set(prog, i + 1, 'B');
+    buf_set(prog, i + 2, 'A');
+    buf_set(prog, i + 3, 'T');
+    buf_set(prog, i + 4, 0);
+    h = dos_open(prog, 0);
+    if (h == -1) {
+        buf_set(prog, i, 0);
+        return 0;
+    }
+    dos_close(h);
+    collect_batch_args();
+    do_batch(prog);
+    return 1;
+}
+
+/* ECHO. / ECHO: / ECHO/ — classic blank-line forms (no space after ECHO). */
+int is_echo_punct(char *p)
+{
+    int c;
+    if (buf_get(p, 0) != 'E') return 0;
+    if (buf_get(p, 1) != 'C') return 0;
+    if (buf_get(p, 2) != 'H') return 0;
+    if (buf_get(p, 3) != 'O') return 0;
+    c = buf_get(p, 4);
+    if (c == 0) return 0;
+    if ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) return 0;
+    return 1;
+}
+
+/* Drive change: "C:" or "c:" */
+int is_drive_spec(char *p)
+{
+    int a;
+    int b;
+    a = buf_get(p, 0);
+    b = buf_get(p, 1);
+    if (b != ':') return 0;
+    if (buf_get(p, 2) != 0) return 0;
+    if (a < 'A' || a > 'Z') return 0;
+    return 1;
 }
 
 /* Skip one ASCIZ string at seg:off; return offset after NUL. */
@@ -1291,9 +1358,6 @@ void echo_tail(void)
     print_crlf();
 }
 
-void do_if(void);
-void dispatch(void);
-
 void do_batch(char *name)
 {
     int h;
@@ -1570,6 +1634,10 @@ void dispatch_plain(void)
     int drive;
     cursor = buf_addr(cmd, 0);
     if (!next_token(prog, PATH_MAX)) return;
+    if (is_drive_spec(prog)) {
+        dos_set_drive(buf_get(prog, 0) - 'A');
+        return;
+    }
     if (str_eq(prog, "DIR")) { do_dir(); return; }
     if (str_eq(prog, "TYPE")) { do_type(); return; }
     if (str_eq(prog, "COPY")) { do_copy(); return; }
@@ -1605,7 +1673,11 @@ void dispatch_plain(void)
         if (!next_token(arg1, PATH_MAX) || !next_token(arg2, PATH_MAX) || dos_rename(arg1, arg2) == -1) print_dollar("RENAME old new\r\n$");
         return;
     }
-    if (str_eq(prog, "ECHO")) {
+    if (str_eq(prog, "ECHO") || is_echo_punct(prog)) {
+        if (is_echo_punct(prog)) {
+            print_crlf();
+            return;
+        }
         echo_tail(); return;
     }
     if (str_eq(prog, "PAUSE")) { print_dollar("Press any key to continue . . .$"); read_key(); print_crlf(); return; }
@@ -1642,6 +1714,8 @@ void dispatch_plain(void)
     str_copy(prog_base, prog, PATH_MAX);
     make_exec_tail();
     if (!try_exec_name()) {
+        str_copy(prog, prog_base, PATH_MAX);
+        if (try_batch_name()) return;
         if (!str_has(prog_base, '\\') && !str_has(prog_base, '/')) {
             /* Walk PATH= from environment */
             if (env_copy_var("PATH", env_pathbuf, 128)) {
@@ -1664,6 +1738,7 @@ void dispatch_plain(void)
                         str_copy(buf_addr(env_join, c), prog_base, PATH_MAX - c);
                         str_copy(prog, env_join, PATH_MAX);
                         if (try_exec_name()) return;
+                        if (try_batch_name()) return;
                     }
                     if (buf_get(env_pathbuf, i) == 0) break;
                     i = i + 1;
@@ -1673,6 +1748,7 @@ void dispatch_plain(void)
             str_copy(prog, "A:\\BIN\\", PATH_MAX);
             str_copy(buf_addr(prog, 7), prog_base, PATH_MAX - 7);
             if (try_exec_name()) return;
+            if (try_batch_name()) return;
         }
         print_dollar("Bad command\r\n$");
     }

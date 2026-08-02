@@ -61,9 +61,11 @@ resident NE2000 stack, or `DEVICE=` `BIN\ANSI.SYS` for ANSI CON filtering.
 `/TYPE`) edits primary partitions; FORMAT targets the letter’s volume. Without a
 DOS partition table, FORMAT retains its whole-disk HDD behavior.
 
-To install onto an attached hard disk from a bootable floppy, run `INSTALL.BAT`
-(or boot an image whose `AUTOEXEC.BAT` calls it). That script runs PARTEDIT, formats
-`C:` with `/S`, and prints `INSTALL OK`.
+To install onto an attached hard disk from a bootable floppy, run `INSTALL`
+(or `INSTALL.BAT`). That script runs PARTEDIT, formats `C:` with `/S`, and prints
+`INSTALL OK` only when each step succeeds. Workstation VMs need the Fixed Disk
+option ROM (`fdrom.bin`) snapshotted with U18/U19 — recreate or Edit ROMs if an
+older VM was created without it.
 
 The same image is installed into the k8086 submodule as `disks/fd.img`
 (`make install-floppy` / `make os`).
