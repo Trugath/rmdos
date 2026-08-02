@@ -72,20 +72,22 @@ Sources live under `firmware/bios/src/` (`post`, `init`, `video`, `keyboard`,
 - IVT + BIOS Data Area (`0040:0000`)
 - Equipment word (INT 11h) and conventional memory size (INT 12h)
 - INT 10h (text + CGA modes 0–6): AH=00–03,05–0F including pixel read/write
-  (`0Ch`/`0Dh`), CRTC cursor programming on set cursor/type, BEL beep, and
-  graphics teletype scroll
+  (`0Ch`/`0Dh`), write string (`13h` AL=0/1), CRTC cursor programming on set
+  cursor/type, BEL beep, and graphics teletype scroll
 - INT 13h floppy via onboard FDC (DMA ch2 / IRQ6): AH=00–05, 08, 15–18 with
   360K/720K/1.2M/1.44M media via BDA `40:8B` hint + INT 1Eh tables (FDC follows
   the live DPT; AH=17 stores DASD type at `40:8C`+DL, AH=18 selects media table).
   HD uses guest C800 Fixed Disk option ROM by default; host Fixed
   Disk BIOS is opt-in (`--hd-int13-bios` / `K8086_HD_INT13_BIOS=1`). Floppy host
   shim is opt-in (`--floppy-int13-shim` / `K8086_FLOPPY_INT13_SHIM=1`).
-  INT 14h (COM1 8250 AH=00–03), 15h (AH=86h wait; AH=80h–82h succeed; else CF), 16h
+  INT 14h (COM1 8250 AH=00–03), 15h (AH=86h wait; AH=80h–82h succeed; AH=C0h XT
+  config table; else CF), 16h
   (AH=00–02,05 stuff,10–12→00–02; Caps/Num/Scroll/Insert flags), 17h
   (LPT1 at BDA `40:08` / `0x378`: AH=00–02; DX≠0 timeout), 18h, 19h, 1Ah
 - INT 05h Print Screen (status at `0000:0500`; Shift+PrtSc from INT 09h)
 - IRQ0 timer (INT 08h → INT 1Ch; floppy motor timeout) and IRQ1 keyboard (INT 09h);
-  Ctrl-Break (Ctrl+scancode 46h) latches BDA `40:18` bit7 and invokes INT 1Bh;
+  Ctrl-Break (Ctrl+scancode 46h) latches BDA `40:18` bit7 and invokes INT 1Bh
+  (DOS hooks INT 1Bh to raise INT 23h when BREAK ON);
   IRQ6 → INT 0Eh for FDC completion; IRQ5 → INT 0Dh for Fixed Disk (guest ROM)
 - Option ROM scan `C000–F400` (`AA55`, checksum, far call +3); Fixed Disk ROM at `C800`
 - INT 18h prints a short “no BASIC” message (U19 is not an interpreter)
@@ -164,10 +166,12 @@ AUX/PRN (handles 3/4; AH=03/04/05 via INT 14h/17h),
 IOCTL get/set info + input/output status (AH=44h AL=00/01/06/07/08/0Dh),
 handle count get/set (AH=67h), INT 25h/26h absolute disk, INT 2Fh install-check
 stubs (DOS AH=12, SHARE, PRINT, APPEND, XMS; Windows AX=1600 absent), vectors
-(AH=25h/35h), Ctrl-C (INT 23h abort) / critical error (INT 24h Abort/Retry/Ignore),
+(AH=25h/35h), Ctrl-C / Ctrl-Break (BIOS INT 1Bh → INT 23h when BREAK ON; abort) /
+critical error (INT 24h Abort/Retry/Ignore), VERIFY flag get/set (AH=2Eh/54h; flag
+only — no media re-read) and commit (AH=68h success no-op),
 date/time, drive/cwd, mkdir/rmdir/chdir, attrs, rename, country get/set (AH=38h),
 **AH=31h TSR**. AH=30h reports DOS 3.31. Gate: `DEMO\COMPAT.COM` +
-`DEMO\INT21X.COM` (markers include `FILES OK`, `EXEC1 OK`).
+`DEMO\INT21X.COM` (markers include `FILES OK`, `EXEC1 OK`, `AUXPRN OK`, `BREAK23 OK`).
 
 **Out of scope for INT 21h/2Fh fidelity:** AH=53h BPB translate; real
 SHARE/PRINT/APPEND/XMS TSR bodies; extended FCB; full SysVars/SFT/CDS graphs;
@@ -188,12 +192,13 @@ interprets ESC/CSI (cursor, erase, SGR colors) before teletype; ESC/CSI bytes ar
 not mirrored to COM1. INPUT forwards to the next CON driver (remap tables deferred).
 `PROMPT $e` emits ESC so ANSI prompts work when the driver is loaded.
 
-`COMMAND.COM` supports internal CD/MD/RD/CLS/REN/VER/SET/PAUSE/REM, external
-program exec with `PATH` walk and `%var%` from the PSP environment, `ECHO`,
-`IF ERRORLEVEL` / `IF EXIST`, `GOTO`/`CALL`, redirection and pipes, and
+`COMMAND.COM` supports internal CD/MD/RD/CLS/REN/VER/SET/PAUSE/REM/`PATH`/`ERASE`,
+external program exec with `PATH` walk and `%var%` from the PSP environment, `ECHO`,
+`IF ERRORLEVEL` / `IF EXIST`, `GOTO`/`CALL`, batch `%0`–`%9`, redirection and pipes, and
 `AUTOEXEC.BAT`. `PATH=A:\BIN` is set in the kernel environment. Internals present:
 `FOR`, `PROMPT` (including `$e` → ESC), `DATE`/`TIME`, `VOL`, `VERIFY`,
-`BREAK`, `SHIFT`, `EXIT`, string `IF`, `CTTY` (CON/NUL). Wave-1 utilities present:
+`BREAK`, `SHIFT`, `EXIT`, string `IF`, `CTTY` (CON/NUL). DIR headers use the current
+drive/cwd. Wave-1 utilities present:
 `MEM`, `FC`, `TREE`, `SORT`. Wave-2: `EDIT` (16 KiB heap buffer, find, `/Q` smoke),
 `DEBUG` (debuggee arena, R/G/T/P), `DISKCOPY` / `DISKCOMP`, `MODE` (COM1).
 `BIN\ANSI.SYS` is packed for optional `DEVICE=` load (off by default).

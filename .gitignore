@@ -27,6 +27,7 @@ firmware/build/bios_tests/
 
 # Local host toolchains
 tools/host/
+.tools/
 
 # Elite drop-in binaries (track README / local .gitignore only)
 fixtures/guest/elite/**
