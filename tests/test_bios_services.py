@@ -72,6 +72,7 @@ TESTS = [
     "bt_readchar",
     "bt_writech",
     "bt_kbd_read",
+    "bt_kbd_shift",
     "bt_int13_err",
     "bt_hd_verify",
     "bt_motor",

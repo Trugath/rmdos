@@ -202,25 +202,12 @@ scancode_to_ascii:
 .sc_shift:
     test bl, 0x03
     jz .sc_caps
-    cmp al, 'a'
-    jb .sc_shift_sym
-    cmp al, 'z'
-    ja .sc_shift_sym
-    sub al, 0x20
-    jmp .sc_done
-.sc_shift_sym:
-    cmp al, '1'
-    jb .sc_done
-    cmp al, '9'
-    ja .sc_check0
-    mov bx, offset shift_digit_table
-    sub al, '1'
+    /* Full US shifted layout by make code (AH preserved). */
+    mov al, ah
+    cmp al, 0x3A
+    ja .sc_zero
+    mov bx, offset shift_scancode_table
     xlat
-    jmp .sc_done
-.sc_check0:
-    cmp al, '0'
-    jne .sc_done
-    mov al, ')'
     jmp .sc_done
 .sc_caps:
     test bl, 0x40
@@ -371,9 +358,12 @@ scancode_table:
     .byte 'a','s','d','f','g','h','j','k','l',';','\'','`', 0, '\\'
     .byte 'z','x','c','v','b','n','m',',','.','/', 0, '*', 0, ' '
 
-/* shifted '1'..'9' */
-shift_digit_table:
-    .byte '!','@','#','$','%','^','&','*','('
+/* US QWERTY shifted layout (same make-code indices as scancode_table). */
+shift_scancode_table:
+    .byte 0, 27, '!','@','#','$','%','^','&','*','(',')','_','+', 8, 9
+    .byte 'Q','W','E','R','T','Y','U','I','O','P','{','}', 13, 0
+    .byte 'A','S','D','F','G','H','J','K','L',':','"','~', 0, '|'
+    .byte 'Z','X','C','V','B','N','M','<','>','?', 0, '*', 0, ' '
 
 /* keypad make 47h–53h ASCII when NumLock on */
 keypad_num_table:
