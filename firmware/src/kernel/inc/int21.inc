@@ -21,6 +21,10 @@ install_dos_vectors:
     lea bx, [int24_default]
     mov word ptr es:[0x24 * 4], bx
     mov word ptr es:[0x24 * 4 + 2], cs
+    /* Ctrl-Break (BIOS INT 1Bh) → INT 23h when BREAK ON */
+    lea bx, [int1b_dos]
+    mov word ptr es:[0x1B * 4], bx
+    mov word ptr es:[0x1B * 4 + 2], cs
     call install_absdisk_vectors
     call install_int2f_vector
     pop es
@@ -33,9 +37,22 @@ int20_handler:
     jmp dos_terminate
 
 int23_default:
-    /* Ctrl-C: abort current process */
+    /* Ctrl-C / Ctrl-Break: abort current process */
     mov al, 0xC3
     jmp dos_terminate
+
+/*
+ * BIOS INT 1Bh (Ctrl-Break). When break_flag is set, invoke INT 23h
+ * (same abort path as ^C). When off, IRET only — BDA latch is already set.
+ */
+int1b_dos:
+    push ax
+    cmp byte ptr cs:[break_flag], 0
+    je .i1b_done
+    int 0x23
+.i1b_done:
+    pop ax
+    iret
 
 int24_default:
     /* Critical error: Abort / Retry / Ignore via BIOS console */
@@ -190,6 +207,8 @@ int21_handler:
     je dos_ah1b
     cmp ah, 0x1C
     je dos_ah1c
+    cmp ah, 0x1F
+    je dos_ah1f
     cmp ah, 0x21
     je dos_ah21
     cmp ah, 0x22
@@ -612,7 +631,7 @@ dos_ah2d:
     clc
     jmp int21_iret
 
-/* AH=2Eh — verify write flag AL=0 off / 1 on (stored; I/O may ignore) */
+/* AH=2Eh — verify write flag AL=0 off / 1 on (flag only; no media re-read) */
 dos_ah2e:
     mov byte ptr cs:[dos_verify_flag], al
     xor al, al
@@ -633,29 +652,112 @@ dos_ah34:
     clc
     jmp int21_iret
 
-/* AH=32h — get DPB for DL (0=default, 1=A…) → DS:BX; AL=FF on bad drive */
-dos_ah32:
+/*
+ * Fill CS:dos_dpb from the currently mounted BPB.
+ * DL = logical drive index (0=A). Clobbers AX,BX.
+ */
+dpb_fill_from_bpb:
+    mov al, dl
+    mov byte ptr cs:[dos_dpb], al           /* +00 drive 0=A */
+    mov byte ptr cs:[dos_dpb + 1], al       /* +01 unit */
+    mov word ptr cs:[dos_dpb + 2], 512      /* +02 bytes/sector */
+    mov al, byte ptr cs:[bpb_spc]
+    dec al
+    mov byte ptr cs:[dos_dpb + 4], al       /* +04 spc-1 */
+    mov al, byte ptr cs:[bpb_spc]
+    xor ah, ah
+    xor bx, bx                              /* cluster → sector shift */
+.dpb_sh:
+    cmp ax, 1
+    jbe .dpb_sh_done
+    shr ax, 1
+    inc bx
+    jmp .dpb_sh
+.dpb_sh_done:
+    mov byte ptr cs:[dos_dpb + 5], bl
+    mov ax, word ptr cs:[bpb_reserved]
+    mov word ptr cs:[dos_dpb + 6], ax       /* +06 reserved */
+    mov al, byte ptr cs:[bpb_fats]
+    mov byte ptr cs:[dos_dpb + 8], al
+    mov ax, word ptr cs:[bpb_root_ents]
+    mov word ptr cs:[dos_dpb + 9], ax
+    mov ax, word ptr cs:[bpb_data_lba]
+    sub ax, word ptr cs:[vol_want_base]
+    mov word ptr cs:[dos_dpb + 0x0B], ax    /* +0B first data sector */
+    mov ax, word ptr cs:[bpb_max_clust]
+    mov word ptr cs:[dos_dpb + 0x0D], ax    /* +0D max cluster */
+    mov ax, word ptr cs:[bpb_spf]
+    mov word ptr cs:[dos_dpb + 0x0F], ax
+    mov ax, word ptr cs:[bpb_root_lba]
+    sub ax, word ptr cs:[vol_want_base]
+    mov word ptr cs:[dos_dpb + 0x11], ax    /* +11 first dir sector */
+    mov word ptr cs:[dos_dpb + 0x13], 0
+    mov word ptr cs:[dos_dpb + 0x15], 0
+    mov al, byte ptr cs:[bpb_media]
+    mov byte ptr cs:[dos_dpb + 0x17], al
+    mov byte ptr cs:[dos_dpb + 0x18], 0xFF  /* not accessed */
+    mov word ptr cs:[dos_dpb + 0x19], 0
+    mov word ptr cs:[dos_dpb + 0x1B], 0
+    mov word ptr cs:[dos_dpb + 0x1D], 0
+    mov word ptr cs:[dos_dpb + 0x1F], 0xFFFF
+    ret
+
+/*
+ * Resolve AH=32/1C drive: DL=0 default → cur; else DL=1=A → index 0.
+ * On success DL=0-based index, CF clear. CF set if unmapped.
+ */
+dos_resolve_drive_dl:
     push ax
     mov al, dl
     test al, al
-    jnz .a32_drv
-    mov al, byte ptr cs:[cur_drive]
-    inc al
-.a32_drv:
-    cmp al, 1
-    jb .a32_bad
-    cmp al, 2
-    ja .a32_bad
-    mov byte ptr cs:[dos_dpb], al
+    jnz .drd_num
+    mov dl, byte ptr cs:[cur_drive]
+    jmp .drd_chk
+.drd_num:
+    dec al
+    mov dl, al
+.drd_chk:
+    cmp dl, byte ptr cs:[num_drives]
+    jae .drd_bad
+    clc
     pop ax
+    ret
+.drd_bad:
+    stc
+    pop ax
+    ret
+
+/* AH=1Fh — get DPB for default drive → DS:BX; AL=FF on bad */
+dos_ah1f:
+    mov dl, byte ptr cs:[cur_drive]
+    call dpb_fill_from_bpb
     push cs
     pop ds
     lea bx, [dos_dpb]
     xor al, al
     clc
     jmp int21_iret
+
+/* AH=32h — get DPB for DL (0=default, 1=A…) → DS:BX; AL=FF on bad drive */
+dos_ah32:
+    push dx
+    call dos_resolve_drive_dl
+    jc .a32_bad
+    call dos_mount_drive
+    jc .a32_bad_m
+    call dpb_fill_from_bpb
+    call dos_remount_current
+    pop dx
+    push cs
+    pop ds
+    lea bx, [dos_dpb]
+    xor al, al
+    clc
+    jmp int21_iret
+.a32_bad_m:
+    call dos_remount_current
 .a32_bad:
-    pop ax
+    pop dx
     mov al, 0xFF
     clc
     jmp int21_iret
@@ -705,7 +807,7 @@ dos_ah67:
     stc
     jmp int21_iret_cf
 
-/* AH=68h — commit file BX (flush no-op success) */
+/* AH=68h — commit file BX (success no-op; no cache flush body) */
 dos_ah68:
     xor ax, ax
     clc
@@ -760,10 +862,10 @@ dos_ah1c:
 dos_alloc_info:
     push si
     push di
-    test dl, dl
-    jnz .dai_ok
-    /* default → treat as current; BPB already bound */
-.dai_ok:
+    call dos_resolve_drive_dl
+    jc .dai_fail
+    call dos_mount_drive
+    jc .dai_fail_m
     mov al, byte ptr cs:[bpb_spc]
     mov cx, 512
     mov dx, word ptr cs:[bpb_max_clust]
@@ -774,8 +876,27 @@ dos_alloc_info:
     push cs
     pop ds
     lea bx, [bpb_media]
+    call dos_remount_current
     pop di
     pop si
+    clc
+    ret
+.dai_fail_m:
+    call dos_remount_current
+.dai_fail:
+    mov al, byte ptr cs:[bpb_spc]
+    mov cx, 512
+    mov dx, word ptr cs:[bpb_max_clust]
+    cmp dx, 2
+    jb .dai_fdx
+    dec dx
+.dai_fdx:
+    push cs
+    pop ds
+    lea bx, [bpb_media]
+    pop di
+    pop si
+    stc
     ret
 
 /* AH=37h — switchar: AL=0 get DL='/', AL=1 set */
