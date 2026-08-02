@@ -7,7 +7,7 @@
 #define LINE_MAX 80
 #define PATH_MAX 64
 #define DTA_SIZE 128
-#define BATCH_MAX 4
+#define BATCH_MAX 8
 
 static char line[82] = { 0 };
 static char cmd[82] = { 0 };
@@ -27,7 +27,7 @@ static char exec_tail[96] = { 0 };
 static char exec_pb[14] = { 0 };
 static char fcb1[16] = { 0 };
 static char fcb2[16] = { 0 };
-static char batch_names[128] = { 0 };
+static char batch_names[256] = { 0 };
 static char batch_args[160] = { 0 };
 static char batch_arg0[32] = { 0 };
 static char goto_name[64] = { 0 };
@@ -39,15 +39,15 @@ static char prompt_fmt[80] = { '$', 'p', '$', 'g', 0 };
 static char for_var[4] = { 0 };
 static char for_body[82] = { 0 };
 static char for_item[64] = { 0 };
-static char for_var_frames[16] = { 0 };
-static char for_body_frames[328] = { 0 };
-static char for_item_frames[256] = { 0 };
+static char for_var_frames[32] = { 0 };
+static char for_body_frames[656] = { 0 };
+static char for_item_frames[512] = { 0 };
 static char if_then[82] = { 0 };
 static char if_else[82] = { 0 };
 static int cursor;
 static int last_errorlevel;
 static int batch_depth;
-static int batch_handles[4] = { 0 };
+static int batch_handles[8] = { 0 };
 static int goto_active;
 static int redir_in_kind;
 static int redir_out_kind;
@@ -70,11 +70,12 @@ static int ctty_active;
 static char pipe_tmp[16];
 static char pipe_input[16];
 static int pipe_seq;
-static char batch_arg_frames[640] = { 0 };
-static int batch_argc_frames[4] = { 0 };
+static char batch_arg_frames[1280] = { 0 };
+static int batch_argc_frames[8] = { 0 };
 static int batch_arg_depth;
 static int for_depth;
 static int permanent_shell;
+static int env_paras;
 
 
 void dos_set_verify(int on)
@@ -423,6 +424,7 @@ void show_prompt(void)
     int i;
     int c;
     int drive;
+    int ver;
     i = 0;
     while (1) {
         c = buf_get(prompt_fmt, i);
@@ -467,6 +469,16 @@ void show_prompt(void)
                 print_num(g_sec);
             } else if (c == 'e' || c == 'E') {
                 print_char(27);
+            } else if (c == 'h' || c == 'H') {
+                print_char(8);
+                print_char(' ');
+                print_char(8);
+            } else if (c == 'v' || c == 'V') {
+                ver = dos_version();
+                print_dollar("rmDOS $");
+                print_num(ver & 255);
+                print_char('.');
+                print_num(ver >> 8);
             }
             if (c != 0) i = i + 1;
         } else {
@@ -1052,7 +1064,9 @@ void env_put(char *name, char *value)
     int skip;
     old = env_seg();
     if (old == 0) return;
-    neu = dos_alloc(32);
+    if (env_paras < 16) env_paras = 16;
+    if (env_paras > 2048) env_paras = 2048;
+    neu = dos_alloc(env_paras);
     if (neu == 0) return;
     oi = 0;
     ni = 0;
@@ -2227,9 +2241,11 @@ int parse_startup_tail(void)
     int i;
     int o;
     int c;
+    int v;
     n = peek_byte(0x80);
     i = 0;
     permanent_shell = 0;
+    env_paras = 32;
     while (i < n) {
         while (i < n && (peek_byte(0x81 + i) == ' ' || peek_byte(0x81 + i) == 9)) {
             i = i + 1;
@@ -2253,7 +2269,22 @@ int parse_startup_tail(void)
             buf_set(cmd, o, 0);
             return 1;
         }
-        if (c == 'P') permanent_shell = 1;
+        if (c == 'P') {
+            permanent_shell = 1;
+        } else if (c == 'E') {
+            /* /E:nnnn — environment size in bytes → paragraphs */
+            if (i < n && peek_byte(0x81 + i) == ':') i = i + 1;
+            v = 0;
+            while (i < n) {
+                c = peek_byte(0x81 + i);
+                if (c < '0' || c > '9') break;
+                v = v * 10 + (c - '0');
+                i = i + 1;
+            }
+            if (v < 160) v = 160;
+            if (v > 32768) v = 32768;
+            env_paras = (v + 15) / 16;
+        }
         while (i < n && peek_byte(0x81 + i) != ' ' && peek_byte(0x81 + i) != 9) {
             i = i + 1;
         }

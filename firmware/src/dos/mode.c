@@ -323,6 +323,7 @@ int main(void)
                 }
                 i = i + 1;
             }
+            /* Soft-ack retry/,,P and other LPT options as success. */
         }
         print_dollar(msg_lpt);
         print_dollar(msg_ok);
