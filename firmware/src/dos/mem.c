@@ -13,16 +13,16 @@ static char msg_hdr[28] = "Conventional Memory:\r\n$";
 static char msg_tot[14] = "Total: $";
 static char msg_used[14] = "Used:  $";
 static char msg_free[14] = "Free:  $";
-static char msg_kb[6] = " KB\r\n$";
+static char msg_kb[8] = " KB\r\n$";
 
 static void load_first_mcb(void)
 {
     asm("mov ah, 0x52");
     asm("int 0x21");
-    asm("mov ax, es:[bx]");
-    asm("mov [first_mcb], ax");
     asm("push cs");
     asm("pop ds");
+    asm("mov ax, es:[bx]");
+    asm("mov [first_mcb], ax");
 }
 
 static void load_mcb(int seg)

@@ -1,4 +1,4 @@
-/* XCOPY.COM — XCOPY src dst [/S]. */
+/* XCOPY.COM — XCOPY src dst [/S][/E][/P][/V][/A][/D[:mm-dd-yy]]. */
 #include "dos.h"
 
 #define PATH_MAX 64
@@ -17,8 +17,17 @@ static char dta_frames[1024];
 static char buf[128];
 static char msg_ok[10] = "copied\r\n$";
 static char msg_e[16] = "XCOPY failed\r\n$";
-static char msg_u[22] = "XCOPY src dst [/S]\r\n$";
+static char msg_u[44] = "XCOPY src dst [/S][/E][/P][/V][/A][/D]\r\n$";
+static char msg_prompt[8] = " (Y/N)? $";
 static int opt_s;
+static int opt_e;
+static int opt_p;
+static int opt_v;
+static int opt_a;
+static int opt_d;
+static int opt_d_date;           /* nonzero = compare against fixed date */
+static int d_date_val;           /* DOS date word */
+static int verify_saved;
 static int source_is_dir;
 static int source_has_wild;
 static int destination_is_dir;
@@ -33,6 +42,49 @@ static int xcopy_mkdir(char *path)
     asm("jnc Lxcopy_mkdir_ok");
     asm("mov ax, 0xFFFF");
     asm("Lxcopy_mkdir_ok:");
+}
+
+static int xcopy_rmdir(char *path)
+{
+    asm("mov dx, [bp+4]");
+    asm("mov ah, 0x3A");
+    asm("int 0x21");
+    asm("mov ax, 0");
+    asm("jnc Lxcopy_rmdir_ok");
+    asm("mov ax, 0xFFFF");
+    asm("Lxcopy_rmdir_ok:");
+}
+
+static void verify_begin(void)
+{
+    asm("mov ah, 0x54");
+    asm("int 0x21");
+    asm("mov ah, 0");
+    asm("mov [verify_saved], ax");
+    asm("mov ax, 0x2E01");
+    asm("int 0x21");
+    reload_ds();
+}
+
+static void verify_end(void)
+{
+    asm("mov al, byte ptr [verify_saved]");
+    asm("mov ah, 0x2E");
+    asm("int 0x21");
+    reload_ds();
+}
+
+static int read_yn(void)
+{
+    int c;
+    asm("mov ah, 0x01");
+    asm("int 0x21");
+    asm("mov ah, 0");
+    asm("mov [dos_tmp], ax");
+    reload_ds();
+    c = dos_tmp;
+    if (c >= 'a' && c <= 'z') c = c - 32;
+    return c;
 }
 
 static void str_copy_limit(char *out, char *in, int max)
@@ -157,6 +209,67 @@ static int ensure_directory(char *path)
     return 1;
 }
 
+static int dta_date(char *dta)
+{
+    return buf_get(dta, 0x18) | (buf_get(dta, 0x19) << 8);
+}
+
+static int dta_time(char *dta)
+{
+    return buf_get(dta, 0x16) | (buf_get(dta, 0x17) << 8);
+}
+
+static int da_handle;
+static int da_date;
+static int da_time;
+
+/* Return 1 if source should be copied under /D rules. */
+static int date_allows(char *dta, char *dest_path)
+{
+    int sdate;
+    int stime;
+    int h;
+
+    sdate = dta_date(dta);
+    stime = dta_time(dta);
+    /* Also allow date 0 (mkfs unset) through /D:date filters. */
+    if (opt_d_date) {
+        if (sdate != 0 && sdate < d_date_val) return 0;
+        return 1;
+    }
+    /* bare /D: copy if dest missing or source newer (AH=57, no find). */
+    h = dos_open(dest_path, 0);
+    if (h == -1) return 1;
+    da_handle = h;
+    da_date = 0;
+    da_time = 0;
+    asm("mov bx, [da_handle]");
+    asm("mov ax, 0x5700");
+    asm("int 0x21");
+    asm("jc Lda_done");
+    asm("mov [da_date], dx");
+    asm("mov [da_time], cx");
+    asm("Lda_done:");
+    reload_ds();
+    dos_close(h);
+    if (sdate > da_date) return 1;
+    if (sdate < da_date) return 0;
+    if (stime > da_time) return 1;
+    return 0;
+}
+
+static int prompt_copy(char *path)
+{
+    int c;
+    if (!opt_p) return 1;
+    print_string(path);
+    print_dollar(msg_prompt);
+    c = read_yn();
+    print_dollar("\r\n$");
+    if (c == 'Y') return 1;
+    return 0;
+}
+
 static int copy_file(char *from, char *to)
 {
     int hin;
@@ -189,6 +302,12 @@ static int copy_file(char *from, char *to)
     return 1;
 }
 
+static int want_recurse(void)
+{
+    if (opt_s || opt_e) return 1;
+    return 0;
+}
+
 static int copy_files_at_depth(int depth)
 {
     int dta;
@@ -206,15 +325,25 @@ static int copy_files_at_depth(int depth)
     while (1) {
         attr = buf_get(dta, 0x15);
         if (!(attr & 0x10)) {
-            copy_entry_name(dta);
-            if (!join_path(source_path, src_dir, entry_name)) return -1;
-            if (destination_is_dir) {
-                if (!join_path(destination_path, dst_dir, entry_name)) return -1;
-            } else {
-                str_copy_limit(destination_path, dst, PATH_MAX);
+            if (!opt_a || (attr & 0x20)) {
+                copy_entry_name(dta);
+                if (!join_path(source_path, src_dir, entry_name)) return -1;
+                if (destination_is_dir) {
+                    if (!join_path(destination_path, dst_dir, entry_name)) return -1;
+                } else {
+                    str_copy_limit(destination_path, dst, PATH_MAX);
+                }
+                if (!opt_d || date_allows(dta, destination_path)) {
+                    if (prompt_copy(source_path)) {
+                        if (!copy_file(source_path, destination_path)) return -1;
+                        if (opt_a) {
+                            attr = attr & ~0x20;
+                            dos_chmod(source_path, 1, attr);
+                        }
+                        count = count + 1;
+                    }
+                }
             }
-            if (!copy_file(source_path, destination_path)) return -1;
-            count = count + 1;
         }
         if (dos_find_next() == -1) break;
     }
@@ -230,9 +359,10 @@ static int walk_tree(int depth)
     int child_dst;
     int attr;
     int n;
+    int before;
     n = copy_files_at_depth(depth);
     if (n < 0) return 0;
-    if (!opt_s) return 1;
+    if (!want_recurse()) return 1;
     dta = buf_addr(dta_frames, depth * 128);
     src_dir = buf_addr(source_dirs, depth * PATH_MAX);
     dst_dir = buf_addr(destination_dirs, depth * PATH_MAX);
@@ -249,13 +379,64 @@ static int walk_tree(int depth)
                 child_dst = buf_addr(destination_dirs, (depth + 1) * PATH_MAX);
                 if (!join_path(child_src, src_dir, entry_name)) return 0;
                 if (!join_path(child_dst, dst_dir, entry_name)) return 0;
+                before = copied_count;
                 if (!ensure_directory(child_dst)) return 0;
                 if (!walk_tree(depth + 1)) return 0;
+                /* /S without /E: drop empty destination directories */
+                if (!opt_e && copied_count == before) {
+                    xcopy_rmdir(child_dst);
+                }
                 dos_set_dta(dta);
             }
         }
         if (dos_find_next() == -1) break;
     }
+    return 1;
+}
+
+static int parse_u8(void)
+{
+    int v;
+    int c;
+    int digits;
+    v = 0;
+    digits = 0;
+    while (1) {
+        c = peek_byte(arg_ptr);
+        if (c < '0' || c > '9') break;
+        v = v * 10 + (c - '0');
+        digits = digits + 1;
+        arg_ptr = arg_ptr + 1;
+        if (digits > 2) return -1;
+    }
+    if (digits == 0) return -1;
+    return v;
+}
+
+static int parse_d_date(void)
+{
+    int mo;
+    int da;
+    int yr;
+    int c;
+    /* expect :mm-dd-yy */
+    c = peek_byte(arg_ptr);
+    if (c != ':') return 0;
+    arg_ptr = arg_ptr + 1;
+    mo = parse_u8();
+    if (mo < 1 || mo > 12) return 0;
+    if (peek_byte(arg_ptr) != '-') return 0;
+    arg_ptr = arg_ptr + 1;
+    da = parse_u8();
+    if (da < 1 || da > 31) return 0;
+    if (peek_byte(arg_ptr) != '-') return 0;
+    arg_ptr = arg_ptr + 1;
+    yr = parse_u8();
+    if (yr < 0) return 0;
+    if (yr < 80) yr = yr + 100; /* 00-79 → 2000+ */
+    yr = yr - 80;               /* years since 1980 */
+    d_date_val = (yr << 9) | (mo << 5) | da;
+    opt_d_date = 1;
     return 1;
 }
 
@@ -271,10 +452,26 @@ static int parse_switch(void)
             arg_ptr = arg_ptr + 1;
         } else {
             c = toupper_ch(c);
-            if (c != 'S') return 0;
-            opt_s = 1;
-            seen = 1;
             arg_ptr = arg_ptr + 1;
+            if (c == 'S') {
+                opt_s = 1;
+            } else if (c == 'E') {
+                opt_e = 1;
+            } else if (c == 'P') {
+                opt_p = 1;
+            } else if (c == 'V') {
+                opt_v = 1;
+            } else if (c == 'A') {
+                opt_a = 1;
+            } else if (c == 'D') {
+                opt_d = 1;
+                if (peek_byte(arg_ptr) == ':') {
+                    if (!parse_d_date()) return 0;
+                }
+            } else {
+                return 0;
+            }
+            seen = 1;
         }
     }
     return seen;
@@ -337,6 +534,13 @@ int main(void)
     int root_dst;
     int ok;
     opt_s = 0;
+    opt_e = 0;
+    opt_p = 0;
+    opt_v = 0;
+    opt_a = 0;
+    opt_d = 0;
+    opt_d_date = 0;
+    d_date_val = 0;
     copied_count = 0;
     buf_set(src, 0, 0);
     buf_set(dst, 0, 0);
@@ -371,12 +575,14 @@ int main(void)
         attr = dos_chmod(root_dst, 0, 0);
         if (attr != -1 && (attr & 0x10)) destination_is_dir = 1;
     }
-    if (source_is_dir || source_has_wild || opt_s) destination_is_dir = 1;
+    if (source_is_dir || source_has_wild || want_recurse()) destination_is_dir = 1;
     if (destination_is_dir && !ensure_directory(root_dst)) {
         print_dollar(msg_e);
         return 1;
     }
+    if (opt_v) verify_begin();
     ok = walk_tree(0);
+    if (opt_v) verify_end();
     if (!ok || copied_count == 0) {
         print_dollar(msg_e);
         return 1;
