@@ -341,7 +341,11 @@ int15_handler:
     iret
 
 .i15_wait:
-    /* CX:DX = microseconds → wait at least ceil(us/55000) ticks (min 1). */
+    /*
+     * CX:DX = microseconds. Wait full IRQ0 ticks via BDA, then any residual
+     * on PIT channel 0 (~0.84 µs/count) so short waits are not rounded up to
+     * a whole ~55 ms tick.
+     */
     push ax
     push bx
     push cx
@@ -352,30 +356,34 @@ int15_handler:
 
     mov ax, dx
     mov dx, cx                   /* DX:AX = µs */
-    mov bx, 55000
-    cmp dx, 0
-    jne .i15_div32
-    cmp ax, 0
-    je .i15_wait_done            /* zero wait */
-    xor dx, dx
-    div bx                       /* AX = ticks */
-    jmp .i15_ticks
+    mov bx, ax
+    or bx, dx
+    jz .i15_wait_done            /* zero wait */
+
+    /* ticks = us / 54925, rem_us = us % 54925 (µs per 65536 PIT clocks). */
+    mov bx, 54925
+    cmp dx, bx
+    jae .i15_div32
+    div bx                       /* AX=ticks, DX=rem_us */
+    jmp .i15_have_parts
 .i15_div32:
-    /* DX:AX / BX with DX possibly >= BX — reduce high first */
     push ax
     mov ax, dx
     xor dx, dx
-    div bx                       /* AX = high/BX, DX = rem */
-    mov si, ax                   /* high quotient (usually 0) */
+    div bx                       /* AX=high/BX, DX=rem */
+    mov si, ax
     pop ax
-    div bx                       /* DX:AX = rem:low / BX → AX quot */
+    div bx                       /* AX=more ticks, DX=rem_us */
     add ax, si
-.i15_ticks:
-    test ax, ax
-    jnz .i15_have
-    mov ax, 1
-.i15_have:
-    mov di, ax                   /* ticks to wait */
+    jnc .i15_have_parts
+    mov ax, 0xFFFF               /* saturate tick count */
+    xor dx, dx
+.i15_have_parts:
+    mov di, ax                   /* full ticks */
+    mov si, dx                   /* residual µs */
+
+    test di, di
+    jz .i15_residual
     mov ax, BDA_SEG
     mov ds, ax
     mov bx, [BDA_TIMER_LO]
@@ -386,12 +394,26 @@ int15_handler:
     sub ax, bx
     sbb dx, cx
     cmp ax, di
-    jae .i15_wait_done
-    /* also if high differed enough */
+    jae .i15_residual
     test dx, dx
-    jnz .i15_wait_done
+    jnz .i15_residual
     hlt
     jmp .i15_spin
+
+.i15_residual:
+    test si, si
+    jz .i15_wait_done
+    /* rem_us → PIT clocks: counts = rem_us * 1193 / 1000 (~1.193 MHz). */
+    mov ax, si
+    mov bx, 1193
+    mul bx
+    mov bx, 1000
+    div bx
+    test ax, ax
+    jnz .i15_pit_go
+    mov ax, 1
+.i15_pit_go:
+    call i15_pit0_wait
 
 .i15_wait_done:
     pop di
@@ -406,6 +428,37 @@ int15_handler:
     and word ptr [bp + 6], 0xFFFE
     pop bp
     iret
+
+/* AX = PIT ch0 counts to wait (mode-3 system timer). Clobbers AX,BX,CX,DX. */
+i15_pit0_wait:
+    push bx
+    push cx
+    push dx
+    mov cx, ax
+    call i15_pit0_read
+    mov bx, ax                   /* start count */
+.i15_pit_spin:
+    call i15_pit0_read
+    mov dx, bx
+    sub dx, ax                   /* elapsed = start - now (mod 65536) */
+    cmp dx, cx
+    jb .i15_pit_spin
+    pop dx
+    pop cx
+    pop bx
+    ret
+
+/* OUT: AX = latched PIT channel 0 count. */
+i15_pit0_read:
+    push dx
+    mov al, 0x00                 /* latch counter 0 */
+    out PORT_PIT_MODE, al
+    in al, PORT_PIT_CH0
+    mov ah, al
+    in al, PORT_PIT_CH0
+    xchg al, ah
+    pop dx
+    ret
 
 /*
  * INT 05h — Print Screen (IBM). Status at 0000:0500:

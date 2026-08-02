@@ -3,7 +3,7 @@
 .section .text
 .global _start
 
-/* INT 15h: AH=80 ok, unknown CF, AH=86 advances ticks */
+/* INT 15h: AH=80 ok, unknown CF, AH=86 short+long waits */
 
 _start:
     cli
@@ -20,6 +20,13 @@ _start:
     mov ah, 0xFF
     int 0x15
     jnc .fail_unk
+
+    /* Short wait (~5 ms) must succeed without CF; may not advance BDA ticks. */
+    mov ah, 0x86
+    xor cx, cx
+    mov dx, 5000
+    int 0x15
+    jc .fail_wait
 
     xor ah, ah
     int 0x1A
