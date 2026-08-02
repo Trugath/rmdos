@@ -1105,6 +1105,14 @@ dos_ah44:
     je .a44_getinfo
     cmp al, 1
     je .a44_setinfo
+    cmp al, 2
+    je .a44_char_rd
+    cmp al, 3
+    je .a44_char_wr
+    cmp al, 4
+    je .a44_ctl_ok
+    cmp al, 5
+    je .a44_ctl_ok
     cmp al, 6
     je .a44_instat
     cmp al, 7
@@ -1154,6 +1162,151 @@ dos_ah44:
     /* DX already has new info; ignore stored value */
     pop es
     pop di
+    xor ax, ax
+    clc
+    jmp int21_iret
+
+/* AL=02/03 — char device control channel R/W (DS:DX, CX bytes) */
+.a44_char_rd:
+    push bx
+    push cx
+    push dx
+    push si
+    push di
+    push bp
+    push ds
+    push es
+    push cs
+    pop es
+    call handle_index
+    jc .a44_c_err
+    mov bp, es:[di]
+    and bp, 0xFF                  /* BP = device type */
+    cmp bp, H_FILE
+    je .a44_c_bad
+    mov si, dx                    /* DS:SI = caller buffer */
+    xor bx, bx                    /* transferred */
+    jcxz .a44_c_done
+.a44_crd_loop:
+    cmp bp, H_NUL
+    je .a44_crd_nul
+    cmp bp, H_AUX
+    je .a44_crd_aux
+    cmp bp, H_PRN
+    je .a44_c_bad
+    /* CON: 1-byte INPUT at DS:SI */
+    push cx
+    push dx
+    mov dx, si
+    mov cx, 1
+    call con_dev_read
+    pop dx
+    pop cx
+    jmp .a44_crd_next
+.a44_crd_nul:
+    mov byte ptr ds:[si], 0
+    jmp .a44_crd_next
+.a44_crd_aux:
+    call aux_read_byte
+    mov ds:[si], al
+.a44_crd_next:
+    inc si
+    inc bx
+    loop .a44_crd_loop
+.a44_c_done:
+    mov ax, bx
+    pop es
+    pop ds
+    pop bp
+    pop di
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    clc
+    jmp int21_iret
+
+.a44_char_wr:
+    push bx
+    push cx
+    push dx
+    push si
+    push di
+    push bp
+    push ds
+    push es
+    push cs
+    pop es
+    call handle_index
+    jc .a44_c_err
+    mov bp, es:[di]
+    and bp, 0xFF
+    cmp bp, H_FILE
+    je .a44_c_bad
+    mov si, dx
+    xor di, di
+    jcxz .a44_cw_done
+.a44_cwr_loop:
+    mov al, ds:[si]
+    cmp bp, H_NUL
+    je .a44_cwr_next
+    cmp bp, H_AUX
+    je .a44_cwr_aux
+    cmp bp, H_PRN
+    je .a44_cwr_prn
+    call putch
+    jmp .a44_cwr_next
+.a44_cwr_aux:
+    mov dl, al
+    call aux_write_byte
+    jmp .a44_cwr_next
+.a44_cwr_prn:
+    mov dl, al
+    call prn_write_byte
+.a44_cwr_next:
+    inc si
+    inc di
+    loop .a44_cwr_loop
+.a44_cw_done:
+    mov ax, di
+    pop es
+    pop ds
+    pop bp
+    pop di
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    clc
+    jmp int21_iret
+
+.a44_c_err:
+    pop es
+    pop ds
+    pop bp
+    pop di
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    mov ax, 6
+    stc
+    jmp int21_iret_cf
+.a44_c_bad:
+    pop es
+    pop ds
+    pop bp
+    pop di
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    mov ax, 1
+    stc
+    jmp int21_iret_cf
+
+/* AL=04/05 — control channel block/char stub: success AX=0 */
+.a44_ctl_ok:
     xor ax, ax
     clc
     jmp int21_iret

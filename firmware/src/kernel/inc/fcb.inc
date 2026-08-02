@@ -26,6 +26,21 @@
 .equ FCB_RELREC, 0x21
 
 /*
+ * DS:DX FCB → BX = normal FCB, CL = find attr, CS:fcb_ext_flag = 1 if extended.
+ */
+fcb_resolve_ext:
+    mov bx, dx
+    mov byte ptr cs:[fcb_ext_flag], 0
+    mov cl, 0                    /* default: files only */
+    cmp byte ptr [bx], 0xFF
+    jne .fre_done
+    mov byte ptr cs:[fcb_ext_flag], 1
+    mov cl, byte ptr [bx + 6]
+    add bx, 7
+.fre_done:
+    ret
+
+/*
  * CS:fcb_path from FCB at DS:SI. Mounts drive. CF if drive bad.
  */
 fcb_build_path:
@@ -1060,7 +1075,7 @@ fcb_pattern_to_find:
     pop ax
     ret
 
-/* Init CS:fcb_find_dta; DL = logical drive 0=A. */
+/* Init CS:fcb_find_dta; DL = logical drive 0=A; CL = search attr. */
 fcb_find_init_dta:
     push ax
     push di
@@ -1077,7 +1092,7 @@ fcb_find_init_dta:
     xor ax, ax
     mov word ptr es:[di + 2], ax
     mov byte ptr es:[di + 4], 0
-    mov byte ptr es:[di + 5], 0
+    mov byte ptr es:[di + 5], cl
     mov byte ptr es:[di + 6], dl
     pop es
     pop di
@@ -1103,6 +1118,7 @@ fcb_restore_dta:
 
 /*
  * Fill user DTA as FCB from fcb_find_dta hit + search FCB drive at DS:BX.
+ * If fcb_ext_flag, write extended FCB (FFh + attr + normal).
  */
 fcb_result_to_dta:
     push ax
@@ -1115,10 +1131,18 @@ fcb_result_to_dta:
     mov es, word ptr cs:[fcb_saved_dta_seg]
     mov di, word ptr cs:[fcb_saved_dta_off]
     push di
-    mov cx, 37
+    mov cx, 44
     xor al, al
     rep stosb
     pop di
+
+    cmp byte ptr cs:[fcb_ext_flag], 0
+    je .frtd_norm
+    mov byte ptr es:[di], 0xFF
+    mov al, byte ptr cs:[fcb_find_dta + 5]
+    mov byte ptr es:[di + 6], al
+    add di, 7
+.frtd_norm:
 
     mov al, [bx + FCB_DRV]
     test al, al
@@ -1198,7 +1222,7 @@ fcb_mount_from_fcb:
     call dos_mount_drive
     ret
 
-/* AH=11h find first FCB */
+/* AH=11h find first FCB (supports extended FCB FFh) */
 dos_ah11:
     push bx
     push cx
@@ -1208,7 +1232,7 @@ dos_ah11:
     push ds
     push es
 
-    mov bx, dx
+    call fcb_resolve_ext
     call fcb_mount_from_fcb
     jc .a11_fail
     mov si, bx
@@ -1263,7 +1287,7 @@ dos_ah12:
     push ds
     push es
 
-    mov bx, dx
+    call fcb_resolve_ext
     mov dl, byte ptr cs:[fcb_find_dta + 6]
     call dos_mount_drive
     jc .a12_fail

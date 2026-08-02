@@ -40,7 +40,8 @@ mem_init:
     pop ax
     ret
 
-/* AH=48 BX=paras → AX=seg */
+/* AH=48 BX=paras → AX=seg. Strategy in dos_alloc_strategy low bits:
+ * 0=first fit, 1=best fit, 2=last fit. */
 dos_ah48:
     push bx
     push cx
@@ -48,8 +49,15 @@ dos_ah48:
     push si
     push di
     push es
+    push bp
 
-    mov dx, bx
+    mov dx, bx                   /* DX = request size */
+    mov al, byte ptr cs:[dos_alloc_strategy]
+    and al, 3
+    mov ah, al                   /* AH = strategy */
+
+    xor si, si                   /* SI = best/last candidate MCB seg (0=none) */
+    xor bp, bp                   /* BP = best size (best-fit) */
     mov ax, word ptr cs:[first_mcb]
 .a48_scan:
     mov es, ax
@@ -64,12 +72,47 @@ dos_ah48:
     jne .a48_adv
     cmp word ptr es:[3], dx
     jb .a48_adv
-    /* first fit at ES=AX */
+    /* free block large enough */
+    cmp ah, 0
+    je .a48_first
+    cmp ah, 1
+    je .a48_best
+    /* last fit: keep highest address */
     mov si, ax
+    jmp .a48_adv
+.a48_best:
+    test si, si
+    jz .a48_best_take
+    mov bx, es:[3]
+    cmp bx, bp
+    jae .a48_adv
+.a48_best_take:
+    mov si, ax
+    mov bp, es:[3]
+    jmp .a48_adv
+.a48_first:
+    mov si, ax
+    jmp .a48_found
+
+.a48_adv:
+    cmp byte ptr es:[0], 'Z'
+    je .a48_scan_done
+    mov bx, es:[3]
+    inc bx
+    add ax, bx
+    jmp .a48_scan
+
+.a48_scan_done:
+    test si, si
+    jnz .a48_found
+    jmp .a48_fail
+
+.a48_found:
+    /* take free block at SI, size DX */
+    mov es, si
     mov cx, es:[3]
     cmp cx, dx
     je .a48_take
-    /* split: leftover inherits original type so later MCBs stay linked */
     mov bl, byte ptr es:[0]
     mov di, si
     inc di
@@ -87,13 +130,9 @@ dos_ah48:
     mov es, si
     mov word ptr es:[3], dx
     mov word ptr es:[1], 0x00FF
-    /* if leftover was created and this was last, leftover has Z; if exact and was Z keep Z */
-    cmp cx, dx
-    jne .a48_ret
-    /* exact: keep original signature already in es:[0] */
-.a48_ret:
     mov ax, si
     inc ax
+    pop bp
     pop es
     pop di
     pop si
@@ -102,14 +141,6 @@ dos_ah48:
     pop bx
     clc
     jmp int21_iret
-
-.a48_adv:
-    cmp byte ptr es:[0], 'Z'
-    je .a48_fail
-    mov bx, es:[3]
-    inc bx
-    add ax, bx
-    jmp .a48_scan
 
 .a48_fail:
     mov ax, word ptr cs:[first_mcb]
@@ -130,6 +161,7 @@ dos_ah48:
     add ax, bx
     jmp .a48_lg
 .a48_lg_done:
+    pop bp
     pop es
     pop di
     pop si

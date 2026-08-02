@@ -151,6 +151,7 @@ invoke_int24_disk:
 
 int21_handler:
     sti
+    inc byte ptr cs:[dos_indos]
     cmp ah, 0x00
     je dos_ah00
     cmp ah, 0x01
@@ -331,6 +332,8 @@ int21_handler:
     je dos_ah60
     cmp ah, 0x62
     je dos_ah62
+    cmp ah, 0x65
+    je dos_ah65
     cmp ah, 0x67
     je dos_ah67
     cmp ah, 0x68
@@ -374,6 +377,7 @@ dos_ah4d:
     jmp int21_iret
 
 dos_terminate:
+    mov byte ptr cs:[dos_indos], 0
     mov byte ptr cs:[child_exit_code], al
     mov byte ptr cs:[child_exit_type], 0
     cmp byte ptr cs:[com_active], 0
@@ -390,7 +394,7 @@ dos_tsr:
     mov byte ptr cs:[child_exit_code], al
     mov byte ptr cs:[child_exit_type], 3
     cmp byte ptr cs:[com_active], 0
-    jne com_tsr_kernel
+    jne .a31_tsr_resume
     push es
     push bx
     mov es, word ptr cs:[current_psp]
@@ -401,6 +405,9 @@ dos_tsr:
     pop es
     clc
     jmp int21_iret
+.a31_tsr_resume:
+    mov byte ptr cs:[dos_indos], 0
+    jmp com_tsr_kernel
 
 /* AH=25h — set interrupt vector AL=number, DS:DX=handler */
 dos_ah25:
@@ -691,8 +698,9 @@ dpb_fill_from_bpb:
     mov ax, word ptr cs:[bpb_root_lba]
     sub ax, word ptr cs:[vol_want_base]
     mov word ptr cs:[dos_dpb + 0x11], ax    /* +11 first dir sector */
-    mov word ptr cs:[dos_dpb + 0x13], 0
-    mov word ptr cs:[dos_dpb + 0x15], 0
+    lea ax, [dev_nul_hdr]
+    mov word ptr cs:[dos_dpb + 0x13], ax    /* +13 device header off */
+    mov word ptr cs:[dos_dpb + 0x15], cs    /* +15 device header seg */
     mov al, byte ptr cs:[bpb_media]
     mov byte ptr cs:[dos_dpb + 0x17], al
     mov byte ptr cs:[dos_dpb + 0x18], 0xFF  /* not accessed */
@@ -807,11 +815,26 @@ dos_ah67:
     stc
     jmp int21_iret_cf
 
-/* AH=68h — commit file BX (success no-op; no cache flush body) */
+/* AH=68h — commit file BX (flush dirent/FAT for files; devices OK) */
 dos_ah68:
+    push di
+    push es
+    push cs
+    pop es
+    call handle_index
+    jc .a68_err
+    call handle_flush_file
+    pop es
+    pop di
     xor ax, ax
     clc
     jmp int21_iret
+.a68_err:
+    pop es
+    pop di
+    mov ax, 6
+    stc
+    jmp int21_iret_cf
 
 /* AH=36h — disk free space: DX=clusters free, AX=spc, BX=avail, CX=bps */
 dos_ah36:
@@ -970,17 +993,132 @@ dos_ah51:
 dos_ah62:
     jmp dos_ah51
 
+/* AH=65h — get extended country info; AL=01 → ES:DI buffer from country_info */
+dos_ah65:
+    cmp al, 1
+    je .a65_get
+    mov al, 0xFF
+    clc
+    jmp int21_iret
+.a65_get:
+    push cx
+    push si
+    push di
+    push ds
+    push cs
+    pop ds
+    lea si, [country_info]
+    mov cx, 34
+    rep movsb
+    pop ds
+    pop di
+    pop si
+    pop cx
+    xor ax, ax
+    clc
+    jmp int21_iret
+
 /* AH=52h — get DOS list of lists -> ES:BX */
 dos_ah52:
-    mov ax, word ptr cs:[first_mcb]
-    mov word ptr cs:[dos_sysvars], ax
-    mov al, byte ptr cs:[cur_drive]
-    mov byte ptr cs:[dos_sysvars + 0x10], al
+    push ax
+    push cx
+    push si
+    push di
+    push ds
+    call dos_sysvars_refresh
+    pop ds
+    pop di
+    pop si
+    pop cx
+    pop ax
     push cs
     pop es
     lea bx, [dos_sysvars]
     clc
     jmp int21_iret
+
+/*
+ * Refresh LoL pointers, SFT count, and CDS paths for mapped drives.
+ */
+dos_sysvars_refresh:
+    push ax
+    push bx
+    push cx
+    push dx
+    push si
+    push di
+    push es
+    push ds
+    push cs
+    pop ds
+    push cs
+    pop es
+
+    mov ax, word ptr [first_mcb]
+    mov word ptr [dos_sysvars], ax
+    mov ax, cs
+    mov word ptr [dos_sysvars + 6], ax
+    mov word ptr [dos_sysvars + 0x0A], ax
+    mov word ptr [dos_sysvars + 0x0E], ax
+    mov word ptr [dos_sysvars + 0x18], ax
+    mov ax, word ptr [max_handles]
+    mov word ptr [dos_sft_header + 4], ax
+    mov ax, word ptr [cfg_buffers]
+    /* leave buffer ptr 0; expose count via unused pad if needed */
+    mov al, byte ptr [num_drives]
+    mov byte ptr [dos_sysvars + 0x20], al
+    mov al, CDS_COUNT
+    cmp al, byte ptr [num_drives]
+    jae .svr_ld
+    mov al, byte ptr [num_drives]
+.svr_ld:
+    mov byte ptr [dos_sysvars + 0x21], al
+    mov al, byte ptr [cur_drive]
+    mov byte ptr [dos_sysvars + 0x22], al
+
+    /* CDS[i] = "X:\" + NUL for i < num_drives; clear flags */
+    xor bx, bx
+.svr_cds:
+    cmp bx, CDS_COUNT
+    jae .svr_done
+    mov ax, bx
+    mov cl, CDS_ENTRY_SIZE
+    mul cl
+    lea di, [dos_cds]
+    add di, ax
+    mov cx, CDS_ENTRY_SIZE
+    xor al, al
+    rep stosb
+    mov ax, bx
+    mov cl, CDS_ENTRY_SIZE
+    mul cl
+    lea di, [dos_cds]
+    add di, ax
+    cmp bl, byte ptr [num_drives]
+    jae .svr_cds_next
+    mov al, bl
+    add al, 'A'
+    mov byte ptr [di], al
+    mov byte ptr [di + 1], ':'
+    mov byte ptr [di + 2], '\\'
+    mov byte ptr [di + 3], 0
+    mov word ptr [di + 0x43], 0x4000  /* physical drive present */
+    lea ax, [dos_dpb]
+    mov word ptr [di + 0x45], ax
+    mov word ptr [di + 0x47], cs
+.svr_cds_next:
+    inc bx
+    jmp .svr_cds
+.svr_done:
+    pop ds
+    pop es
+    pop di
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
 
 /* AH=59h — get extended error info */
 dos_ah59:
@@ -997,6 +1135,7 @@ int21_iret:
     mov bp, sp
     and word ptr [bp + 6], 0xFFFE
     pop bp
+    dec byte ptr cs:[dos_indos]
     iret
 
 int21_iret_cf:
@@ -1005,6 +1144,7 @@ int21_iret_cf:
     mov bp, sp
     or word ptr [bp + 6], 0x0001
     pop bp
+    dec byte ptr cs:[dos_indos]
     iret
 
 /*

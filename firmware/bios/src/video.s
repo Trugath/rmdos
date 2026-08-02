@@ -139,6 +139,8 @@ int10_handler:
     je .i10_set_cursor
     cmp ah, 0x03
     je .i10_get_cursor
+    cmp ah, 0x04
+    je .i10_read_light_pen
     cmp ah, 0x05
     je .i10_set_page
     cmp ah, 0x06
@@ -244,6 +246,11 @@ int10_handler:
     mov dx, [BDA_CURSOR_POS + bx]
     mov cx, [BDA_CURSOR_TYPE]
     pop ds
+    iret
+
+/* AH=04h — read light pen; AH=0 means not triggered / absent */
+.i10_read_light_pen:
+    xor ah, ah
     iret
 
 .i10_set_page:
@@ -561,8 +568,8 @@ int10_handler:
 
 /*
  * AH=13h write string: ES:BP = text, CX = length, DH/DL = row/col,
- * BH = page, BL = attribute. AL bit0 = update cursor after write.
- * AL=2/3 (embedded attributes) treated like AL=0/1 (attrs ignored).
+ * BH = page, BL = attribute (AL=0/1). AL bit0 = update cursor after write.
+ * AL=2/3: ES:BP is char+attr pairs (CX = pair count); BL unused.
  */
 .i10_write_string:
     push ds
@@ -577,7 +584,7 @@ int10_handler:
 
     mov si, bp                   /* ES:SI = string */
     mov bp, ax
-    and bp, 1                    /* BP = update-cursor flag */
+    and bp, 3                    /* bit0=update cursor, bit1=char+attr pairs */
 
     mov ax, BDA_SEG
     mov ds, ax
@@ -600,8 +607,14 @@ int10_handler:
     pop ds                       /* DS:SI = string */
 
 .i10_ws_loop:
+    test bp, 2
+    jnz .i10_ws_pair
     lodsb
     mov ah, bl
+    jmp .i10_ws_store
+.i10_ws_pair:
+    lodsw                        /* AL=char AH=attr */
+.i10_ws_store:
     stosw                        /* ES:DI char+attr; DI += 2 */
     loop .i10_ws_loop
 
@@ -614,7 +627,7 @@ int10_handler:
     shl di, 1
 
     pop dx                       /* prior cursor */
-    test bp, bp
+    test bp, 1
     jz .i10_ws_restore
 
     /* Cursor after last character (wrap columns). */

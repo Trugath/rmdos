@@ -36,7 +36,7 @@ isr_08:
     mov al, 0x0C
     mov dx, PORT_FDC_DOR
     out dx, al
-    and byte ptr [BDA_FLOPPY_MOTOR], 0xF0
+    and byte ptr [BDA_FLOPPY_MOTOR], 0x0F
 .t08_eoi:
     mov al, 0x20
     out PORT_PIC_CMD, al

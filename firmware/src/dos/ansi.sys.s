@@ -87,6 +87,9 @@ ansi_interrupt:
     mov word ptr es:[bx + 3], ax
     jmp .ai_done
 .ai_in:
+    /* Remap uses local INT 16; otherwise forward to next CON */
+    cmp byte ptr cs:[ansi_map_en], 0
+    jne .ai_in_loc
     cmp word ptr [ansi_next_seg], 0xFFFF
     je .ai_in_loc
     call ansi_forward
@@ -99,6 +102,12 @@ ansi_interrupt:
 .ai_in_lp:
     mov ah, 0x00
     int 0x16
+    cmp byte ptr cs:[ansi_map_en], 0
+    je .ai_in_store
+    cmp ah, byte ptr cs:[ansi_map_sc]
+    jne .ai_in_store
+    mov al, byte ptr cs:[ansi_map_ch]
+.ai_in_store:
     mov [si], al
     inc si
     loop .ai_in_lp
@@ -302,7 +311,16 @@ ansi_csi_cmd:
     je .acc_ret
     cmp al, 'l'
     je .acc_ret
+    cmp al, 'p'
+    je .acc_key
 .acc_ret:
+    ret
+
+/* Tiny key remap: CSI ... p enables F1 (sc 0x3B) → '!' */
+.acc_key:
+    mov byte ptr cs:[ansi_map_en], 1
+    mov byte ptr cs:[ansi_map_sc], 0x3B
+    mov byte ptr cs:[ansi_map_ch], '!'
     ret
 
 .acc_cup:
@@ -668,6 +686,12 @@ ansi_save_row:
 ansi_save_col:
     .byte 0
 ansi_emit_ch:
+    .byte 0
+ansi_map_en:
+    .byte 0
+ansi_map_sc:
+    .byte 0
+ansi_map_ch:
     .byte 0
 
 ansi_image_end:

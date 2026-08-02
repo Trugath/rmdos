@@ -46,6 +46,12 @@ _start:
     cmp byte ptr es:[bx], 'V'
     jne .fail_tty
 
+    /* AH=04 light pen: AH=0 when absent / not triggered */
+    mov ah, 0x04
+    int 0x10
+    cmp ah, 0
+    jne .fail_pen
+
     push cs
     pop ds
     mov si, offset name
@@ -71,6 +77,11 @@ _start:
     pop ds
     mov si, offset msg_tty
     call fail_and_halt
+.fail_pen:
+    push cs
+    pop ds
+    mov si, offset msg_pen
+    call fail_and_halt
 
 name:
     .asciz "bt_video"
@@ -82,5 +93,7 @@ msg_cursor:
     .asciz "bt_video:cursor"
 msg_tty:
     .asciz "bt_video:tty"
+msg_pen:
+    .asciz "bt_video:pen"
 
 .include "firmware/bios/tests/boot/common.inc"

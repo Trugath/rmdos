@@ -3,6 +3,9 @@
 .section .text
 .global _start
 
+.equ CDS_ENTRY_SIZE, 81
+.equ CDS_COUNT, 8
+
 /*
  * rmDOS KERNEL.SYS — INT 21h + writable FAT12/FAT16 + tools.
  * Boot leaves DL = drive; entered at 0070:0000.
@@ -358,12 +361,39 @@ first_mcb:
     .word 0
 mem_top:
     .word 0
-/* Minimal DOS list-of-lists (AH=52). Offset 0 = first MCB segment. */
+/*
+ * DOS list of lists (AH=52). +00 is first MCB segment (rmDOS/MEM.COM
+ * convention). Remaining fields follow DOS 3.1+ layout so walkers find
+ * SFT/CDS/CON pointers.
+ */
 dos_sysvars:
-    .word 0                      /* +00 first MCB */
-    .space 14, 0                 /* +02 .. +0F stubs */
-    .byte 0                      /* +10 boot drive (0=A) */
-    .space 15, 0
+    .word 0                      /* +00 first MCB segment */
+    .word 0                      /* +02 pad */
+    .word offset dos_sft_header  /* +04 SFT off */
+    .word 0                      /* +06 SFT seg (CS) */
+    .word offset dev_con_hdr     /* +08 CLOCK → CON */
+    .word 0                      /* +0A */
+    .word offset dev_con_hdr     /* +0C CON */
+    .word 0                      /* +0E */
+    .word 512                    /* +10 max sector size */
+    .word 0                      /* +12 buffer off */
+    .word 0                      /* +14 buffer seg */
+    .word offset dos_cds         /* +16 CDS off */
+    .word 0                      /* +18 CDS seg */
+    .word 0                      /* +1A FCB SFT */
+    .word 0
+    .word 0                      /* +1E protected FCBs */
+    .byte 0                      /* +20 block devices */
+    .byte 8                      /* +21 LASTDRIVE / CDS count */
+    .byte 0                      /* +22 boot drive 0=A */
+
+dos_sft_header:
+    .word 0xFFFF
+    .word 0xFFFF
+    .word 20
+
+dos_cds:
+    .space (CDS_COUNT * CDS_ENTRY_SIZE), 0
 
 msg_banner:
     .ascii "rmDOS 0.8\r\n$"
@@ -460,6 +490,8 @@ fcb_saved_dta_seg:
 fcb_saved_dta_off:
     .word 0
 fcb_parse_wild:
+    .byte 0
+fcb_ext_flag:
     .byte 0
 fcb_find_dta:
     .space 128, 0

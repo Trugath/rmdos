@@ -104,7 +104,7 @@ def test_chkdsk_fix_orphan_and_mirror() -> None:
     fat12.patch_root_file(
         raw,
         "AUTOEXEC.BAT",
-        b"BIN\\CHKDSK /F\r\nBIN\\CHKDSK\r\nECHO DISK FIX OK\r\n",
+        b"BIN\\LABEL RMDOS\r\nBIN\\CHKDSK /F\r\nBIN\\CHKDSK\r\nECHO DISK FIX OK\r\n",
     )
     image.write_bytes(raw)
     try:

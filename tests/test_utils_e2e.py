@@ -26,6 +26,9 @@ MARKERS = (
     "DEBUG G OK",
     "DEBUG OK",
     "MODE OK",
+    "CON cols=",
+    "LPT1:=COM1 ok",
+    "COPYV OK",
     "UTILS2 OK",
 )
 

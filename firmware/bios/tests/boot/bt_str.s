@@ -3,7 +3,7 @@
 .section .text
 .global _start
 
-/* INT 10h AH=13 write string */
+/* INT 10h AH=13 write string AL=0/1 and AL=2/3 */
 
 _start:
     cli
@@ -16,7 +16,6 @@ _start:
     mov ax, 0x0003
     int 0x10
 
-    /* Place cursor elsewhere; AL=0 must leave it */
     mov ah, 0x02
     xor bh, bh
     mov dx, 0x0100
@@ -26,30 +25,25 @@ _start:
     pop es
     lea bp, [msg]
     mov cx, 3
-    mov dx, 0x050A              /* row 5, col 10 */
-    mov bx, 0x001F              /* page 0, attr 1F */
-    mov ax, 0x1300              /* AL=0 no cursor update */
+    mov dx, 0x050A
+    mov bx, 0x001F
+    mov ax, 0x1300
     int 0x10
 
     mov ah, 0x03
     xor bh, bh
     int 0x10
     cmp dx, 0x0100
-    jne .fail_cur
+    jne .fail
 
     mov ax, 0xB800
     mov es, ax
     mov bx, (5 * 80 + 10) * 2
-    cmp byte ptr es:[bx], 'S'
-    jne .fail_ch
+    cmp word ptr es:[bx], 0x1F53        /* 'S' + attr 1F */
+    jne .fail
     cmp byte ptr es:[bx + 2], 'T'
-    jne .fail_ch
-    cmp byte ptr es:[bx + 4], 'R'
-    jne .fail_ch
-    cmp byte ptr es:[bx + 1], 0x1F
-    jne .fail_ch
+    jne .fail
 
-    /* AL=1 updates cursor past the string */
     push cs
     pop es
     lea bp, [msg]
@@ -62,38 +56,65 @@ _start:
     xor bh, bh
     int 0x10
     cmp dx, 0x0603
-    jne .fail_upd
+    jne .fail
+
+    /* AL=2 char+attr pairs */
+    mov ah, 0x02
+    xor bh, bh
+    mov dx, 0x0200
+    int 0x10
+    push cs
+    pop es
+    lea bp, [msg_pair]
+    mov cx, 2
+    mov dx, 0x0705
+    xor bx, bx
+    mov ax, 0x1302
+    int 0x10
+    mov ah, 0x03
+    xor bh, bh
+    int 0x10
+    cmp dx, 0x0200
+    jne .fail
+    mov ax, 0xB800
+    mov es, ax
+    mov bx, (7 * 80 + 5) * 2
+    cmp word ptr es:[bx], 0x2E50        /* 'P', 0x2E */
+    jne .fail
+    cmp word ptr es:[bx + 2], 0x4F51    /* 'Q', 0x4F */
+    jne .fail
+
+    /* AL=3 updates cursor */
+    push cs
+    pop es
+    lea bp, [msg_pair]
+    mov cx, 2
+    mov dx, 0x0800
+    xor bx, bx
+    mov ax, 0x1303
+    int 0x10
+    mov ah, 0x03
+    xor bh, bh
+    int 0x10
+    cmp dx, 0x0802
+    jne .fail
 
     push cs
     pop ds
     mov si, offset name
     call pass_and_halt
 
-.fail_cur:
+.fail:
     push cs
     pop ds
-    mov si, offset msg_cur
-    call fail_and_halt
-.fail_ch:
-    push cs
-    pop ds
-    mov si, offset msg_ch
-    call fail_and_halt
-.fail_upd:
-    push cs
-    pop ds
-    mov si, offset msg_upd
+    mov si, offset name
     call fail_and_halt
 
 name:
     .asciz "bt_str"
 msg:
     .ascii "STR"
-msg_cur:
-    .asciz "bt_str:cur"
-msg_ch:
-    .asciz "bt_str:ch"
-msg_upd:
-    .asciz "bt_str:upd"
+msg_pair:
+    .byte 'P', 0x2E, 'Q', 0x4F
 
 .include "firmware/bios/tests/boot/common.inc"

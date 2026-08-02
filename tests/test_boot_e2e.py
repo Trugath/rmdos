@@ -30,6 +30,31 @@ def test_fat12_image_layout() -> None:
     lba, sectors = fat12.read_loader_info(raw)
     assert lba == fat12.cluster_to_sector(entry.start_cluster)
     assert sectors == fat12.sectors_for_size(entry.size_bytes)
+    # BIN may span multiple clusters; entries must appear before the first 0x00
+    # end mark with no premature end in an earlier cluster of the chain.
+    bin_ent = fat12.find_directory_entry(raw, "BIN")
+    assert bin_ent.attributes & 0x10, "BIN must be a directory"
+    fat = fat12.read_fat(bytearray(raw))
+    chain = fat12.cluster_chain(fat, bin_ent.start_cluster)
+    assert len(chain) >= 1
+    saw_end = False
+    entry_count = 0
+    for ci, clus in enumerate(chain):
+        base = fat12.cluster_to_sector(clus) * fat12.SECTOR_SIZE
+        for i in range(16):
+            ent = raw[base + i * 32 : base + i * 32 + 32]
+            if ent[0] == 0:
+                saw_end = True
+                break
+            if ent[0] == 0xE5:
+                continue
+            assert not saw_end, f"BIN entry after end mark at cluster index {ci}"
+            entry_count += 1
+        else:
+            continue
+        break
+    assert saw_end, "BIN directory missing end mark"
+    assert entry_count >= 16, f"BIN too sparse ({entry_count} entries)"
     for name in (
         "COMMAND.COM",
         "INSTALL.BAT",

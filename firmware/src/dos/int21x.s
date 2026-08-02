@@ -146,6 +146,38 @@ _start:
     cmp al, 0
     jne fail_fcb
 
+    /* Extended FCB find: attr 0x10 include directories, pattern *.* */
+    lea di, [extfcb]
+    mov cx, 48
+    xor al, al
+    rep stosb
+    mov byte ptr [extfcb], 0xFF
+    mov byte ptr [extfcb + 6], 0x10
+    lea di, [extfcb + 8]
+    mov cx, 11
+    mov al, '?'
+    rep stosb
+    mov ah, 0x1A
+    lea dx, [dta]
+    int 0x21
+    mov ah, 0x11
+    lea dx, [extfcb]
+    int 0x21
+    cmp al, 0
+    jne fail_fcb
+    cmp byte ptr [dta], 0xFF
+    jne fail_fcb
+
+    /* AH=65 AL=01 extended country info */
+    push es
+    push cs
+    pop es
+    lea di, [country_buf]
+    mov ax, 0x6501
+    int 0x21
+    pop es
+    jc fail_fcb
+
     mov ah, 0x09
     lea dx, [msg_fcb]
     int 0x21
@@ -298,6 +330,23 @@ _start:
     jnz .psp_c6
     jmp fail_psp
 .psp_c6:
+    /* SFT pointer at +04 and CDS at +16 must be nonzero offs */
+    mov ax, es:[bx + 4]
+    test ax, ax
+    jnz .psp_c7
+    jmp fail_psp
+.psp_c7:
+    mov ax, es:[bx + 0x16]
+    test ax, ax
+    jnz .psp_c8
+    jmp fail_psp
+.psp_c8:
+    mov ah, 0x19
+    int 0x21
+    cmp al, byte ptr es:[bx + 0x22]
+    je .psp_c9
+    jmp fail_psp
+.psp_c9:
 
     mov ah, 0x09
     lea dx, [msg_psp]
@@ -314,6 +363,62 @@ _start:
     je .t_ioctl_al
     jmp fail_ioctl
 .t_ioctl_al:
+
+    /* AL=03 char-device control write to CON (handle 1) */
+    mov ax, 0x4403
+    mov bx, 1
+    mov cx, 1
+    lea dx, [ioctl_ch]
+    int 0x21
+    jnc .t_ioctl03
+    jmp fail_ioctl
+.t_ioctl03:
+    cmp ax, 1
+    je .t_ioctl03b
+    jmp fail_ioctl
+.t_ioctl03b:
+
+    /* AL=04/05 char IOCTL stub success on CON */
+    mov ax, 0x4404
+    mov bx, 1
+    int 0x21
+    jnc .t_ioctl04
+    jmp fail_ioctl
+.t_ioctl04:
+    test ax, ax
+    jz .t_ioctl04z
+    jmp fail_ioctl
+.t_ioctl04z:
+    mov ax, 0x4405
+    mov bx, 1
+    int 0x21
+    jnc .t_ioctl05
+    jmp fail_ioctl
+.t_ioctl05:
+    test ax, ax
+    jz .t_ioctl05z
+    jmp fail_ioctl
+.t_ioctl05z:
+
+    /* AL=02 char read from NUL */
+    mov ax, 0x3D00
+    lea dx, [nul_name]
+    int 0x21
+    jnc .t_nul
+    jmp fail_ioctl
+.t_nul:
+    mov bx, ax
+    mov ax, 0x4402
+    mov cx, 1
+    lea dx, [ioctl_ch]
+    int 0x21
+    pushf
+    mov ah, 0x3E
+    int 0x21
+    popf
+    jnc .t_ioctl02
+    jmp fail_ioctl
+.t_ioctl02:
 
     mov ax, 0x1000
     int 0x2F
@@ -398,6 +503,23 @@ _start:
     int 0x21
     jmp fail_exit
 .x_dpb2:
+    /* Device header far ptr at DPB +13/+15 must be nonzero */
+    cmp word ptr ds:[bx + 0x13], 0
+    jne .x_dpb_off
+    pop ds
+    mov ah, 0x09
+    lea dx, [msg_xf3]
+    int 0x21
+    jmp fail_exit
+.x_dpb_off:
+    cmp word ptr ds:[bx + 0x15], 0
+    jne .x_dpb_seg
+    pop ds
+    mov ah, 0x09
+    lea dx, [msg_xf3]
+    int 0x21
+    jmp fail_exit
+.x_dpb_seg:
     pop ds
 
     mov ax, 0x5801
@@ -424,6 +546,45 @@ _start:
     int 0x21
     jmp fail_exit
 .x_strat:
+    /* best-fit alloc while strategy=1 */
+    mov bx, 1
+    mov ah, 0x48
+    int 0x21
+    jc .x_bf_fail
+    mov es, ax
+    mov ah, 0x49
+    int 0x21
+    jmp .x_bf_ok
+.x_bf_fail:
+    mov ah, 0x09
+    lea dx, [msg_xf4]
+    int 0x21
+    jmp fail_exit
+.x_bf_ok:
+    /* last-fit alloc while strategy=2 */
+    mov ax, 0x5801
+    mov bx, 2
+    int 0x21
+    jnc .x_lf1
+    mov ah, 0x09
+    lea dx, [msg_xf4]
+    int 0x21
+    jmp fail_exit
+.x_lf1:
+    mov bx, 1
+    mov ah, 0x48
+    int 0x21
+    jc .x_lf_fail
+    mov es, ax
+    mov ah, 0x49
+    int 0x21
+    jmp .x_lf_ok
+.x_lf_fail:
+    mov ah, 0x09
+    lea dx, [msg_xf4]
+    int 0x21
+    jmp fail_exit
+.x_lf_ok:
     mov ax, 0x5801
     xor bx, bx
     int 0x21
@@ -439,6 +600,7 @@ _start:
     jmp fail_exit
 .x_cr:
     mov bx, ax
+    mov word ptr [xtra_h], ax
     mov ah, 0x68
     int 0x21
     jnc .x_cm
@@ -447,7 +609,53 @@ _start:
     int 0x21
     jmp fail_exit
 .x_cm:
+    /* AH=57 get/set file datetime */
+    mov bx, word ptr [xtra_h]
+    mov ax, 0x5700
+    int 0x21
+    jnc .x_dt
+    mov ah, 0x09
+    lea dx, [msg_xf5]
+    int 0x21
+    jmp fail_exit
+.x_dt:
+    mov bx, word ptr [xtra_h]
+    mov ax, 0x5701
+    int 0x21
+    jnc .x_dt2
+    mov ah, 0x09
+    lea dx, [msg_xf5]
+    int 0x21
+    jmp fail_exit
+.x_dt2:
+    /* AH=45 dup then AH=46 force-dup onto the dup handle */
+    mov bx, word ptr [xtra_h]
+    mov ah, 0x45
+    int 0x21
+    jnc .x_dup
+    mov ah, 0x09
+    lea dx, [msg_xf5]
+    int 0x21
+    jmp fail_exit
+.x_dup:
+    mov cx, ax
+    mov bx, word ptr [xtra_h]
+    mov ah, 0x46
+    int 0x21
+    jnc .x_fdup
     mov ah, 0x3E
+    mov bx, cx
+    int 0x21
+    mov ah, 0x09
+    lea dx, [msg_xf5]
+    int 0x21
+    jmp fail_exit
+.x_fdup:
+    mov ah, 0x3E
+    mov bx, cx
+    int 0x21
+    mov ah, 0x3E
+    mov bx, word ptr [xtra_h]
     int 0x21
 
     /* ES may still be kernel from AH=34 — restore before stosb */
@@ -630,6 +838,30 @@ _start:
     int 0x21
     jmp fail_exit
 .x_1c_ok:
+
+    /* INT 25h absolute read boot sector — expect 55 AA */
+    push ds
+    push cs
+    pop ds
+    lea bx, [absbuf]
+    mov al, 0
+    mov cx, 1
+    xor dx, dx
+    int 0x25
+    pop ax
+    sti
+    jc .x_25f
+    cmp word ptr [absbuf + 510], 0xAA55
+    jne .x_25f
+    pop ds
+    jmp .x_25_ok
+.x_25f:
+    pop ds
+    mov ah, 0x09
+    lea dx, [msg_xfc]
+    int 0x21
+    jmp fail_exit
+.x_25_ok:
 
     /* AH=26 Create New PSP */
     mov ah, 0x51
@@ -948,10 +1180,16 @@ msg_xfa:
     .ascii "XFA\r\n$"
 msg_xfb:
     .ascii "XFB\r\n$"
+msg_xfc:
+    .ascii "XFC\r\n$"
 nosuch:
     .asciz "NOSUCH.XYZ"
 xtra_name:
     .asciz "XTRA.TMP"
+nul_name:
+    .asciz "NUL"
+xtra_h:
+    .word 0
 relname:
     .asciz "FOO.TXT"
 plain_tmp:
@@ -966,6 +1204,8 @@ newfcb_name:
     .asciz "NEWFCB.DAT"
 fcb:
     .space 64, 0
+extfcb:
+    .space 48, 0
 dta:
     .space 128, 0
 tmpbuf:
@@ -974,6 +1214,8 @@ truebuf:
     .space 64, 0
 country_buf:
     .space 40, 0
+absbuf:
+    .space 512, 0
 exec1_path:
     .asciz "A:\\BIN\\MORE.COM"
 exec1_tail:
@@ -989,6 +1231,8 @@ exec1_epb:
     .word 0, 0, 0, 0             /* SP SS IP CS */
 auxprn_ch:
     .byte '!'
+ioctl_ch:
+    .byte '.'
 brk23_flag:
     .byte 0
 saved_i23_off:

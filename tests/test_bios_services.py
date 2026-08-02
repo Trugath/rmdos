@@ -18,10 +18,10 @@ SERIAL_DIR = BIOS_TESTS / "serial"
 
 # These tests write the floppy image; run from a temp copy so the pristine
 # build artifact (especially the boot sector) is not persisted-over.
-DESTRUCTIVE_DISK_TESTS = frozenset({"bt_fdc_rw", "bt_fdc_fmt", "bt_hd_rw"})
+DESTRUCTIVE_DISK_TESTS = frozenset({"bt_fdc_rw", "bt_fdc_fmt", "bt_hd_rw", "bt_hd_verify"})
 
 # Attach a blank XT ~10MB HD so C800 Fixed Disk ROM is exercised (DL=80).
-HD_BIOS_TESTS = frozenset({"bt_hd_params", "bt_hd_rw"})
+HD_BIOS_TESTS = frozenset({"bt_hd_params", "bt_hd_rw", "bt_hd_verify", "bt_int13_err"})
 HD_SIZE = 306 * 4 * 17 * 512
 
 TESTS = [
@@ -69,6 +69,13 @@ TESTS = [
     "bt_chgline",
     "bt_str",
     "bt_cfg",
+    "bt_readchar",
+    "bt_writech",
+    "bt_kbd_read",
+    "bt_int13_err",
+    "bt_hd_verify",
+    "bt_motor",
+    "bt_timer_of",
 ]
 
 
