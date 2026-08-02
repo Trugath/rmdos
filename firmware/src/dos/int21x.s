@@ -177,12 +177,15 @@ _start:
     int 0x21
     pop es
     jc fail_fcb
-    cmp word ptr [country_buf + 21], 0
+    /* Extended header: ID=1, country at +3, case-map at +07+21=+28 */
+    cmp byte ptr [country_buf], 1
+    jne fail_fcb
+    cmp word ptr [country_buf + 28], 0
     je fail_fcb
-    cmp word ptr [country_buf + 23], 0
+    cmp word ptr [country_buf + 30], 0
     je fail_fcb
     mov al, 'q'
-    call dword ptr [country_buf + 21]
+    call dword ptr [country_buf + 28]
     cmp al, 'q'
     jne fail_fcb
 
@@ -443,6 +446,10 @@ _start:
     int 0x21
 
     /* --- IOCTL 06 + INT 2F SHARE/APPEND --- */
+    /* Stuff a key so CON input status is ready, then AH=4406 → AL=FFh. */
+    mov cx, 0x1E41
+    mov ah, 0x05
+    int 0x16
     mov ax, 0x4406
     xor bx, bx
     int 0x21
@@ -453,6 +460,9 @@ _start:
     je .t_ioctl_al
     jmp fail_ioctl
 .t_ioctl_al:
+    /* Drain the stuffed key */
+    mov ah, 0x00
+    int 0x16
 
     /* AL=03 char-device control write to CON (handle 1) */
     mov ax, 0x4403
@@ -1381,14 +1391,19 @@ _start:
     cmp ax, 1
     jne .x_stub_fail
 
-    /* AH=65h only supports AL=01 extended country information. */
+    /* AH=65h AL=02 uppercase table ptr; AL=03 still unsupported */
     mov ax, 0x6502
+    int 0x21
+    jc .x_stub_fail
+    test dx, dx
+    jz .x_stub_fail
+    mov ax, 0x6503
     int 0x21
     jnc .x_stub_fail
     cmp ax, 1
     jne .x_stub_fail
 
-    /* VERIFY flag-only: set ON then get */
+    /* VERIFY: set ON then get */
     mov ax, 0x2E01
     int 0x21
     mov ah, 0x54
@@ -1398,18 +1413,61 @@ _start:
     mov ax, 0x2E00
     int 0x21
 
-    /* AH=66h unsupported — CF or unchanged AX path */
+    /* AH=66h get/set code page */
     mov ax, 0x6601
     int 0x21
-    jnc .x_stub_fail
+    jc .x_stub_fail
+    cmp bx, 437
+    jne .x_stub_fail
+    mov bx, 850
+    mov ax, 0x6602
+    int 0x21
+    jc .x_stub_fail
+    mov ax, 0x6601
+    int 0x21
+    jc .x_stub_fail
+    cmp bx, 850
+    jne .x_stub_fail
+    mov bx, 437
+    mov ax, 0x6602
+    int 0x21
 
-    /* BUFFERS= is parsed, but rmDOS exposes no DOS buffer-chain pointer. */
+    /* BUFFERS= exposes a non-null LoL buffer-chain pointer */
     mov ah, 0x52
     int 0x21
     cmp word ptr es:[bx + 0x12], 0
-    jne .x_stub_fail
+    je .x_stub_fail
     cmp word ptr es:[bx + 0x14], 0
-    jne .x_stub_fail
+    je .x_stub_fail
+    /* Walk first buffer header next-link is either next or FFFF */
+    push ds
+    push si
+    mov si, es:[bx + 0x12]
+    mov ax, es:[bx + 0x14]
+    mov ds, ax
+    cmp word ptr [si + 2], 0xFFFF
+    je .x_buf_term
+    cmp word ptr [si + 2], 0
+    je .x_stub_fail_buf
+.x_buf_term:
+    pop si
+    pop ds
+    /* SFT table has entries after header */
+    mov si, es:[bx + 4]
+    mov ax, es:[bx + 6]
+    push ds
+    mov ds, ax
+    cmp word ptr [si + 4], 5
+    jb .x_stub_fail_buf
+    /* Std handle 0 CON refcount */
+    cmp word ptr [si + 6], 1
+    jb .x_stub_fail_buf
+    pop ds
+    jmp .x_stub_lol_ok
+.x_stub_fail_buf:
+    pop ds
+    jmp .x_stub_fail
+.x_stub_lol_ok:
     /* LoL LASTDRIVE byte (default images keep 8) */
     mov al, es:[bx + 0x21]
     cmp al, 8

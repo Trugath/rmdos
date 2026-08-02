@@ -6,6 +6,11 @@
 .equ CDS_ENTRY_SIZE, 81
 .equ CDS_COUNT, 16
 .equ DPB_SIZE, 0x21
+/* Classic SFTE / LoL buffer header sizes (used by files.inc / int21.inc). */
+.equ SFT_ENTRY_SIZE, 0x35
+.equ SFT_TABLE_CAP, 64
+.equ DOS_BUF_HDR_SIZE, 16
+.equ DOS_BUF_CAP, 99
 
 /*
  * rmDOS KERNEL.SYS — INT 21h + writable FAT12/FAT16 + tools.
@@ -118,6 +123,7 @@ _start:
     call dos_process_config
     call handles_apply_files
     call dos_rebuild_drivemap
+    call dos_sysvars_refresh
 
     /* Drop into the shell (path_command may be set by SHELL=) */
     lea dx, [path_command]
@@ -275,6 +281,10 @@ dos_dpb:
     .space (CDS_COUNT * DPB_SIZE), 0
 dos_country_id:
     .word 1
+dos_codepage_active:
+    .word 437
+dos_codepage_system:
+    .word 437
 tmp_name_ctr:
     .word 0
 tmp_attrs:
@@ -417,6 +427,16 @@ dos_sft_header:
     .word 0xFFFF
     .word 0xFFFF
     .word 20
+/* Classic SFTE table sized to SFT_TABLE_CAP (see .equ above). */
+dos_sft_table:
+    .space (SFT_TABLE_CAP * SFT_ENTRY_SIZE), 0
+/* 8.3 names cached at open for SFTE +20 (parallel to handles[]). */
+sft_names:
+    .space (SFT_TABLE_CAP * 11), 0x20
+
+/* Minimal DOS buffer-chain headers for LoL walkers (not a full sector cache). */
+dos_buf_table:
+    .space (DOS_BUF_CAP * DOS_BUF_HDR_SIZE), 0
 
 dos_cds:
     .space (CDS_COUNT * CDS_ENTRY_SIZE), 0

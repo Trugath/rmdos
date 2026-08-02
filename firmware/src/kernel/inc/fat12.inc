@@ -276,7 +276,7 @@ fat12_write_lba:
     mov ah, 0x03
     mov al, 0x01
     int 0x13
-    jnc .fwl_ok
+    jnc .fwl_wrote
     push bx
     mov bh, 1                    /* write */
     call invoke_int24_disk
@@ -290,6 +290,16 @@ fat12_write_lba:
     mov al, 0x42
     jmp dos_terminate
 .fwl_fail:
+    stc
+    jmp .fwl_done
+.fwl_wrote:
+    /* VERIFY ON → INT 13h AH=04 with same CHS (BIOS preserves BX/CX/DX/ES). */
+    cmp byte ptr cs:[dos_verify_flag], 0
+    je .fwl_ok
+    mov ah, 0x04
+    mov al, 0x01
+    int 0x13
+    jnc .fwl_ok
     stc
     jmp .fwl_done
 .fwl_ok:

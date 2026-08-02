@@ -334,6 +334,8 @@ int21_handler:
     je dos_ah62
     cmp ah, 0x65
     je dos_ah65
+    cmp ah, 0x66
+    je dos_ah66
     cmp ah, 0x67
     je dos_ah67
     cmp ah, 0x68
@@ -735,7 +737,7 @@ dos_ah2d:
     clc
     jmp int21_iret
 
-/* AH=2Eh — verify write flag AL=0 off / 1 on (flag only; no media re-read) */
+/* AH=2Eh — verify write flag AL=0 off / 1 on (writes re-verify via INT 13 AH=04) */
 dos_ah2e:
     mov byte ptr cs:[dos_verify_flag], al
     xor al, al
@@ -1123,18 +1125,30 @@ dos_ah51:
 dos_ah62:
     jmp dos_ah51
 
-/* AH=65h — get extended country info; AL=01 → ES:DI buffer from country_info */
+/* AH=65h — get extended country info; AL=01 → ES:DI extended + country_info */
 dos_ah65:
     cmp al, 1
     je .a65_get
+    cmp al, 2
+    je .a65_ucase
     mov ax, 1
     stc
     jmp int21_iret_cf
 .a65_get:
+    push ax
+    push bx
     push cx
     push si
     push di
     push ds
+    /* Extended header */
+    mov byte ptr es:[di], 1
+    mov word ptr es:[di + 1], 34
+    mov ax, word ptr cs:[dos_country_id]
+    mov word ptr es:[di + 3], ax
+    mov ax, word ptr cs:[dos_codepage_active]
+    mov word ptr es:[di + 5], ax
+    add di, 7
     push cs
     pop ds
     lea si, [country_info]
@@ -1144,6 +1158,38 @@ dos_ah65:
     pop di
     pop si
     pop cx
+    pop bx
+    pop ax
+    xor ax, ax
+    clc
+    jmp int21_iret
+.a65_ucase:
+    /* AL=02 — return far pointer to uppercase/case-map table in DX:BX */
+    lea bx, [country_case_map]
+    push cs
+    pop dx
+    xor ax, ax
+    clc
+    jmp int21_iret
+
+/* AH=66h — get/set global code page (DOS 3.3-ish). */
+dos_ah66:
+    cmp al, 1
+    je .a66_get
+    cmp al, 2
+    je .a66_set
+    mov ax, 1
+    stc
+    jmp int21_iret_cf
+.a66_get:
+    mov bx, word ptr cs:[dos_codepage_active]
+    mov dx, word ptr cs:[dos_codepage_system]
+    xor ax, ax
+    clc
+    jmp int21_iret
+.a66_set:
+    mov word ptr cs:[dos_codepage_active], bx
+    mov word ptr cs:[dos_codepage_system], bx
     xor ax, ax
     clc
     jmp int21_iret
@@ -1193,8 +1239,8 @@ dos_sysvars_refresh:
     mov word ptr [dos_sysvars + 0x18], ax
     mov ax, word ptr [max_handles]
     mov word ptr [dos_sft_header + 4], ax
-    mov ax, word ptr [cfg_buffers]
-    /* leave buffer ptr 0; expose count via unused pad if needed */
+    call sft_refresh_table
+    call dos_buffers_refresh
     mov al, byte ptr [num_drives]
     mov byte ptr [dos_sysvars + 0x20], al
     mov al, byte ptr [cfg_lastdrive]
@@ -1280,6 +1326,78 @@ dos_sysvars_refresh:
     mov byte ptr [dos_sysvars + 0x21], al
     pop ds
     pop es
+    pop di
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+/*
+ * Link cfg_buffers DOS buffer headers and point LoL +12 at the first.
+ * Headers are free sentinels (drive=FFh); FAT I/O stays on the windowed cache.
+ */
+dos_buffers_refresh:
+    push ax
+    push bx
+    push cx
+    push dx
+    push si
+    push di
+    push ds
+    push cs
+    pop ds
+
+    mov cx, word ptr [cfg_buffers]
+    cmp cx, 1
+    jae .db_lo
+    mov cx, 1
+.db_lo:
+    cmp cx, DOS_BUF_CAP
+    jbe .db_hi
+    mov cx, DOS_BUF_CAP
+.db_hi:
+    lea di, [dos_buf_table]
+    mov word ptr [dos_sysvars + 0x12], di
+    mov word ptr [dos_sysvars + 0x14], cs
+    xor bx, bx
+.db_loop:
+    cmp bx, cx
+    jae .db_done
+    mov ax, bx
+    mov dl, DOS_BUF_HDR_SIZE
+    mul dl
+    lea di, [dos_buf_table]
+    add di, ax
+    /* clear */
+    push cx
+    push di
+    mov cx, DOS_BUF_HDR_SIZE
+    xor al, al
+    rep stosb
+    pop di
+    pop cx
+    mov byte ptr [di + 4], 0xFF  /* free */
+    mov ax, bx
+    inc ax
+    cmp ax, cx
+    jae .db_term
+    mov dl, DOS_BUF_HDR_SIZE
+    mul dl
+    lea si, [dos_buf_table]
+    add ax, si
+    mov word ptr [di], ax
+    mov word ptr [di + 2], cs
+    jmp .db_next
+.db_term:
+    mov word ptr [di], 0xFFFF
+    mov word ptr [di + 2], 0xFFFF
+.db_next:
+    inc bx
+    jmp .db_loop
+.db_done:
+    pop ds
     pop di
     pop si
     pop dx

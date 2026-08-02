@@ -1,8 +1,9 @@
 /*
  * CONFIG.SYS — parse before COMMAND.COM.
  * Supports INSTALL= (load+run COM), character-device DEVICE= (.SYS), FILES=,
- * BUFFERS=, LASTDRIVE=, BREAK=, and SHELL=. STACKS/FCBS/COUNTRY/DRIVPARM
- * are accepted as advisory no-ops. Missing CONFIG.SYS is success.
+ * BUFFERS=, LASTDRIVE=, BREAK=, and SHELL=. STACKS/FCBS/DRIVPARM are accepted
+ * as advisory no-ops; COUNTRY=nnn[,codepage] updates the country/code-page
+ * ids. Missing CONFIG.SYS is success.
  */
 
 .equ CFG_LINE_MAX, 120
@@ -469,7 +470,7 @@ cfg_match_break:
     pop ax
     ret
 
-/* Accept common compatibility directives without claiming to implement them. */
+/* Accept STACKS=/FCBS=/DRIVPARM= as advisory; COUNTRY= updates country id. */
 cfg_match_advisory:
     push ax
     push di
@@ -491,7 +492,7 @@ cfg_match_advisory:
     call cfg_skip_ws
     lea di, [cfg_kw_country]
     call cfg_strcmp_prefix
-    jnc .cfg_ma_eq
+    jnc .cfg_ma_country
 
     lea si, [cfg_line]
     call cfg_skip_ws
@@ -502,6 +503,29 @@ cfg_match_advisory:
 .cfg_ma_eq:
     cmp byte ptr [si], '='
     jne .cfg_ma_no
+    clc
+    jmp .cfg_ma_done
+
+.cfg_ma_country:
+    cmp byte ptr [si], '='
+    jne .cfg_ma_no
+    inc si
+    call cfg_skip_ws
+    call cfg_parse_u16
+    test ax, ax
+    jz .cfg_ma_eq_ok
+    mov word ptr [dos_country_id], ax
+    /* optional ,codepage */
+    cmp byte ptr [si], ','
+    jne .cfg_ma_eq_ok
+    inc si
+    call cfg_skip_ws
+    call cfg_parse_u16
+    test ax, ax
+    jz .cfg_ma_eq_ok
+    mov word ptr [dos_codepage_active], ax
+    mov word ptr [dos_codepage_system], ax
+.cfg_ma_eq_ok:
     clc
     jmp .cfg_ma_done
 .cfg_ma_no:

@@ -209,6 +209,10 @@ dos_ah3d:
     jmp int21_iret_cf
 
 .a3d_ok:
+    push ax
+    mov bx, ax
+    call sft_name_from_handle
+    pop ax
     call dos_remount_current
     pop bp
     pop es
@@ -501,6 +505,7 @@ dos_ah3c:
     mov ax, word ptr cs:[xfer_cnt]
 .a3c_dev_ok:
     mov bx, ax
+    call sft_name_from_handle
 
     call dos_remount_current
     pop es
@@ -1335,15 +1340,106 @@ dos_ah44:
 
 /* AL=06 — get input status: AL=FF ready / 00 not */
 .a44_instat:
+    push di
+    push es
+    push bx
+    push dx
+    push cs
+    pop es
+    call handle_index
+    jc .a44_io_err
+    mov bl, es:[di]
+    cmp bl, H_CON
+    je .a44_in_con
+    cmp bl, H_AUX
+    je .a44_in_aux
+    cmp bl, H_PRN
+    je .a44_in_prn
+    cmp bl, H_NUL
+    je .a44_in_ready
+    cmp bl, H_FILE
+    je .a44_in_ready
+    jmp .a44_io_err
+.a44_in_con:
+    mov ah, 0x01
+    int 0x16
+    mov al, 0x00
+    jz .a44_io_done
     mov al, 0xFF
+    jmp .a44_io_done
+.a44_in_aux:
+    xor dx, dx
+    mov ah, 0x03
+    int 0x14
+    test ah, 0x01                  /* data ready */
+    mov al, 0x00
+    jz .a44_io_done
+    mov al, 0xFF
+    jmp .a44_io_done
+.a44_in_prn:
+    xor al, al                     /* PRN is write-only */
+    jmp .a44_io_done
+.a44_in_ready:
+    mov al, 0xFF
+.a44_io_done:
+    pop dx
+    pop bx
+    pop es
+    pop di
     clc
     jmp int21_iret
+.a44_io_err:
+    pop dx
+    pop bx
+    pop es
+    pop di
+    mov ax, 6
+    stc
+    jmp int21_iret_cf
 
 /* AL=07 — get output status: AL=FF ready / 00 not */
 .a44_outstat:
+    push di
+    push es
+    push bx
+    push dx
+    push cs
+    pop es
+    call handle_index
+    jc .a44_io_err
+    mov bl, es:[di]
+    cmp bl, H_CON
+    je .a44_out_ready
+    cmp bl, H_NUL
+    je .a44_out_ready
+    cmp bl, H_FILE
+    je .a44_out_ready
+    cmp bl, H_AUX
+    je .a44_out_aux
+    cmp bl, H_PRN
+    je .a44_out_prn
+    jmp .a44_io_err
+.a44_out_aux:
+    xor dx, dx
+    mov ah, 0x03
+    int 0x14
+    test ah, 0x20                  /* THRE */
+    mov al, 0x00
+    jz .a44_io_done
     mov al, 0xFF
-    clc
-    jmp int21_iret
+    jmp .a44_io_done
+.a44_out_prn:
+    xor dx, dx
+    mov ah, 0x02
+    int 0x17
+    test ah, 0x80                  /* not busy / selected ready */
+    mov al, 0x00
+    jz .a44_io_done
+    mov al, 0xFF
+    jmp .a44_io_done
+.a44_out_ready:
+    mov al, 0xFF
+    jmp .a44_io_done
 
 /* AL=08 — is drive removable? BL=drive (0=default) → AL=0 removable / 1 fixed */
 .a44_remov:
@@ -1910,6 +2006,7 @@ init_std_handles:
     push es
     push di
     push cx
+    push si
     push cs
     pop es
     mov word ptr cs:[max_handles], 20
@@ -1925,9 +2022,193 @@ init_std_handles:
     mov byte ptr es:[di + HANDLE_SIZE * 2], H_CON
     mov byte ptr es:[di + HANDLE_SIZE * 3], H_AUX
     mov byte ptr es:[di + HANDLE_SIZE * 4], H_PRN
+    /* Seed SFT name cache for std devices */
+    lea di, [sft_names]
+    lea si, [sft_nm_con]
+    mov cx, 11
+    rep movsb
+    lea si, [sft_nm_con]
+    mov cx, 11
+    rep movsb
+    lea si, [sft_nm_con]
+    mov cx, 11
+    rep movsb
+    lea si, [sft_nm_aux]
+    mov cx, 11
+    rep movsb
+    lea si, [sft_nm_prn]
+    mov cx, 11
+    rep movsb
+    pop si
     pop cx
     pop di
     pop es
+    ret
+
+sft_nm_con: .ascii "CON        "
+sft_nm_aux: .ascii "AUX        "
+sft_nm_prn: .ascii "PRN        "
+sft_nm_nul: .ascii "NUL        "
+
+/* BX = handle index; fill sft_names from handle type or name83. */
+sft_name_from_handle:
+    push ax
+    push cx
+    push si
+    push di
+    push es
+    push ds
+    push cs
+    pop ds
+    push cs
+    pop es
+    mov ax, bx
+    push cx
+    mov cl, 4
+    shl ax, cl
+    pop cx
+    lea si, [handles]
+    add si, ax
+    mov al, [si]
+    cmp al, H_FILE
+    je .snfh_file
+    lea si, [sft_nm_con]
+    cmp al, H_CON
+    je .snfh_copy
+    lea si, [sft_nm_nul]
+    cmp al, H_NUL
+    je .snfh_copy
+    lea si, [sft_nm_aux]
+    cmp al, H_AUX
+    je .snfh_copy
+    lea si, [sft_nm_prn]
+    jmp .snfh_copy
+.snfh_file:
+    lea si, [name83]
+.snfh_copy:
+    mov ax, bx
+    mov cl, 11
+    mul cl
+    lea di, [sft_names]
+    add di, ax
+    mov cx, 11
+    rep movsb
+    pop ds
+    pop es
+    pop di
+    pop si
+    pop cx
+    pop ax
+    ret
+
+/*
+ * Build a classic SFT table from private handles[] for LoL walkers.
+ */
+sft_refresh_table:
+    push ax
+    push bx
+    push cx
+    push dx
+    push si
+    push di
+    push es
+    push ds
+    push cs
+    pop ds
+    push cs
+    pop es
+
+    mov cx, word ptr [max_handles]
+    cmp cx, SFT_TABLE_CAP
+    jbe .sft_cnt_ok
+    mov cx, SFT_TABLE_CAP
+.sft_cnt_ok:
+    mov word ptr [dos_sft_header + 4], cx
+    xor bx, bx
+.sft_loop:
+    cmp bx, cx
+    jae .sft_done
+    mov ax, bx
+    mov dl, SFT_ENTRY_SIZE
+    mul dl
+    lea di, [dos_sft_table]
+    add di, ax
+    push cx
+    push di
+    mov cx, SFT_ENTRY_SIZE
+    xor al, al
+    rep stosb
+    pop di
+    pop cx
+    mov ax, bx
+    push cx
+    mov cl, 4
+    shl ax, cl
+    pop cx
+    lea si, [handles]
+    add si, ax
+    mov al, [si]
+    test al, al
+    jz .sft_next
+    mov word ptr [di], 1
+    mov ah, 0
+    mov al, [si + 1]
+    mov word ptr [di + 2], ax
+    mov al, [si]
+    cmp al, H_FILE
+    je .sft_file
+    mov word ptr [di + 5], 0x80C3
+    cmp al, H_NUL
+    jne .sft_dev_name
+    mov word ptr [di + 5], 0x80C4
+    jmp .sft_dev_name
+.sft_file:
+    mov al, [si + 15]
+    and ax, 0x003F
+    mov word ptr [di + 5], ax
+    mov ax, [si + 2]
+    mov word ptr [di + 0x0B], ax
+    mov ax, [si + 4]
+    mov word ptr [di + 0x11], ax
+    mov ax, [si + 6]
+    mov word ptr [di + 0x13], ax
+    mov ax, [si + 8]
+    mov word ptr [di + 0x15], ax
+    mov ax, [si + 10]
+    mov word ptr [di + 0x17], ax
+    mov ax, [si + 12]
+    mov word ptr [di + 0x1D], ax
+    mov al, [si + 14]
+    mov byte ptr [di + 0x1F], al
+.sft_dev_name:
+    push si
+    push di
+    push cx
+    mov ax, bx
+    mov cl, 11
+    mul cl
+    lea si, [sft_names]
+    add si, ax
+    add di, 0x20
+    mov cx, 11
+    rep movsb
+    pop cx
+    pop di
+    pop si
+    mov ax, word ptr [current_psp]
+    mov word ptr [di + 0x31], ax
+.sft_next:
+    inc bx
+    jmp .sft_loop
+.sft_done:
+    pop ds
+    pop es
+    pop di
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
     ret
 
 /* Apply FILES= / AH=67: BX = desired count, clamp 5..64. CF if shrink orphans. */

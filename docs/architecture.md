@@ -75,9 +75,9 @@ Sources live under `firmware/bios/src/` (`post`, `init`, `video`, `keyboard`,
   AH=0), pixel read/write (`0Ch`/`0Dh`), write string (`13h` AL=0/1 chars+BL
   attr; AL=2/3 char+attr pairs), text and CGA-plane window scrolling
   (`06h`/`07h`), CRTC cursor programming on set cursor/type, BEL beep, graphics
-  teletype scroll, and AH=05 active-page select clamped to CGA regen (unit
-  `bt_page`). AH=08/09/0A/13 intentionally remain on the text-cell path in
-  graphics modes; direct graphics-plane character I/O is deferred.
+  teletype scroll, AH=05 active-page select clamped to CGA regen (unit
+  `bt_page`), and AH=08/09/0A/13 graphics-plane glyph I/O (write via font plot;
+  read via pixel→font match; high ASCII via INT 1Fh).
 - INT 13h floppy via onboard FDC (DMA ch2 / IRQ6): AH=00–05, 08, 15–18 with
   360K/720K/1.2M/1.44M media via BDA `40:8B` hint + INT 1Eh tables (FDC follows
   the live DPT; AH=08 returns the equipment-word floppy count in DL; AH=17
@@ -87,8 +87,9 @@ Sources live under `firmware/bios/src/` (`post`, `init`, `video`, `keyboard`,
   shim is opt-in (`--floppy-int13-shim` / `K8086_FLOPPY_INT13_SHIM=1`).
   INT 14h (COM1 8250 AH=00–03; DX≠0 → timeout bit, unit `bt_misc`), 15h
   (AH=86h wait; AH=80h–82h succeed; AH=C0h XT config table; else CF), 16h
-  (AH=00–02,05 stuff,10–12→00–02; Caps/Num/Scroll/Insert flags and Alt-keypad
-  decimal ASCII entry), 17h
+  (AH=00–02,05 stuff,10–12; Caps/Num/Scroll/Insert flags and Alt-keypad
+  decimal ASCII entry; Alt+non-keypad returns AL=0; Ctrl+NumLock pause/hold;
+  AH=12 returns FLAG0+FLAG1 held bits), 17h
   (LPT1 at BDA `40:08` / `0x378`: AH=00–02; a floating status port is forced
   ready/selected, while DX≠0 reports timeout; unit `bt_misc`),
   18h, 19h, 1Ah
@@ -98,6 +99,8 @@ Sources live under `firmware/bios/src/` (`post`, `init`, `video`, `keyboard`,
   (DOS hooks INT 1Bh to raise INT 23h when BREAK ON);
   IRQ6 → INT 0Eh for FDC completion (POST PIC test restores IMR `0xBC` so IRQ6
   stays unmasked with IRQ0+1); IRQ5 → INT 0Dh for Fixed Disk (guest ROM)
+- INT 1Fh → high-ASCII 8×8 font (`bios_font_hi`); glyphs `00–7F` at `F000:FA6E`
+  include control shapes and distinct lowercase
 - Option ROM scan `C000–F400` (`AA55`, checksum, far call +3); Fixed Disk ROM at `C800`
 - INT 18h prints a short “no BASIC” message (U19 is not an interpreter)
 - INT 1Eh diskette parameter table (720K default; 360K / 1.2M / 1.44M selectable)
@@ -120,7 +123,8 @@ Pinned absolute entry points (k8086 and XT software expect these):
 | `F000:F841` | INT 12h trampoline |
 | `F000:F84D` | INT 11h trampoline |
 | `F000:F859` | INT 15h trampoline |
-| `F000:FA6E` | 8×8 glyphs `0x00–0x7F` |
+| `F000:FA6E` | 8×8 glyphs `0x00–0x7F` (control shapes + distinct lowercase) |
+| INT 1Fh | High-ASCII glyphs `0x80–0xFF` (`bios_font_hi`) |
 | `F000:FE6E` | INT 1Ah trampoline |
 | `F000:FEA5` | IRQ0 / timer ISR trampoline |
 | `F000:FF54` | INT 05h Print Screen trampoline |
@@ -174,38 +178,42 @@ block with a small MZ header scratch, so EXEs larger than the old ~28 KiB
 (AH=57h), PSP create/get/set (AH=26h/50h/51h/55h/62h), get DTA (AH=2Fh),
 allocation info (AH=1Bh/1Ch; AH=1Ch honors DL), DPB get (AH=1Fh/32h from live
 BPB for any mapped drive; device-header pointer at DPB +13/+15 → NUL),
-SysVars (AH=52h LoL slice: first MCB, SFT header, CON, CDS, boot drive),
+SysVars (AH=52h LoL slice: first MCB, SFT header + classic SFTE table built from
+private handles, CON, CDS, boot drive, BUFFERS= header chain),
 extended error (AH=59h), AUX/PRN (handles 3/4; AH=03/04/05 via INT 14h/17h),
 IOCTL get/set info + char R/W + status (AH=44h AL=00–03/06–08; AL=02/03 CON/AUX/
-PRN/NUL byte I/O; AL=04/05/0Dh fail honestly), handle count get/set (AH=67h),
+PRN/NUL byte I/O; AL=06/07 honest CON kbd / AUX line / PRN busy; AL=04/05/0Dh fail
+honestly), handle count get/set (AH=67h),
 INT 25h/26h absolute disk, INT 2Fh install-check stubs (DOS AH=12, SHARE, PRINT,
 APPEND, XMS; Windows AX=1600 absent), vectors (AH=25h/35h), Ctrl-C / Ctrl-Break
 (BIOS INT 1Bh → INT 23h when BREAK ON; abort) / critical error (INT 24h
-Abort/Retry/Ignore), VERIFY flag get/set (AH=2Eh/54h; flag only — no media
-re-read) and commit (AH=68h → `handle_flush_file`), date/time, drive/cwd,
+Abort/Retry/Ignore), VERIFY flag get/set (AH=2Eh/54h; ON → INT 13h AH=04 after
+sector writes) and commit (AH=68h → `handle_flush_file`), date/time, drive/cwd,
 mkdir/rmdir/chdir, attrs, rename, country get/set (AH=38h; identity case-map
-words) and extended country get (AH=65h AL=01; other AL → CF), **AH=31h TSR**.
+words), extended country (AH=65h AL=01 header+info / AL=02 case-map ptr), and
+global code page get/set (AH=66h), **AH=31h TSR**.
 AH=30h reports DOS 3.31. Gate:
 `DEMO\COMPAT.COM` + `DEMO\INT21X.COM` (markers include `FILES OK`, `EXEC1 OK`,
-`AUXPRN OK`, `BREAK23 OK`, `STUB OK`; INT21X also probes IOCTL AL=02–05/0Dh,
+`AUXPRN OK`, `BREAK23 OK`, `STUB OK`; INT21X also probes IOCTL AL=02–05/0Dh/06,
 DPB device ptr, last-fit AH=58, AH=46/57, INT 25h boot signature, honest AH=5Ch,
-unsupported AH=5Dh/5Eh/5Fh/65h subfunctions/66h, VERIFY flag get/set, null
-BUFFERS pointer, and LoL LASTDRIVE).
+unsupported AH=5Dh/5Eh/5Fh/65h AL=03, AH=66 get/set CP 437, VERIFY flag get/set,
+non-null BUFFERS + SFTE LoL walk, and LoL LASTDRIVE).
 
 ### Stub vs real (INT 21h / CONFIG)
 
 | Surface | Behavior |
 |---------|----------|
-| VERIFY (`AH=2Eh`/`54h`) | Flag only — no media re-read on write |
+| VERIFY (`AH=2Eh`/`54h`) | Flag + INT 13h AH=04 re-verify after successful sector writes |
 | File lock (`AH=5Ch`) | CF + AX=1 (SHARE not installed) |
 | IOCTL AL=04/05/0Dh | CF + AX=1 (control channels unsupported) |
-| IOCTL AL=09/0Ah | Success AX=0 (treat as local); AL=06/07 always ready (`FFh`) |
-| SysVars SFT chain (`AH=52h`) | Header only (terminating link + handle count); no public per-file SFT entries |
+| IOCTL AL=09/0Ah | Success AX=0 (treat as local); AL=06/07 CON/AUX/PRN/file status |
+| SysVars SFT chain (`AH=52h`) | Header + SFTE table (0x35) mirrored from private `handles[]` |
 | PSP JFT (`18h`/`32h`/`34h`) | Sized to `FILES=` / AH=67 (`max_handles`, 5..64); ≤20 entries inline at PSP:18h, larger tables in an AH=48 block; resized on handle growth; inherited from parent when present |
 | INT 25h/26h `CX=FFFFh` | DOS 3.31 packet (`DWORD` sector, `WORD` count, far buffer); classic register form remains supported |
 | Network/server `AH=5Dh`/`5Eh`/`5Fh` | CF + AX=1 (redirector not installed) |
-| `BUFFERS=` | Parsed; LoL buffer pointer stays `0000:0000`; FAT uses a windowed cache |
-| `STACKS=` / `FCBS=` / `COUNTRY=` / `DRIVPARM=` | Accepted as advisory no-ops (not printed as ignored) |
+| `BUFFERS=` | Parsed; LoL +12/+14 points at free buffer-header chain (FAT I/O still windowed) |
+| `STACKS=` / `FCBS=` / `DRIVPARM=` | Accepted as advisory no-ops (not printed as ignored) |
+| `COUNTRY=` | `COUNTRY=nnn[,codepage]` updates country id + AH=66 code pages |
 | `SHELL=` | Path only — `/P` `/E:` discarded |
 | `DEVICE=` | Character `.SYS` only (≤8 KiB); **block drivers intentional OOS** (reject + clear CONFIG text; follow-on) |
 | `LASTDRIVE=` | Raises CDS count (compile max 16; default 8) |
@@ -213,7 +221,7 @@ BUFFERS pointer, and LoL LASTDRIVE).
 | FAT16 volume size | Hard ceiling **128 MiB** (raising needs 32-bit LBA throughout drivemap) |
 | `MODE LPT1:=COM1` | Honest fail (`Redirect not supported`, ERRORLEVEL 1) |
 | INT 60h `AH=B8h` | rmDOS-only net mux (not packet-driver / redirector) |
-| INT 10h gfx AH=08/09/0A/13 | Text-cell path in graphics modes (plane I/O deferred) |
+| INT 10h gfx AH=08/09/0A/13 | Plane glyph plot/match (units `bt_gfx_char`); high ASCII via INT 1Fh |
 | INT 17h LPT1 status | Floating port forced ready/selected (documented) |
 
 **Out of scope for INT 21h/2Fh fidelity:** AH=53h BPB translate; real
@@ -230,8 +238,9 @@ the SYS ABI — INIT + INPUT + OUTPUT; block drivers print
 `FILES=` / `BUFFERS=` (`FILES=` clamps 5..64 into the handle table and current
 PSP JFT after CONFIG; default 20; AH=67 grows both), `LASTDRIVE=` (letter or
 count, max 16), `BREAK=`,
-`SHELL=` (path only; `/P`/`/E:` discarded), and advisory no-ops `STACKS=` /
-`FCBS=` / `COUNTRY=` / `DRIVPARM=`. Unknown directives print
+`SHELL=` (path only; `/P`/`/E:` discarded), `COUNTRY=nnn[,codepage]` (updates
+country id + active/system code page), and advisory no-ops `STACKS=` /
+`FCBS=` / `DRIVPARM=`. Unknown directives print
 `CONFIG: ignored …`. Comments (`;`) and blank lines are skipped. Builtin
 **CON** / **NUL** device headers form the driver chain; `putch`, AH=40 CON writes,
 and AH=01/08/3F CON reads call the current CON driver’s OUTPUT/INPUT. Default
@@ -390,15 +399,18 @@ make run / make run-fd
 BIOS service units are boot-sector images under `firmware/bios/tests/boot/`; they
 print `PASS`/`FAIL` on COM1 and shut down via port `0x8900`. Coverage includes
 equipment/BDA, INT 10h text/graphics (modes, AH=06/07 window scroll in both CGA
-banks, pixels, CRTC cursor/type, AH=08/0A read/write char, graphics teletype
-scroll, active page, palette, BEL, AH=13 AL=0–3; AH=05 page clamp `bt_page`),
+banks, pixels, CRTC cursor/type, AH=08/09/0A/13 text + graphics-plane glyph I/O
+(`bt_gfx_char`), INT 1Fh high font + distinct lowercase (`bt_font`), graphics
+teletype scroll, active page, palette, BEL; AH=05 page clamp `bt_page`),
 INT 13h floppy via FDC with shim off
-(reset/read/write/format/DASD/status, unsupported-AH CF, 360K/720K/1.2M/1.44M
+(reset honoring DL + dual-drive recal, R/W/verify with soft retries
+(`bt_disk_retry`), format/DASD/status, unsupported-AH CF, 360K/720K/1.2M/1.44M
 AH=08, 360→720 upgrade, change-line, motor timeout), C800 Fixed Disk
 AH=08/R/W/verify plus AH=05 format, AH=09/0C/0D/15 (`bt_hd_svc`/`bt_hd_fmt`),
 timer/INT 1Ch/INT 1Ah set + midnight overflow, INT 14h COM1 loopback + DX≠0
 timeout (`bt_misc`), INT 15h wait/no-ops/AH=C0, INT 16h flags/AH=00 read/
-extended APIs plus IRQ1 Caps/Num/Scroll/Insert (`bt_kbd_locks`), Alt-keypad
+AH=10–12 (AH=12 returns FLAG0+FLAG1), Alt+letter AL=0 + Ctrl+NumLock pause
+(`bt_kbd_alt`), IRQ1 Caps/Num/Scroll/Insert (`bt_kbd_locks`), Alt-keypad
 entry, Shift+PrtSc, AH=05 buffer-full CF (`bt_kbd_full`), INT 17h LPT1 success
 + DX≠0 timeout (`bt_misc`), INT 05h/INT 18h no-BASIC, INT 19h floppy→HD
 fallback (`bt_int19_hd`), ROM identity/checksum, IBM entry trampolines,
