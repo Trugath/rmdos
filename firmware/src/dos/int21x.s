@@ -333,6 +333,233 @@ _start:
     lea dx, [msg_ioctl]
     int 0x21
 
+    /* --- AUX/PRN / verify / InDOS / DPB / alloc strat / commit --- */
+    mov ah, 0x03
+    int 0x21
+    mov ah, 0x04
+    mov dl, 'X'
+    int 0x21
+    mov ah, 0x05
+    mov dl, 'Y'
+    int 0x21
+
+    mov ah, 0x2E
+    mov al, 1
+    int 0x21
+    mov ah, 0x54
+    int 0x21
+    cmp al, 1
+    je .x_ver
+    mov ah, 0x09
+    lea dx, [msg_xf1]
+    int 0x21
+    jmp fail_exit
+.x_ver:
+    mov ah, 0x2E
+    xor al, al
+    int 0x21
+
+    mov ah, 0x34
+    int 0x21
+    mov ax, es
+    test ax, ax
+    jnz .x_indos
+    mov ah, 0x09
+    lea dx, [msg_xf2]
+    int 0x21
+    jmp fail_exit
+.x_indos:
+    cmp byte ptr es:[bx], 0
+    je .x_indos2
+    mov ah, 0x09
+    lea dx, [msg_xf2]
+    int 0x21
+    jmp fail_exit
+.x_indos2:
+
+    push ds
+    mov ah, 0x32
+    xor dl, dl
+    int 0x21
+    cmp al, 0xFF
+    jne .x_dpb
+    pop ds
+    mov ah, 0x09
+    lea dx, [msg_xf3]
+    int 0x21
+    jmp fail_exit
+.x_dpb:
+    mov ax, ds
+    test ax, ax
+    jnz .x_dpb2
+    pop ds
+    mov ah, 0x09
+    lea dx, [msg_xf3]
+    int 0x21
+    jmp fail_exit
+.x_dpb2:
+    pop ds
+
+    mov ax, 0x5801
+    mov bx, 1
+    int 0x21
+    jnc .x_s1
+    mov ah, 0x09
+    lea dx, [msg_xf4]
+    int 0x21
+    jmp fail_exit
+.x_s1:
+    mov ax, 0x5800
+    int 0x21
+    jnc .x_s2
+    mov ah, 0x09
+    lea dx, [msg_xf4]
+    int 0x21
+    jmp fail_exit
+.x_s2:
+    cmp bx, 1
+    je .x_strat
+    mov ah, 0x09
+    lea dx, [msg_xf4]
+    int 0x21
+    jmp fail_exit
+.x_strat:
+    mov ax, 0x5801
+    xor bx, bx
+    int 0x21
+
+    mov ax, 0x3C00
+    lea dx, [xtra_name]
+    xor cx, cx
+    int 0x21
+    jnc .x_cr
+    mov ah, 0x09
+    lea dx, [msg_xf5]
+    int 0x21
+    jmp fail_exit
+.x_cr:
+    mov bx, ax
+    mov ah, 0x68
+    int 0x21
+    jnc .x_cm
+    mov ah, 0x09
+    lea dx, [msg_xf5]
+    int 0x21
+    jmp fail_exit
+.x_cm:
+    mov ah, 0x3E
+    int 0x21
+
+    /* FCB AH=24 set relative record (no disk) */
+    lea di, [fcb]
+    mov cx, 40
+    xor al, al
+    rep stosb
+    mov word ptr [fcb + 0x0C], 1
+    mov byte ptr [fcb + 0x20], 2
+    mov ah, 0x24
+    lea dx, [fcb]
+    int 0x21
+    cmp word ptr [fcb + 0x21], 130
+    je .x_rel
+    mov ah, 0x09
+    lea dx, [msg_xf7]
+    int 0x21
+    jmp fail_exit
+.x_rel:
+
+    /* FCB AH=23/26: create SZ.DAT, size, create-new conflict */
+    mov ah, 0x1A
+    lea dx, [dta]
+    int 0x21
+    lea di, [fcb]
+    mov cx, 40
+    xor al, al
+    rep stosb
+    lea di, [fcb + 1]
+    mov cx, 11
+    mov al, ' '
+    rep stosb
+    mov byte ptr [fcb + 1], 'S'
+    mov byte ptr [fcb + 2], 'Z'
+    mov byte ptr [fcb + 9], 'D'
+    mov byte ptr [fcb + 10], 'A'
+    mov byte ptr [fcb + 11], 'T'
+    mov word ptr [fcb + 0x0E], 1
+    mov ah, 0x16
+    lea dx, [fcb]
+    int 0x21
+    cmp al, 0
+    je .x_mk
+    mov ah, 0x09
+    lea dx, [msg_xf6]
+    int 0x21
+    jmp fail_exit
+.x_mk:
+    mov bl, [fcb + 0x18]
+    xor bh, bh
+    mov ah, 0x40
+    mov cx, 4
+    lea dx, [dta]
+    mov byte ptr [dta], 'S'
+    mov byte ptr [dta+1], 'I'
+    mov byte ptr [dta+2], 'Z'
+    mov byte ptr [dta+3], 'E'
+    int 0x21
+    mov ah, 0x10
+    lea dx, [fcb]
+    int 0x21
+    mov ah, 0x23
+    lea dx, [fcb]
+    int 0x21
+    cmp al, 0
+    jne .x_szf
+    cmp word ptr [fcb + 0x21], 4
+    je .x_sz2
+.x_szf:
+    mov ah, 0x09
+    lea dx, [msg_xf6]
+    int 0x21
+    jmp fail_exit
+.x_sz2:
+    /* create-new NEWFCB.DAT once */
+    lea di, [fcb]
+    mov cx, 40
+    xor al, al
+    rep stosb
+    lea di, [fcb + 1]
+    mov cx, 11
+    mov al, ' '
+    rep stosb
+    mov byte ptr [fcb + 1], 'N'
+    mov byte ptr [fcb + 2], 'E'
+    mov byte ptr [fcb + 3], 'W'
+    mov byte ptr [fcb + 4], 'F'
+    mov byte ptr [fcb + 5], 'C'
+    mov byte ptr [fcb + 6], 'B'
+    mov byte ptr [fcb + 9], 'D'
+    mov byte ptr [fcb + 10], 'A'
+    mov byte ptr [fcb + 11], 'T'
+    mov ah, 0x26
+    lea dx, [fcb]
+    int 0x21
+    cmp al, 0
+    je .x_new
+    mov ah, 0x09
+    lea dx, [msg_xf8]
+    int 0x21
+    jmp fail_exit
+.x_new:
+    mov ah, 0x10
+    lea dx, [fcb]
+    int 0x21
+
+    push cs
+    pop ds
+    mov ah, 0x09
+    lea dx, [msg_xtra]
+    int 0x21
+
     mov ah, 0x09
     lea dx, [msg_ok]
     int 0x21
@@ -358,6 +585,11 @@ fail_ioctl:
     mov ah, 0x09
     lea dx, [msg_ioctl_fail]
     int 0x21
+    jmp fail_exit
+fail_xtra:
+    mov ah, 0x09
+    lea dx, [msg_xtra_fail]
+    int 0x21
 fail_exit:
     mov ax, 0x4C01
     int 0x21
@@ -370,6 +602,8 @@ msg_temp:
     .ascii "TEMP OK\r\n$"
 msg_ioctl:
     .ascii "IOCTL OK\r\n$"
+msg_xtra:
+    .ascii "XTRA OK\r\n$"
 msg_ok:
     .ascii "INT21X OK\r\n$"
 msg_fcb_fail:
@@ -380,8 +614,28 @@ msg_temp_fail:
     .ascii "TEMP FAIL\r\n$"
 msg_ioctl_fail:
     .ascii "IOCTL FAIL\r\n$"
+msg_xtra_fail:
+    .ascii "XTRA FAIL\r\n$"
+msg_xf1:
+    .ascii "XF1\r\n$"
+msg_xf2:
+    .ascii "XF2\r\n$"
+msg_xf3:
+    .ascii "XF3\r\n$"
+msg_xf4:
+    .ascii "XF4\r\n$"
+msg_xf5:
+    .ascii "XF5\r\n$"
+msg_xf6:
+    .ascii "XF6\r\n$"
+msg_xf7:
+    .ascii "XF7\r\n$"
+msg_xf8:
+    .ascii "XF8\r\n$"
 nosuch:
     .asciz "NOSUCH.XYZ"
+xtra_name:
+    .asciz "XTRA.TMP"
 relname:
     .asciz "FOO.TXT"
 plain_tmp:

@@ -54,6 +54,24 @@ dos_ah02:
     clc
     jmp int21_iret
 
+/* AH=03h — AUX input (stub: return AL=0) */
+dos_ah03:
+    xor al, al
+    clc
+    jmp int21_iret
+
+/* AH=04h — AUX output (stub: discard DL) */
+dos_ah04:
+    mov al, dl
+    clc
+    jmp int21_iret
+
+/* AH=05h — PRN output (stub: discard DL) */
+dos_ah05:
+    mov al, dl
+    clc
+    jmp int21_iret
+
 /* INT 21h AH=09 — write DS:DX '$'-terminated */
 dos_ah09:
     push ax

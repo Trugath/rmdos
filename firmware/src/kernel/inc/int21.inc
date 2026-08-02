@@ -140,6 +140,12 @@ int21_handler:
     je dos_ah01
     cmp ah, 0x02
     je dos_ah02
+    cmp ah, 0x03
+    je dos_ah03
+    cmp ah, 0x04
+    je dos_ah04
+    cmp ah, 0x05
+    je dos_ah05
     cmp ah, 0x06
     je dos_ah06
     cmp ah, 0x07
@@ -184,8 +190,14 @@ int21_handler:
     je dos_ah21
     cmp ah, 0x22
     je dos_ah22
+    cmp ah, 0x23
+    je dos_ah23
+    cmp ah, 0x24
+    je dos_ah24
     cmp ah, 0x25
     je dos_ah25
+    cmp ah, 0x26
+    je dos_ah26
     cmp ah, 0x27
     je dos_ah27
     cmp ah, 0x28
@@ -206,8 +218,12 @@ int21_handler:
     je dos_ah30
     cmp ah, 0x31
     je dos_ah31
+    cmp ah, 0x32
+    je dos_ah32
     cmp ah, 0x33
     je dos_ah33
+    cmp ah, 0x34
+    je dos_ah34
     cmp ah, 0x35
     je dos_ah35
     cmp ah, 0x36
@@ -268,10 +284,14 @@ int21_handler:
     je dos_ah51
     cmp ah, 0x52
     je dos_ah52
+    cmp ah, 0x54
+    je dos_ah54
     cmp ah, 0x56
     je dos_ah56
     cmp ah, 0x57
     je dos_ah57
+    cmp ah, 0x58
+    je dos_ah58
     cmp ah, 0x59
     je dos_ah59
     cmp ah, 0x5A
@@ -284,6 +304,8 @@ int21_handler:
     je dos_ah60
     cmp ah, 0x62
     je dos_ah62
+    cmp ah, 0x68
+    je dos_ah68
     mov ax, 1
     stc
     jmp int21_iret_cf
@@ -584,6 +606,73 @@ dos_ah2d:
 dos_ah2e:
     mov byte ptr cs:[dos_verify_flag], al
     xor al, al
+    clc
+    jmp int21_iret
+
+/* AH=54h — get verify flag → AL */
+dos_ah54:
+    mov al, byte ptr cs:[dos_verify_flag]
+    clc
+    jmp int21_iret
+
+/* AH=34h — get InDOS flag address → ES:BX */
+dos_ah34:
+    push cs
+    pop es
+    lea bx, [dos_indos]
+    clc
+    jmp int21_iret
+
+/* AH=32h — get DPB for DL (0=default, 1=A…) → DS:BX; AL=FF on bad drive */
+dos_ah32:
+    push ax
+    mov al, dl
+    test al, al
+    jnz .a32_drv
+    mov al, byte ptr cs:[cur_drive]
+    inc al
+.a32_drv:
+    cmp al, 1
+    jb .a32_bad
+    cmp al, 2
+    ja .a32_bad
+    mov byte ptr cs:[dos_dpb], al
+    pop ax
+    push cs
+    pop ds
+    lea bx, [dos_dpb]
+    xor al, al
+    clc
+    jmp int21_iret
+.a32_bad:
+    pop ax
+    mov al, 0xFF
+    clc
+    jmp int21_iret
+
+/* AH=58h — get/set alloc strategy: AL=0 get BX, AL=1 set BX */
+dos_ah58:
+    cmp al, 0
+    je .a58_get
+    cmp al, 1
+    je .a58_set
+    mov ax, 1
+    stc
+    jmp int21_iret_cf
+.a58_get:
+    mov bx, word ptr cs:[dos_alloc_strategy]
+    xor ax, ax
+    clc
+    jmp int21_iret
+.a58_set:
+    mov word ptr cs:[dos_alloc_strategy], bx
+    xor ax, ax
+    clc
+    jmp int21_iret
+
+/* AH=68h — commit file BX (flush no-op success) */
+dos_ah68:
+    xor ax, ax
     clc
     jmp int21_iret
 

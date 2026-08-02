@@ -1,5 +1,5 @@
 /*
- * INT 21h FCB subset: AH=0F/10/11/12/13/14/15/16/17/21/22/27/28/29.
+ * INT 21h FCB subset: AH=0F/10/11/12/13/14/15/16/17/21/22/23/24/26/27/28/29.
  *
  * FCB (DS:DX; AH=29 uses ES:DI + DS:SI):
  *   +00 drive (0=default, 1=A)  +01 name8  +09 ext3
@@ -401,6 +401,164 @@ dos_ah16:
     pop cx
     pop bx
     mov al, 0xFF
+    clc
+    jmp int21_iret
+
+/* AH=26h create new FCB (fail if exists) */
+dos_ah26:
+    push bx
+    push cx
+    push dx
+    push si
+    push di
+    push ds
+    push es
+
+    mov si, dx
+    call fcb_build_path
+    jc .a26_fail
+    call fcb_path_wild
+    jc .a26_fail
+
+    push ds
+    push cs
+    pop ds
+    lea dx, [fcb_path]
+    xor cx, cx
+    mov ah, 0x5B
+    int 0x21
+    pop ds
+    jc .a26_fail
+    mov bx, ax
+    xor ax, ax
+    mov [si + FCB_FSIZE], ax
+    mov [si + FCB_FSIZE + 2], ax
+    mov [si + FCB_DATE], ax
+    mov [si + FCB_TIME], ax
+    call fcb_init_open
+    pop es
+    pop ds
+    pop di
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    xor al, al
+    clc
+    jmp int21_iret
+.a26_fail:
+    pop es
+    pop ds
+    pop di
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    mov al, 0xFF
+    clc
+    jmp int21_iret
+
+/* AH=23h get file size → relative record count; unopened FCB */
+dos_ah23:
+    push bx
+    push cx
+    push dx
+    push si
+    push di
+    push ds
+    push es
+
+    mov si, dx
+    call fcb_build_path
+    jc .a23_fail
+    call fcb_path_wild
+    jc .a23_fail
+
+    push ds
+    push cs
+    pop ds
+    lea dx, [fcb_path]
+    mov ax, 0x3D02
+    int 0x21
+    pop ds
+    jc .a23_fail
+    mov bx, ax
+    push si
+    call fcb_query_meta
+    pop si
+    jc .a23_clo
+    cmp word ptr [si + FCB_RECSIZ], 0
+    jne .a23_div
+    mov word ptr [si + FCB_RECSIZ], 128
+.a23_div:
+    mov ax, [si + FCB_FSIZE]
+    mov dx, [si + FCB_FSIZE + 2]
+    mov cx, [si + FCB_RECSIZ]
+    test cx, cx
+    jz .a23_clo
+    push bx
+    add ax, cx
+    adc dx, 0
+    sub ax, 1
+    sbb dx, 0
+    cmp dx, cx
+    jae .a23_big
+    div cx
+    mov [si + FCB_RELREC], ax
+    mov byte ptr [si + FCB_RELREC + 2], 0
+    pop bx
+    mov ah, 0x3E
+    int 0x21
+    pop es
+    pop ds
+    pop di
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    xor al, al
+    clc
+    jmp int21_iret
+.a23_big:
+    pop bx
+.a23_clo:
+    mov ah, 0x3E
+    int 0x21
+.a23_fail:
+    pop es
+    pop ds
+    pop di
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    mov al, 0xFF
+    clc
+    jmp int21_iret
+
+/* AH=24h set relative record from current block + record */
+dos_ah24:
+    push ax
+    push bx
+    push cx
+    push dx
+    push si
+    mov si, dx
+    mov ax, [si + FCB_BLOCK]
+    xor dx, dx
+    mov cx, 128
+    mul cx
+    mov bl, [si + FCB_CURREC]
+    xor bh, bh
+    add ax, bx
+    adc dx, 0
+    mov [si + FCB_RELREC], ax
+    mov [si + FCB_RELREC + 2], dl
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
     clc
     jmp int21_iret
 

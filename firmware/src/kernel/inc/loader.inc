@@ -10,7 +10,7 @@
  */
 
 .equ PSP_SIZE, 0x0100
-.equ COM_MAX, 0x6000
+.equ COM_MAX, 0x6200
 .equ COM_NEST_MAX, 4
 
 /*

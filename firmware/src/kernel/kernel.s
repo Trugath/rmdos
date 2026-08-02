@@ -247,6 +247,32 @@ dos_last_error:
     .word 0
 dos_verify_flag:
     .byte 0
+dos_indos:
+    .byte 0
+dos_alloc_strategy:
+    .word 0
+/* Minimal DPB for AH=32 probes (drive letter filled at call). */
+dos_dpb:
+    .byte 1                      /* +00 drive number */
+    .byte 0                      /* +01 unit */
+    .word 512                    /* +02 bytes/sector */
+    .byte 0                      /* +04 sectors/cluster-1 */
+    .byte 0                      /* +05 cluster shift */
+    .word 1                      /* +06 reserved sectors */
+    .byte 2                      /* +08 FATs */
+    .word 224                    /* +09 root entries */
+    .word 0                      /* +0B first data sector */
+    .word 0xFFE                  /* +0D max cluster */
+    .word 9                      /* +0F sectors/FAT */
+    .word 19                     /* +11 first dir sector */
+    .word 0                      /* +13 device driver header off */
+    .word 0                      /* +15 device driver header seg */
+    .byte 0                      /* +17 media */
+    .byte 0xFF                   /* +18 accessed */
+    .word 0                      /* +19 next DPB off */
+    .word 0                      /* +1B next DPB seg */
+    .word 0                      /* +1D first free cluster */
+    .word 0xFFFF                 /* +1F free clusters */
 dos_country_id:
     .word 1
 tmp_name_ctr:
@@ -467,7 +493,7 @@ cfg_ch:
 cfg_line:
     .space 120, 0
 com_buf:
-    .space 24576, 0
+    .space 0x6200, 0
 
 fat_buf:
     .space 1024, 0
