@@ -999,7 +999,7 @@ _start:
     jmp fail_exit
 .x_done:
 
-    /* AUX/PRN: AH=04/05 + handle 4 write */
+    /* AUX/PRN: AH=04/05 + handle 4 write + AH=3C create PRN (COPY path) */
     push cs
     pop ds
     mov ah, 0x04
@@ -1016,6 +1016,23 @@ _start:
     jc .x_apf
     cmp ax, 1
     jne .x_apf
+    /* CREATE "PRN" must open the device (not a disk file named PRN) */
+    mov ah, 0x3C
+    xor cx, cx
+    lea dx, [prn_name]
+    int 0x21
+    jc .x_apf
+    mov bx, ax
+    mov ah, 0x40
+    mov cx, 1
+    lea dx, [auxprn_ch]
+    int 0x21
+    jc .x_apf
+    cmp ax, 1
+    jne .x_apf
+    mov ah, 0x3E
+    int 0x21
+    jc .x_apf
     mov ah, 0x09
     lea dx, [msg_auxprn]
     int 0x21
@@ -1231,6 +1248,8 @@ exec1_epb:
     .word 0, 0, 0, 0             /* SP SS IP CS */
 auxprn_ch:
     .byte '!'
+prn_name:
+    .asciz "PRN"
 ioctl_ch:
     .byte '.'
 brk23_flag:

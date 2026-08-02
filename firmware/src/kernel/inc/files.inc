@@ -426,6 +426,19 @@ dos_ah3c:
     push ds
     push es
 
+    /* Device names (CON/NUL/AUX/PRN/LPT1): open device, do not create a file.
+     * COPY file PRN and similar rely on this (same as MS-DOS). */
+    mov si, dx
+    call is_device_name
+    jc .a3c_file
+    call dos_open_slot
+    jc .a3c_err
+    mov byte ptr es:[di], dl
+    mov byte ptr es:[di + 1], 2
+    mov ax, bx
+    jmp .a3c_dev_ok
+
+.a3c_file:
     call path_resolve
     jc .a3c_err
     call path_name83_present
@@ -486,6 +499,7 @@ dos_ah3c:
     mov al, byte ptr cs:[path_resolve_drive]
     mov byte ptr es:[di + 15], al
     mov ax, word ptr cs:[xfer_cnt]
+.a3c_dev_ok:
     mov bx, ax
 
     call dos_remount_current
