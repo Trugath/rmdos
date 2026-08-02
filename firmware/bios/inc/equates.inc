@@ -5,7 +5,12 @@
 
 /* BDA offsets (relative to BDA_SEG) */
 .equ BDA_COM1, 0x00
+.equ BDA_COM2, 0x02
+.equ BDA_COM3, 0x04
+.equ BDA_COM4, 0x06
 .equ BDA_LPT1, 0x08
+.equ BDA_LPT2, 0x0A
+.equ BDA_LPT3, 0x0C
 .equ BDA_EQUIP, 0x10
 .equ BDA_MEMKB, 0x13
 .equ BDA_KBD_FLAG0, 0x17

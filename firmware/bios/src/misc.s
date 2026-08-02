@@ -36,14 +36,14 @@ int12_handler:
     iret
 
 /*
- * INT 14h — serial (COM1 @ BDA_COM1). DX = port index (0 = COM1).
+ * INT 14h — serial. DX = port index (0 = COM1, 1 = COM2).
  * AH=00 init AL=params, AH=01 send AL, AH=02 recv → AL, AH=03 status.
- * Timeout → AH bit7 set.
+ * Timeout → AH bit7 set. Base from BDA 40:00/40:02.
  */
 int14_handler:
     sti
-    cmp dx, 0
-    jne .i14_bad_port
+    cmp dx, 2
+    jae .i14_bad_port
     cmp ah, 0x00
     je .i14_init
     cmp ah, 0x01
@@ -61,12 +61,16 @@ int14_handler:
     push cx
     push dx
     push ds
+    push si
     push ax                      /* save AL params in low byte */
     mov bx, BDA_SEG
     mov ds, bx
-    mov dx, [BDA_COM1]
-    test dx, dx
+    mov si, dx
+    shl si, 1
+    mov si, [si]                 /* UART I/O base */
+    test si, si
     jz .i14_init_fail
+    mov dx, si
 
     /* baud index = AL bits 7-5 → divisor from table */
     pop ax
@@ -97,19 +101,11 @@ int14_handler:
     pop ax
     push ax
     mov bl, al
-    and al, 0x1F                 /* keep bits 4-0 for LCR-ish */
-    /* map BIOS AL[4:0] → LCR: bits1-0 word, bit2 stop, bits4-3 parity → LCR 3-5 */
     mov al, bl
     and al, 0x03                 /* word length */
     mov ah, bl
     and ah, 0x04                 /* stop bits */
     or al, ah
-    mov ah, bl
-    and ah, 0x18                 /* parity */
-    shl ah, 1                    /* → LCR bits 4-3... BIOS 4-3 → LCR 4-3: shift 0? */
-    /* BIOS bits 4-3 are already parity in LCR positions 4-3 if we map:
-       LCR: bit3=parity enable, bit4=even. BIOS: 00 none, 01 odd, 11 even.
-       odd: LCR=0x08, even: LCR=0x18, none: 0 */
     mov ah, bl
     and ah, 0x18
     cmp ah, 0x08
@@ -123,7 +119,7 @@ int14_handler:
 .i14_par_even:
     or al, 0x18
 .i14_par_done:
-    mov dx, [BDA_COM1]
+    mov dx, si
     add dx, 3
     out dx, al                   /* LCR, DLAB clear */
 
@@ -133,7 +129,7 @@ int14_handler:
     out dx, al
 
     /* disable UART interrupts */
-    mov dx, [BDA_COM1]
+    mov dx, si
     inc dx
     xor al, al
     out dx, al
@@ -146,8 +142,9 @@ int14_handler:
     inc dx
     in al, dx
 
-    call uart_read_status        /* AH=LSR, AL=MSR */
+    call uart_read_status        /* AH=LSR, AL=MSR ; SI=base */
     pop bx                       /* discard saved params */
+    pop si
     pop ds
     pop dx
     pop cx
@@ -156,6 +153,7 @@ int14_handler:
 
 .i14_init_fail:
     pop ax
+    pop si
     pop ds
     pop dx
     pop cx
@@ -169,12 +167,16 @@ int14_handler:
     push cx
     push dx
     push ds
+    push si
     push ax                      /* AL = char */
     mov bx, BDA_SEG
     mov ds, bx
-    mov dx, [BDA_COM1]
-    test dx, dx
+    mov si, dx
+    shl si, 1
+    mov si, [si]
+    test si, si
     jz .i14_send_fail
+    mov dx, si
     add dx, 5                    /* LSR */
     mov cx, 0xFFFF
 .i14_send_wait:
@@ -187,11 +189,12 @@ int14_handler:
     pop bx                       /* discard char */
     jmp .i14_send_done
 .i14_send_go:
-    mov dx, [BDA_COM1]
+    mov dx, si
     pop ax
     out dx, al
     call uart_read_status
 .i14_send_done:
+    pop si
     pop ds
     pop dx
     pop cx
@@ -199,6 +202,7 @@ int14_handler:
     iret
 .i14_send_fail:
     pop ax
+    pop si
     pop ds
     pop dx
     pop cx
@@ -211,11 +215,15 @@ int14_handler:
     push cx
     push dx
     push ds
+    push si
     mov bx, BDA_SEG
     mov ds, bx
-    mov dx, [BDA_COM1]
-    test dx, dx
+    mov si, dx
+    shl si, 1
+    mov si, [si]
+    test si, si
     jz .i14_recv_fail
+    mov dx, si
     add dx, 5
     mov cx, 0xFFFF
 .i14_recv_wait:
@@ -227,19 +235,21 @@ int14_handler:
     xor al, al
     jmp .i14_recv_done
 .i14_recv_go:
-    mov dx, [BDA_COM1]
+    mov dx, si
     in al, dx
     push ax
     call uart_read_status        /* destroys AL */
     pop bx
     mov al, bl                   /* received char */
 .i14_recv_done:
+    pop si
     pop ds
     pop dx
     pop cx
     pop bx
     iret
 .i14_recv_fail:
+    pop si
     pop ds
     pop dx
     pop cx
@@ -251,25 +261,30 @@ int14_handler:
 .i14_status:
     push dx
     push ds
+    push si
     mov ax, BDA_SEG
     mov ds, ax
-    mov dx, [BDA_COM1]
-    test dx, dx
+    mov si, dx
+    shl si, 1
+    mov si, [si]
+    test si, si
     jz .i14_st_fail
     call uart_read_status
+    pop si
     pop ds
     pop dx
     iret
 .i14_st_fail:
+    pop si
     pop ds
     pop dx
     mov ah, 0x80
     xor al, al
     iret
 
-/* DS = BDA, [BDA_COM1] valid. OUT: AH=LSR, AL=MSR. Clobbers DX. */
+/* DS = BDA, SI = UART I/O base. OUT: AH=LSR, AL=MSR. Clobbers DX. */
 uart_read_status:
-    mov dx, [BDA_COM1]
+    mov dx, si
     add dx, 5
     in al, dx
     mov ah, al
@@ -479,19 +494,23 @@ int5_handler:
 
 int17_handler:
     /*
-     * INT 17h printer: DX=0 (LPT1) against BDA 40:08 base (0x378).
-     * AH=00 write AL, AH=01 init, AH=02 status. DX≠0 → timeout.
+     * INT 17h printer: DX = port index (0 = LPT1, 1 = LPT2) against BDA 40:08/40:0A.
+     * AH=00 write AL, AH=01 init, AH=02 status. Missing base → timeout.
      */
     sti
     push bx
     push cx
     push dx
     push ds
-    cmp dx, 0
-    jne .i17_timeout
+    push si
+    cmp dx, 2
+    jae .i17_timeout
     mov bx, BDA_SEG
     mov ds, bx
-    mov dx, word ptr [BDA_LPT1]
+    mov si, dx
+    shl si, 1
+    add si, BDA_LPT1
+    mov dx, word ptr [si]
     test dx, dx
     jz .i17_timeout
     cmp ah, 0
@@ -545,6 +564,7 @@ int17_handler:
 .i17_timeout:
     mov ah, 0x01
 .i17_done:
+    pop si
     pop ds
     pop dx
     pop cx

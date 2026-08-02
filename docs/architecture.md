@@ -85,13 +85,14 @@ Sources live under `firmware/bios/src/` (`post`, `init`, `video`, `keyboard`,
   HD uses guest C800 Fixed Disk option ROM by default; host Fixed
   Disk BIOS is opt-in (`--hd-int13-bios` / `K8086_HD_INT13_BIOS=1`). Floppy host
   shim is opt-in (`--floppy-int13-shim` / `K8086_FLOPPY_INT13_SHIM=1`).
-  INT 14h (COM1 8250 AH=00–03; DX≠0 → timeout bit, unit `bt_misc`), 15h
+  INT 14h (COM1/COM2 via BDA `40:00`/`40:02`, AH=00–03; missing base → timeout;
+  POST probes `3F8`/`2F8`; unit `bt_misc`), 15h
   (AH=86h wait; AH=80h–82h succeed; AH=C0h XT config table; else CF), 16h
   (AH=00–02,05 stuff,10–12; Caps/Num/Scroll/Insert flags and Alt-keypad
   decimal ASCII entry; Alt+non-keypad returns AL=0; Ctrl+NumLock pause/hold;
   AH=12 returns FLAG0+FLAG1 held bits), 17h
-  (LPT1 at BDA `40:08` / `0x378`: AH=00–02; a floating status port is forced
-  ready/selected, while DX≠0 reports timeout; unit `bt_misc`),
+  (LPT1/LPT2 at BDA `40:08`/`40:0A`; AH=00–02; status forced ready/selected;
+  POST probes `378`/`278`; unit `bt_misc`),
   18h, 19h, 1Ah
 - INT 05h Print Screen (status at `0000:0500`; Shift+PrtSc from INT 09h)
 - IRQ0 timer (INT 08h → INT 1Ch; floppy motor timeout) and IRQ1 keyboard (INT 09h);
@@ -227,8 +228,9 @@ non-null BUFFERS + SFTE LoL walk, and LoL LASTDRIVE).
 **Out of scope for INT 21h/2Fh fidelity:** AH=53h BPB translate; real
 SHARE/PRINT/APPEND/XMS TSR bodies; JOIN and full SHARE/network SFT graphs;
 network redirector multiplex beyond “not installed”; block `DEVICE=` drivers;
-COM2–4 / LPT2–3; MDA/EGA; FAT16 above 128 MiB. Live CDS paths and
-`SUBST.COM` (via INT 2Fh `AX=12E0h`/`12E1h`) are in scope.
+COM3–4 / LPT3; MDA/EGA; FAT16 above 128 MiB. Live CDS paths and
+`SUBST.COM` (via INT 2Fh `AX=12E0h`/`12E1h`) are in scope. COM2/LPT2 are
+supported via ISA cards + BIOS BDA probe / INT 14h/17h.
 
 After the FAT self-test, the kernel opens **`CONFIG.SYS`** if present (missing file
 is ignored). Supported lines: `INSTALL=` (load+run a COM with its trailing
@@ -413,18 +415,20 @@ INT 13h floppy via FDC with shim off
 (`bt_disk_retry`), format/DASD/status, unsupported-AH CF, 360K/720K/1.2M/1.44M
 AH=08, 360→720 upgrade, change-line, motor timeout), C800 Fixed Disk
 AH=08/R/W/verify plus AH=05 format, AH=09/0C/0D/15 (`bt_hd_svc`/`bt_hd_fmt`),
-timer/INT 1Ch/INT 1Ah set + midnight overflow, INT 14h COM1 loopback + DX≠0
+timer/INT 1Ch/INT 1Ah set + midnight overflow, INT 14h COM1 loopback + missing-port
 timeout (`bt_misc`), INT 15h wait/no-ops/AH=C0, INT 16h flags/AH=00 read/
 AH=10–12 (AH=12 returns FLAG0+FLAG1), Alt+letter AL=0 + Ctrl+NumLock pause
 (`bt_kbd_alt`), IRQ1 Caps/Num/Scroll/Insert (`bt_kbd_locks`), Alt-keypad
 entry, Shift+PrtSc, AH=05 buffer-full CF (`bt_kbd_full`), INT 17h LPT1 success
-+ DX≠0 timeout (`bt_misc`), INT 05h/INT 18h no-BASIC, INT 19h floppy→HD
++ missing-port timeout (`bt_misc`), INT 05h/INT 18h no-BASIC, INT 19h floppy→HD
 fallback (`bt_int19_hd`), ROM identity/checksum, IBM entry trampolines,
 Ctrl-Break→INT 1Bh (`bt_brk`), INT 13h AH=17/18 (`bt_fdc_type`), plus
 `bt_readchar`/`bt_writech`/`bt_kbd_read`/`bt_int13_err`/`bt_hd_verify`/
 `bt_motor`/`bt_timer_of`. Host-only inject assists: `0x8901` scancode,
-`0x8902` FDC disk-change. Not covered: COM2–4 / LPT2–3 (intentional OOS).
-
+`0x8902` FDC disk-change. COM2/LPT2 work when ISA cards populate BDA bases
+(POST probes `2F8`/`278`); COM3–4 / LPT3 remain out of scope. Conventional
+memory above motherboard RAM and adapter-hole UMB are provided by the
+`mem-expansion` ISA card (not XMS/A20).
 ## References
 
 - IBM 5160 Technical Reference (behavioral contract for BIOS)

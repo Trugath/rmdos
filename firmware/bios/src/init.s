@@ -11,6 +11,7 @@
 .section .text
 .global init_pic, init_pit, init_bda, init_ivt
 .global size_memory, scan_option_roms
+.global probe_ports
 
 init_pic:
     mov al, 0x13
@@ -43,9 +44,7 @@ init_bda:
     rep stosw
 
     pop ax                      /* prior warm flag */
-    mov word ptr es:[BDA_COM1], 0x3F8
-    mov word ptr es:[BDA_LPT1], 0x378
-
+    /* COM/LPT bases filled by probe_ports; leave zero until then */
     push ax
     call read_sw1
     mov es:[BDA_EQUIP], ax
@@ -69,10 +68,142 @@ init_bda:
     mov word ptr es:[BDA_MEMKB], 640
 
     cmp ax, WARM_BOOT_MAGIC
-    jne .bda_done
+    jne .bda_probe
     mov word ptr es:[BDA_WARM_FLAG], WARM_BOOT_MAGIC
-.bda_done:
+.bda_probe:
+    call probe_ports
     pop es
+    ret
+
+/*
+ * Probe classic COM (3F8/2F8) and LPT (378/278) bases via scratch/data
+ * readback. Fill BDA 40:00–40:0C and equipment-word serial/parallel counts.
+ * DS/ES = BDA on entry not required; uses ES=BDA.
+ */
+probe_ports:
+    push ax
+    push bx
+    push cx
+    push dx
+    push es
+    push si
+    push di
+    mov ax, BDA_SEG
+    mov es, ax
+
+    xor ax, ax
+    mov word ptr es:[BDA_COM1], ax
+    mov word ptr es:[BDA_COM2], ax
+    mov word ptr es:[BDA_COM3], ax
+    mov word ptr es:[BDA_COM4], ax
+    mov word ptr es:[BDA_LPT1], ax
+    mov word ptr es:[BDA_LPT2], ax
+    mov word ptr es:[BDA_LPT3], ax
+
+    xor bx, bx                   /* BX = COM slot index 0..1 */
+    mov si, 0x3F8
+    call .probe_com
+    mov si, 0x2F8
+    call .probe_com
+
+    xor bx, bx                   /* BX = LPT slot index 0..1 */
+    mov si, 0x378
+    call .probe_lpt
+    mov si, 0x278
+    call .probe_lpt
+
+    /* equipment: bits 9-11 = serial count, bits 14-15 = parallel count */
+    mov ax, es:[BDA_EQUIP]
+    and ax, 0x31FF               /* clear serial (9-11) + parallel (14-15) counts */
+    xor cx, cx
+    cmp word ptr es:[BDA_COM1], 0
+    je .pc1
+    inc cx
+.pc1:
+    cmp word ptr es:[BDA_COM2], 0
+    je .pc2
+    inc cx
+.pc2:
+    mov bx, cx
+    mov cl, 9
+    shl bx, cl
+    or ax, bx
+    xor cx, cx
+    cmp word ptr es:[BDA_LPT1], 0
+    je .pl1
+    inc cx
+.pl1:
+    cmp word ptr es:[BDA_LPT2], 0
+    je .pl2
+    inc cx
+.pl2:
+    mov bx, cx
+    mov cl, 14
+    shl bx, cl
+    or ax, bx
+    mov es:[BDA_EQUIP], ax
+
+    pop di
+    pop si
+    pop es
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+.probe_com:
+    /* SI = candidate base; BX = next COM slot (0 or 1). Scratch at base+7. */
+    push ax
+    push dx
+    mov dx, si
+    add dx, 7
+    mov al, 0x5A
+    out dx, al
+    in al, dx
+    cmp al, 0x5A
+    jne .pcom_miss
+    mov al, 0xA5
+    out dx, al
+    in al, dx
+    cmp al, 0xA5
+    jne .pcom_miss
+    cmp bx, 2
+    jae .pcom_miss
+    mov di, bx
+    shl di, 1
+    mov es:[di], si              /* BDA_COM1 + slot*2 */
+    inc bx
+.pcom_miss:
+    pop dx
+    pop ax
+    ret
+
+.probe_lpt:
+    /* SI = candidate base; BX = next LPT slot. Data latch readback. */
+    push ax
+    push dx
+    mov dx, si
+    mov al, 0xA5
+    out dx, al
+    in al, dx
+    cmp al, 0xA5
+    jne .plpt_miss
+    mov al, 0x5A
+    out dx, al
+    in al, dx
+    cmp al, 0x5A
+    jne .plpt_miss
+    cmp bx, 2
+    jae .plpt_miss
+    mov di, bx
+    shl di, 1
+    add di, BDA_LPT1
+    mov es:[di], si
+    inc bx
+.plpt_miss:
+    pop dx
+    pop ax
     ret
 
 read_sw1:
