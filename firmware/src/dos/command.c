@@ -18,9 +18,11 @@ static char arg2[64] = { 0 };
 static char cwd[64] = { 0 };
 static char pattern[64] = { 0 };
 static char dta[DTA_SIZE] = { 0 };
+static char delete_path[64] = { 0 };
 static char copybuf[64] = { 0 };
 static char pipe_rhs[82] = { 0 };
-static char redir_name[64] = { 0 };
+static char redir_in_name[64] = { 0 };
+static char redir_out_name[64] = { 0 };
 static char exec_tail[96] = { 0 };
 static char exec_pb[14] = { 0 };
 static char fcb1[16] = { 0 };
@@ -47,12 +49,15 @@ static int last_errorlevel;
 static int batch_depth;
 static int batch_handles[4] = { 0 };
 static int goto_active;
-static int redir_kind;
-static int redir_handle;
+static int redir_in_kind;
+static int redir_out_kind;
+static int redir_in_handle;
+static int redir_out_handle;
 static int saved_stdin;
 static int saved_stdout;
 static int dir_count;
 static int dir_bytes;
+static int dir_bytes_hi;
 static int verify_on;
 static int break_on;
 static int batch_argc;
@@ -69,6 +74,7 @@ static char batch_arg_frames[640] = { 0 };
 static int batch_argc_frames[4] = { 0 };
 static int batch_arg_depth;
 static int for_depth;
+static int permanent_shell;
 
 
 void dos_set_verify(int on)
@@ -476,32 +482,177 @@ void do_type(void)
     int h;
     int n;
     if (!next_token(arg1, PATH_MAX)) {
-        print_dollar("TYPE file\r\n$");
-        last_errorlevel = 1;
-        return;
-    }
-    h = dos_open(arg1, 0);
-    if (h == -1) {
-        print_dollar("file not found\r\n$");
-        last_errorlevel = 1;
-        return;
+        h = 0;
+    } else {
+        h = dos_open(arg1, 0);
+        if (h == -1) {
+            print_dollar("file not found\r\n$");
+            last_errorlevel = 1;
+            return;
+        }
     }
     n = dos_read(h, copybuf, 128);
     while (n > 0) {
         dos_write(1, copybuf, n);
         n = dos_read(h, copybuf, 128);
     }
-    dos_close(h);
+    if (h != 0) dos_close(h);
     last_errorlevel = 0;
 }
 
 /* Internal COPY removed — bare COPY PATH-execs BIN\COPY.COM (/V /A /B). */
+
+void print_two_digits(int n)
+{
+    if (n < 10) {
+        print_char('0');
+    }
+    print_num(n);
+}
+
+void print_dta_datetime(void)
+{
+    int date;
+    int time;
+    int month;
+    int day;
+    int year;
+    int hour;
+    int minute;
+
+    time = peek_word(buf_addr(dta, 0x16));
+    date = peek_word(buf_addr(dta, 0x18));
+    day = date & 31;
+    month = (date >> 5) & 15;
+    year = ((date >> 9) & 127) + 1980;
+    hour = (time >> 11) & 31;
+    minute = (time >> 5) & 63;
+
+    print_dollar("  $");
+    print_two_digits(month);
+    print_char('-');
+    print_two_digits(day);
+    print_char('-');
+    print_num(year);
+    print_char(' ');
+    print_two_digits(hour);
+    print_char(':');
+    print_two_digits(minute);
+}
+
+int is_all_files_pattern(char *spec)
+{
+    int i;
+    int base;
+    int c;
+    i = 0;
+    base = 0;
+    while (1) {
+        c = buf_get(spec, i);
+        if (c == 0) {
+            break;
+        }
+        if (c == '\\' || c == '/' || c == ':') {
+            base = i + 1;
+        }
+        i = i + 1;
+    }
+    return buf_get(spec, base) == '*' &&
+           buf_get(spec, base + 1) == '.' &&
+           buf_get(spec, base + 2) == '*' &&
+           buf_get(spec, base + 3) == 0;
+}
+
+void build_delete_path(char *spec, char *found)
+{
+    int i;
+    int base;
+    int out;
+    int c;
+    i = 0;
+    base = 0;
+    while (1) {
+        c = buf_get(spec, i);
+        if (c == 0) {
+            break;
+        }
+        if (c == '\\' || c == '/' || c == ':') {
+            base = i + 1;
+        }
+        i = i + 1;
+    }
+    out = 0;
+    while (out < base && out < PATH_MAX - 1) {
+        buf_set(delete_path, out, buf_get(spec, out));
+        out = out + 1;
+    }
+    i = 0;
+    while (buf_get(found, i) != 0 && out < PATH_MAX - 1) {
+        buf_set(delete_path, out, buf_get(found, i));
+        out = out + 1;
+        i = i + 1;
+    }
+    buf_set(delete_path, out, 0);
+}
+
+void do_del(void)
+{
+    int c;
+    int deleted;
+    int failed;
+
+    if (!next_token(arg1, PATH_MAX)) {
+        print_dollar("DEL file\r\n$");
+        last_errorlevel = 1;
+        return;
+    }
+    if (is_all_files_pattern(arg1) && batch_depth == 0) {
+        print_dollar("Are you sure (Y/N)? $");
+        c = toupper_ch(read_key());
+        print_char(c);
+        print_crlf();
+        if (c != 'Y') {
+            last_errorlevel = 0;
+            return;
+        }
+    }
+
+    dos_set_dta(dta);
+    if (dos_find_first(arg1, 0) == -1) {
+        print_dollar("DEL file\r\n$");
+        last_errorlevel = 1;
+        return;
+    }
+    deleted = 0;
+    failed = 0;
+    while (1) {
+        build_delete_path(arg1, buf_addr(dta, 0x1E));
+        if (dos_delete(delete_path) == 0) {
+            deleted = deleted + 1;
+        } else {
+            failed = 1;
+        }
+        if (dos_find_next() == -1) {
+            break;
+        }
+    }
+    if (deleted > 0) {
+        print_dollar("deleted\r\n$");
+    }
+    if (deleted == 0 || failed) {
+        last_errorlevel = 1;
+    } else {
+        last_errorlevel = 0;
+    }
+}
 
 void do_dir(void)
 {
     int i;
     int attr;
     int size;
+    int size_hi;
+    int old_size;
     int opt_w;
     int opt_p;
     int wide_col;
@@ -568,6 +719,7 @@ void do_dir(void)
     print_crlf();
     dir_count = 0;
     dir_bytes = 0;
+    dir_bytes_hi = 0;
     wide_col = 0;
     page_lines = 1;
     if (dos_find_first(pattern, 0x10) == -1) {
@@ -600,17 +752,25 @@ void do_dir(void)
             if (attr & 0x10) {
                 print_dollar("<DIR>$");
             } else {
-                size = buf_get(dta, 0x1a) + (buf_get(dta, 0x1b) * 256);
-                print_num(size);
+                size = peek_word(buf_addr(dta, 0x1A));
+                size_hi = peek_word(buf_addr(dta, 0x1C));
+                print_u32(size, size_hi);
             }
+            print_dta_datetime();
             print_crlf();
             page_lines = page_lines + 1;
         }
         if (!(buf_get(dta, 0x1e) == '.' && (buf_get(dta, 0x1f) == 0 || (buf_get(dta, 0x1f) == '.' && buf_get(dta, 0x20) == 0)))) {
             dir_count = dir_count + 1;
             if (!(attr & 0x10)) {
-                size = buf_get(dta, 0x1a) + (buf_get(dta, 0x1b) * 256);
+                size = peek_word(buf_addr(dta, 0x1A));
+                size_hi = peek_word(buf_addr(dta, 0x1C));
+                old_size = dir_bytes;
                 dir_bytes = dir_bytes + size;
+                dir_bytes_hi = dir_bytes_hi + size_hi;
+                if (dir_bytes < old_size) {
+                    dir_bytes_hi = dir_bytes_hi + 1;
+                }
             }
         }
         if (opt_p && page_lines >= 23) {
@@ -627,9 +787,9 @@ void do_dir(void)
         print_crlf();
     }
     print_dollar("        $");
-    print_num(dir_count);
+    print_u32(dir_count, 0);
     print_dollar(" File(s)     $");
-    print_num(dir_bytes);
+    print_u32(dir_bytes, dir_bytes_hi);
     print_dollar(" bytes\r\n                    $");
     if (dos_disk_free(0) == 0) {
         /* free_clusters * secs/clust * bytes/sect — low 16 bits is enough for the gate */
@@ -1280,6 +1440,10 @@ void do_exit(void)
         print_dollar("EXIT OK\r\n$");
         return;
     }
+    if (permanent_shell) {
+        print_dollar("Primary\r\n$");
+        return;
+    }
     print_dollar("Primary\r\n$");
 }
 
@@ -1925,78 +2089,169 @@ void do_if(void)
     }
 }
 
+void restore_redirection(void)
+{
+    if (saved_stdout != -1) {
+        dos_force_dup(saved_stdout, 1);
+        dos_close(saved_stdout);
+        saved_stdout = -1;
+    }
+    if (redir_out_handle != -1) {
+        dos_close(redir_out_handle);
+        redir_out_handle = -1;
+    }
+    if (saved_stdin != -1) {
+        dos_force_dup(saved_stdin, 0);
+        dos_close(saved_stdin);
+        saved_stdin = -1;
+    }
+    if (redir_in_handle != -1) {
+        dos_close(redir_in_handle);
+        redir_in_handle = -1;
+    }
+}
+
 int setup_redirection(void)
 {
     int h;
-    if (redir_kind == 0) {
-        return 1;
-    }
-    if (redir_kind == 3) {
-        h = dos_open(redir_name, 0);
+    if (redir_in_kind != 0) {
+        h = dos_open(redir_in_name, 0);
         if (h == -1) return 0;
+        redir_in_handle = h;
         saved_stdin = dos_dup(0);
-        if (saved_stdin == -1) return 0;
-        dos_force_dup(h, 0);
-    } else {
-        if (redir_kind == 2) {
-            h = dos_open(redir_name, 1);
+        if (saved_stdin == -1) {
+            restore_redirection();
+            return 0;
+        }
+        if (dos_force_dup(h, 0) == -1) {
+            restore_redirection();
+            return 0;
+        }
+    }
+    if (redir_out_kind != 0) {
+        if (redir_out_kind == 2) {
+            h = dos_open(redir_out_name, 1);
             if (h != -1) dos_seek_end(h);
         } else {
             h = -1;
         }
-        if (h == -1) h = dos_create(redir_name, 0);
-        if (h == -1) return 0;
+        if (h == -1) h = dos_create(redir_out_name, 0);
+        if (h == -1) {
+            restore_redirection();
+            return 0;
+        }
+        redir_out_handle = h;
         saved_stdout = dos_dup(1);
-        if (saved_stdout == -1) return 0;
-        dos_force_dup(h, 1);
+        if (saved_stdout == -1) {
+            restore_redirection();
+            return 0;
+        }
+        if (dos_force_dup(h, 1) == -1) {
+            restore_redirection();
+            return 0;
+        }
     }
-    redir_handle = h;
     return 1;
-}
-
-void restore_redirection(void)
-{
-    if (redir_kind == 3) {
-        dos_force_dup(saved_stdin, 0);
-        dos_close(saved_stdin);
-    }
-    if (redir_kind == 1 || redir_kind == 2) {
-        dos_force_dup(saved_stdout, 1);
-        dos_close(saved_stdout);
-    }
-    if (redir_kind != 0) dos_close(redir_handle);
 }
 
 void parse_redirection(void)
 {
     int i;
+    int o;
     int c;
     int n;
-    redir_kind = 0;
+    int kind;
+    redir_in_kind = 0;
+    redir_out_kind = 0;
+    redir_in_handle = -1;
+    redir_out_handle = -1;
+    saved_stdin = -1;
+    saved_stdout = -1;
+    buf_set(redir_in_name, 0, 0);
+    buf_set(redir_out_name, 0, 0);
     i = 0;
+    o = 0;
     while (buf_get(cmd, i) != 0) {
         c = buf_get(cmd, i);
         if (c == '>' || c == '<') {
-            if (c == '>') redir_kind = 1;
-            else redir_kind = 3;
-            buf_set(cmd, i, 0);
+            if (c == '>') kind = 1;
+            else kind = 3;
             i = i + 1;
             if (c == '>' && buf_get(cmd, i) == '>') {
-                redir_kind = 2;
+                kind = 2;
                 i = i + 1;
             }
-            while (buf_get(cmd, i) == ' ') i = i + 1;
+            while (buf_get(cmd, i) == ' ' || buf_get(cmd, i) == 9) i = i + 1;
             n = 0;
-            while (buf_get(cmd, i) != 0 && buf_get(cmd, i) != ' ' && n < PATH_MAX - 1) {
-                buf_set(redir_name, n, buf_get(cmd, i));
-                n = n + 1;
+            while (buf_get(cmd, i) != 0
+                && buf_get(cmd, i) != ' '
+                && buf_get(cmd, i) != 9
+                && buf_get(cmd, i) != '<'
+                && buf_get(cmd, i) != '>') {
+                if (n < PATH_MAX - 1) {
+                    if (c == '<') buf_set(redir_in_name, n, buf_get(cmd, i));
+                    else buf_set(redir_out_name, n, buf_get(cmd, i));
+                    n = n + 1;
+                }
                 i = i + 1;
             }
-            buf_set(redir_name, n, 0);
-            return;
+            if (c == '<') {
+                buf_set(redir_in_name, n, 0);
+                redir_in_kind = kind;
+            } else {
+                buf_set(redir_out_name, n, 0);
+                redir_out_kind = kind;
+            }
+        } else {
+            buf_set(cmd, o, c);
+            o = o + 1;
+            i = i + 1;
         }
-        i = i + 1;
     }
+    while (o > 0 && (buf_get(cmd, o - 1) == ' ' || buf_get(cmd, o - 1) == 9)) {
+        o = o - 1;
+    }
+    buf_set(cmd, o, 0);
+}
+
+int parse_startup_tail(void)
+{
+    int n;
+    int i;
+    int o;
+    int c;
+    n = peek_byte(0x80);
+    i = 0;
+    permanent_shell = 0;
+    while (i < n) {
+        while (i < n && (peek_byte(0x81 + i) == ' ' || peek_byte(0x81 + i) == 9)) {
+            i = i + 1;
+        }
+        if (i >= n) break;
+        c = peek_byte(0x81 + i);
+        if (c != '/' && c != '-') break;
+        i = i + 1;
+        c = toupper_ch(peek_byte(0x81 + i));
+        i = i + 1;
+        if (c == 'C') {
+            while (i < n && (peek_byte(0x81 + i) == ' ' || peek_byte(0x81 + i) == 9)) {
+                i = i + 1;
+            }
+            o = 0;
+            while (i < n && o < LINE_MAX) {
+                buf_set(cmd, o, peek_byte(0x81 + i));
+                i = i + 1;
+                o = o + 1;
+            }
+            buf_set(cmd, o, 0);
+            return 1;
+        }
+        if (c == 'P') permanent_shell = 1;
+        while (i < n && peek_byte(0x81 + i) != ' ' && peek_byte(0x81 + i) != 9) {
+            i = i + 1;
+        }
+    }
+    return 0;
 }
 
 void dispatch_plain(void)
@@ -2015,16 +2270,7 @@ void dispatch_plain(void)
     if (str_eq(prog, "DIR")) { do_dir(); return; }
     if (str_eq(prog, "TYPE")) { do_type(); return; }
     /* COPY falls through to PATH exec of BIN\COPY.COM */
-    if (str_eq(prog, "DEL") || str_eq(prog, "ERASE")) {
-        if (next_token(arg1, PATH_MAX) && dos_delete(arg1) == 0) {
-            print_dollar("deleted\r\n$");
-            last_errorlevel = 0;
-        } else {
-            print_dollar("DEL file\r\n$");
-            last_errorlevel = 1;
-        }
-        return;
-    }
+    if (str_eq(prog, "DEL") || str_eq(prog, "ERASE")) { do_del(); return; }
     if (str_eq(prog, "PATH")) { do_path(); return; }
     if (str_eq(prog, "CLS")) { clear_screen(); return; }
     if (str_eq(prog, "CD") || str_eq(prog, "CHDIR")) {
@@ -2173,6 +2419,7 @@ void dispatch_plain(void)
             if (try_exec_name()) return;
             if (try_batch_name()) return;
         }
+        last_errorlevel = 1;
         print_dollar("Bad command\r\n$");
     }
 }
@@ -2328,6 +2575,13 @@ int main(void)
 {
     reload_ds();
     echo_on = 1;
+    if (parse_startup_tail()) {
+        expand_batch_args();
+        expand_env_percent();
+        dispatch();
+        /* Returning reaches the COM startup's AH=4Ch with AX as the code. */
+        return last_errorlevel;
+    }
     do_batch("AUTOEXEC.BAT");
     main_loop();
     return 0;

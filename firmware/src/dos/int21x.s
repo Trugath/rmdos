@@ -272,14 +272,43 @@ _start:
     jnc .t_60_cf
     jmp fail_temp
 .t_60_cf:
-    cmp byte ptr [truebuf], 'A'
-    je .t_60_a
-    jmp fail_temp
-.t_60_a:
-    cmp byte ptr [truebuf + 1], ':'
-    je .t_60_ok
-    jmp fail_temp
+    lea si, [truebuf]
+    lea di, [true_expect]
+.t_60_cmp:
+    lodsb
+    cmp al, es:[di]
+    jne fail_temp
+    inc di
+    test al, al
+    jnz .t_60_cmp
 .t_60_ok:
+
+    /* Truename expands a SUBST drive to its real drive and prefix. */
+    mov ax, 0x12E0
+    mov bx, 0x0004                 /* E: → A: */
+    lea dx, [true_subst_path]
+    int 0x2F
+    test al, al
+    jnz fail_temp
+    lea si, [true_subst_src]
+    lea di, [truebuf]
+    mov ah, 0x60
+    int 0x21
+    jc fail_temp
+    lea si, [truebuf]
+    lea di, [true_subst_expect]
+.t_60_subst_cmp:
+    lodsb
+    cmp al, es:[di]
+    jne fail_temp
+    inc di
+    test al, al
+    jnz .t_60_subst_cmp
+    mov ax, 0x12E1
+    mov bl, 4
+    int 0x2F
+    test al, al
+    jnz fail_temp
 
     mov ax, 0x38FF
     mov bx, 1
@@ -315,6 +344,19 @@ _start:
     je .psp_c1
     jmp fail_psp
 .psp_c1:
+    mov es, bx
+    cmp word ptr es:[0x32], 20
+    jne fail_psp
+    cmp word ptr es:[0x34], 0x18
+    jne fail_psp
+    cmp word ptr es:[0x36], bx
+    jne fail_psp
+    cmp byte ptr es:[0x18], 0x01
+    jne fail_psp
+    cmp byte ptr es:[0x19], 0x01
+    jne fail_psp
+    cmp byte ptr es:[0x1A], 0x01
+    jne fail_psp
 
     mov ax, 0x3D00
     lea dx, [nosuch]
@@ -460,6 +502,14 @@ _start:
     jmp fail_ioctl
 .t_ioctl0dz:
 
+    /* AL=09 reports a local drive with AX=0. */
+    mov ax, 0x4409
+    mov bl, 1
+    int 0x21
+    jc fail_ioctl
+    test ax, ax
+    jnz fail_ioctl
+
     /* AL=02 char read from NUL */
     mov ax, 0x3D00
     lea dx, [nul_name]
@@ -580,7 +630,41 @@ _start:
     int 0x21
     jmp fail_exit
 .x_dpb_seg:
+    mov word ptr cs:[dpb_seen_off], bx
+    mov ax, ds
+    mov word ptr cs:[dpb_seen_seg], ax
     pop ds
+
+    /* CDS[0]+45 must reference the same per-drive slot as AH=32/AH=1F. */
+    mov ah, 0x52
+    int 0x21
+    mov si, es:[bx + 0x16]
+    mov ax, es:[si + 0x45]
+    cmp ax, word ptr cs:[dpb_seen_off]
+    jne .x_dpb_match_fail
+    mov ax, es:[si + 0x47]
+    cmp ax, word ptr cs:[dpb_seen_seg]
+    jne .x_dpb_match_fail
+    push ds
+    mov ah, 0x1F
+    int 0x21
+    cmp al, 0xFF
+    je .x_dpb_1f_fail
+    cmp bx, word ptr cs:[dpb_seen_off]
+    jne .x_dpb_1f_fail
+    mov ax, ds
+    cmp ax, word ptr cs:[dpb_seen_seg]
+    jne .x_dpb_1f_fail
+    pop ds
+    jmp .x_dpb_match_ok
+.x_dpb_1f_fail:
+    pop ds
+.x_dpb_match_fail:
+    mov ah, 0x09
+    lea dx, [msg_xf3]
+    int 0x21
+    jmp fail_exit
+.x_dpb_match_ok:
 
     mov ax, 0x5801
     mov bx, 1
@@ -899,6 +983,61 @@ _start:
     jmp fail_exit
 .x_1c_ok:
 
+    /* AH=0Eh returns LASTDRIVE while selecting the requested current drive. */
+    mov ah, 0x19
+    int 0x21
+    mov dl, al
+    mov ah, 0x0E
+    int 0x21
+    cmp al, 8
+    jne .x_drive_api_fail
+
+    /* AH=2Dh soft time round-trips through AH=2Ch without RTC hardware. */
+    mov ch, 12
+    mov cl, 34
+    mov dh, 56
+    mov dl, 78
+    mov ah, 0x2D
+    int 0x21
+    test al, al
+    jnz .x_drive_api_fail
+    mov ah, 0x2C
+    int 0x21
+    cmp ch, 12
+    jne .x_drive_api_fail
+    cmp cl, 34
+    jne .x_drive_api_fail
+    cmp dh, 56
+    jne .x_drive_api_fail
+    cmp dl, 78
+    jne .x_drive_api_fail
+
+    /* AH=36 honors DL=1 (A:) and rejects an unmapped requested drive. */
+    mov ah, 0x36
+    mov dl, 1
+    int 0x21
+    cmp ax, 0xFFFF
+    je .x_drive_api_fail
+    test ax, ax
+    jz .x_drive_api_fail
+    test bx, bx
+    jz .x_drive_api_fail
+    cmp cx, 512
+    jne .x_drive_api_fail
+    test dx, dx
+    jz .x_drive_api_fail
+    mov ah, 0x36
+    mov dl, 0x7F
+    int 0x21
+    cmp ax, 0xFFFF
+    je .x_drive_api_ok
+.x_drive_api_fail:
+    mov ah, 0x09
+    lea dx, [msg_xfb]
+    int 0x21
+    jmp fail_exit
+.x_drive_api_ok:
+
     /* INT 25h absolute read boot sector — expect 55 AA */
     push ds
     push cs
@@ -906,6 +1045,23 @@ _start:
     lea bx, [absbuf]
     mov al, 0
     mov cx, 1
+    xor dx, dx
+    int 0x25
+    pop ax
+    sti
+    jc .x_25f
+    cmp word ptr [absbuf + 510], 0xAA55
+    jne .x_25f
+
+    /* DOS 3.31 packet form: DWORD sector, WORD count, far transfer buffer. */
+    lea ax, [absbuf]
+    mov word ptr [abs_packet + 6], ax
+    mov ax, cs
+    mov word ptr [abs_packet + 8], ax
+    mov word ptr [absbuf + 510], 0
+    lea bx, [abs_packet]
+    mov al, 0
+    mov cx, 0xFFFF
     xor dx, dx
     int 0x25
     pop ax
@@ -941,6 +1097,14 @@ _start:
     jne .x_pspf
     mov es, bx
     cmp byte ptr es:[0], 0xCD
+    jne .x_pspf
+    cmp word ptr es:[0x32], 20
+    jne .x_pspf
+    cmp word ptr es:[0x34], 0x18
+    jne .x_pspf
+    cmp word ptr es:[0x36], bx
+    jne .x_pspf
+    cmp byte ptr es:[0x18], 0x01
     jne .x_pspf
     /* restore current PSP */
     mov bx, word ptr [saved_psp]
@@ -1347,8 +1511,20 @@ nul_name:
     .asciz "NUL"
 xtra_h:
     .word 0
+dpb_seen_off:
+    .word 0
+dpb_seen_seg:
+    .word 0
 relname:
-    .asciz "FOO.TXT"
+    .asciz "A:\\TEST\\.\\FOO\\..\\SAMPLE.TXT"
+true_expect:
+    .asciz "A:\\TEST\\SAMPLE.TXT"
+true_subst_path:
+    .asciz "\\TEST"
+true_subst_src:
+    .asciz "E:\\.\\SAMPLE.TXT"
+true_subst_expect:
+    .asciz "A:\\TEST\\SAMPLE.TXT"
 plain_tmp:
     .asciz "PLAIN.TMP"
 saved_psp:
@@ -1373,6 +1549,10 @@ country_buf:
     .space 40, 0
 absbuf:
     .space 512, 0
+abs_packet:
+    .long 0                      /* starting sector */
+    .word 1                      /* sector count */
+    .word 0, 0                   /* transfer offset, segment */
 exec1_path:
     .asciz "A:\\BIN\\MORE.COM"
 exec1_tail:

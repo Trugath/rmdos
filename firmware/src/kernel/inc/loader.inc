@@ -554,7 +554,72 @@ load_setup_exe:
     ret
 
 /*
- * Fill PSP fields shared by COM/EXE: parent, env, vectors, tail, FCBs.
+ * Fill the standard 20-byte PSP Job File Table.
+ * IN: ES = target PSP. A valid parent contributes its current JFT; otherwise
+ * use the classic CON/CON/CON/AUX/PRN SFT indices and FFh padding.
+ */
+psp_fill_jft:
+    push ax
+    push bx
+    push cx
+    push si
+    push di
+    push ds
+
+    mov word ptr es:[0x32], 20
+    mov word ptr es:[0x34], 0x18
+    mov ax, es
+    mov word ptr es:[0x36], ax
+
+    mov di, 0x18
+    mov cx, 20
+    mov al, 0xFF
+    cld
+    rep stosb
+
+    mov ax, word ptr cs:[current_psp]
+    test ax, ax
+    jz .pfj_defaults
+    mov bx, es
+    cmp ax, bx
+    je .pfj_defaults
+    mov ds, ax
+    cmp word ptr [0], 0x20CD
+    jne .pfj_defaults
+    mov cx, word ptr [0x32]
+    test cx, cx
+    jz .pfj_defaults
+    cmp cx, 20
+    jbe .pfj_count_ok
+    mov cx, 20
+.pfj_count_ok:
+    mov si, word ptr [0x34]
+    mov ax, word ptr [0x36]
+    test ax, ax
+    jz .pfj_defaults
+    mov ds, ax
+    mov di, 0x18
+    rep movsb
+    jmp .pfj_done
+
+.pfj_defaults:
+    mov byte ptr es:[0x18], 0x01
+    mov byte ptr es:[0x19], 0x01
+    mov byte ptr es:[0x1A], 0x01
+    mov byte ptr es:[0x1B], 0x00
+    mov byte ptr es:[0x1C], 0x02
+
+.pfj_done:
+    pop ds
+    pop di
+    pop si
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+/*
+ * Fill PSP fields shared by COM/EXE: parent, JFT, env, vectors, tail, FCBs.
  * ES = psp_run on entry not required; uses CS:psp_run.
  */
 psp_fill_common:
@@ -574,6 +639,7 @@ psp_fill_common:
     /* parent PSP */
     mov ax, word ptr cs:[current_psp]
     mov word ptr es:[0x16], ax
+    call psp_fill_jft
 
     /* save INT 22/23/24 into PSP */
     push ds
@@ -682,6 +748,7 @@ psp_create_at:
     xor di, di
     mov cx, 0x80
     xor ax, ax
+    cld
     rep stosw
 
     mov byte ptr es:[0x00], 0xCD
@@ -713,6 +780,7 @@ psp_create_at:
 .pca_parent:
     mov ax, word ptr cs:[current_psp]
     mov word ptr es:[0x16], ax
+    call psp_fill_jft
 
     push ds
     xor ax, ax

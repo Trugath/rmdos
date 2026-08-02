@@ -2,7 +2,7 @@
 #include "dos.h"
 
 static char tok[32];
-static char msg_u[48] = "MODE COMn: baud,parity,data,stop\r\n$";
+static char msg_u[80] = "MODE 40|80|BW80|CO80|CON|COM1: baud,parity,data,stop\r\n$";
 static char msg_ok[12] = "MODE OK\r\n$";
 static char msg_bad[22] = "MODE: bad args\r\n$";
 static char msg_set[28] = "COM1 set: $";
@@ -14,6 +14,34 @@ static int i14_ax;
 static int i14_dx;
 static int parse_val;
 static int con_cols;
+
+static int token_is(char *s, char *want)
+{
+    int i;
+    int a;
+    int b;
+
+    i = 0;
+    while (1) {
+        a = toupper_ch(buf_get(s, i));
+        b = toupper_ch(buf_get(want, i));
+        if (a != b) {
+            return 0;
+        }
+        if (a == 0) {
+            return 1;
+        }
+        i = i + 1;
+    }
+}
+
+static void set_video_mode(int mode)
+{
+    asm("mov ax, [bp+4]");
+    asm("xor ah, ah");
+    asm("int 0x10");
+    reload_ds();
+}
 
 static int parse_num(char *s)
 {
@@ -229,6 +257,23 @@ int main(void)
     }
     if (i > 0 && buf_get(p1, i - 1) == ':') {
         buf_set(p1, i - 1, 0);
+    }
+
+    if (token_is(p1, "40") || token_is(p1, "80")
+        || token_is(p1, "BW80") || token_is(p1, "CO80")) {
+        if (args_token(p2, 32)) {
+            print_dollar(msg_bad);
+            return 1;
+        }
+        if (token_is(p1, "40")) {
+            set_video_mode(1);
+        } else if (token_is(p1, "BW80")) {
+            set_video_mode(2);
+        } else {
+            set_video_mode(3);
+        }
+        print_dollar(msg_ok);
+        return 0;
     }
 
     if (toupper_ch(buf_get(p1, 0)) == 'C' && toupper_ch(buf_get(p1, 1)) == 'O'

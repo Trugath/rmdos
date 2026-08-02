@@ -1,7 +1,8 @@
 /*
  * CONFIG.SYS — parse before COMMAND.COM.
  * Supports INSTALL= (load+run COM), character-device DEVICE= (.SYS), FILES=,
- * BUFFERS=, LASTDRIVE=, BREAK=, and SHELL=. Missing CONFIG.SYS is success.
+ * BUFFERS=, LASTDRIVE=, BREAK=, and SHELL=. STACKS/FCBS/COUNTRY/DRIVPARM
+ * are accepted as advisory no-ops. Missing CONFIG.SYS is success.
  */
 
 .equ CFG_LINE_MAX, 120
@@ -56,6 +57,8 @@ dos_process_config:
     call cfg_match_break
     jnc .cfg_line
     call cfg_match_shell
+    jnc .cfg_line
+    call cfg_match_advisory
     jnc .cfg_line
     call cfg_print_ignored
     jmp .cfg_line
@@ -466,6 +469,48 @@ cfg_match_break:
     pop ax
     ret
 
+/* Accept common compatibility directives without claiming to implement them. */
+cfg_match_advisory:
+    push ax
+    push di
+
+    lea si, [cfg_line]
+    call cfg_skip_ws
+    call cfg_upcase_line
+    lea di, [cfg_kw_stacks]
+    call cfg_strcmp_prefix
+    jnc .cfg_ma_eq
+
+    lea si, [cfg_line]
+    call cfg_skip_ws
+    lea di, [cfg_kw_fcbs]
+    call cfg_strcmp_prefix
+    jnc .cfg_ma_eq
+
+    lea si, [cfg_line]
+    call cfg_skip_ws
+    lea di, [cfg_kw_country]
+    call cfg_strcmp_prefix
+    jnc .cfg_ma_eq
+
+    lea si, [cfg_line]
+    call cfg_skip_ws
+    lea di, [cfg_kw_drivparm]
+    call cfg_strcmp_prefix
+    jc .cfg_ma_no
+
+.cfg_ma_eq:
+    cmp byte ptr [si], '='
+    jne .cfg_ma_no
+    clc
+    jmp .cfg_ma_done
+.cfg_ma_no:
+    stc
+.cfg_ma_done:
+    pop di
+    pop ax
+    ret
+
 cfg_match_shell:
     push ax
     push di
@@ -480,6 +525,21 @@ cfg_match_shell:
     inc si
     call cfg_skip_ws
     call cfg_trim_path
+    /* SHELL keeps only the executable path; /P and /E: are shell options. */
+    mov di, si
+.cfg_ms_split:
+    mov al, [di]
+    test al, al
+    jz .cfg_ms_split_done
+    cmp al, ' '
+    je .cfg_ms_cut
+    cmp al, 9
+    je .cfg_ms_cut
+    inc di
+    jmp .cfg_ms_split
+.cfg_ms_cut:
+    mov byte ptr [di], 0
+.cfg_ms_split_done:
     /* copy path into path_command */
     push es
     push cs

@@ -4,8 +4,8 @@
 .global _start
 
 /*
- * Shift+period → '>' via INT 09 / INT 16.
- * Inject Left Shift + period through host port 0x8901.
+ * Shift punctuation and Alt+keypad ASCII via INT 09 / INT 16.
+ * Inject make/break scancodes through host port 0x8901.
  */
 
 .equ SCAN_INJECT, 0x8901
@@ -78,6 +78,32 @@ _start:
     cmp ax, 0x333C
     jne .fail_lt
 
+    /* Alt+keypad 65 → ASCII 'A' with scan byte zero on Alt release. */
+    mov al, 0x38
+    mov dx, SCAN_INJECT
+    out dx, al
+    hlt
+    mov al, 0x4D                  /* keypad 6 */
+    out dx, al
+    hlt
+    mov al, 0xCD
+    out dx, al
+    hlt
+    mov al, 0x4C                  /* keypad 5 */
+    out dx, al
+    hlt
+    mov al, 0xCC
+    out dx, al
+    hlt
+    mov al, 0xB8                  /* Alt break enqueues accumulated byte */
+    out dx, al
+    hlt
+
+    mov ah, 0x00
+    int 0x16
+    cmp ax, 0x0041
+    jne .fail_alt
+
     push cs
     pop ds
     mov si, offset name
@@ -98,6 +124,11 @@ _start:
     pop ds
     mov si, offset msg_lt
     call fail_and_halt
+.fail_alt:
+    push cs
+    pop ds
+    mov si, offset msg_alt
+    call fail_and_halt
 
 name:
     .asciz "bt_kbd_shift"
@@ -107,5 +138,7 @@ msg_dot:
     .asciz "bt_kbd_shift:."
 msg_lt:
     .asciz "bt_kbd_shift:<"
+msg_alt:
+    .asciz "bt_kbd_shift:alt"
 
 .include "firmware/bios/tests/boot/common.inc"

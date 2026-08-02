@@ -5,7 +5,8 @@
 
 /*
  * FORMAT.COM — FAT12/FAT16 format from INT 13h geometry (floppy or HDD ≤128MB).
- * Usage: FORMAT [d:] [/S] [/Y] [/V[:label]] [/F:720] [/1] [/4]
+ * Usage: FORMAT [d:] [/S] [/Y] [/V[:label]]
+ *        [/F:360|720|1200|1.2|1440] [/1] [/4] [/8]
  */
 
 .equ ROOT_ENTS, 112
@@ -19,9 +20,10 @@ _start:
     mov byte ptr [flag_y], 0
     mov byte ptr [flag_s], 0
     mov byte ptr [flag_v], 0
-    mov byte ptr [flag_f720], 0
+    mov byte ptr [preset_format], 0
     mov byte ptr [flag_one], 0
     mov byte ptr [flag_four], 0
+    mov byte ptr [flag_eight], 0
     mov byte ptr [preset_media], 0
     mov byte ptr [drive_dl], 0
     mov byte ptr [drive_let], 'A'
@@ -254,14 +256,64 @@ pa_try_f:
     cmp byte ptr [si + 1], ':'
     jne pa_bad
     cmp byte ptr [si + 2], '7'
-    jne pa_bad
+    jne pa_f_360
     cmp byte ptr [si + 3], '2'
     jne pa_bad
     cmp byte ptr [si + 4], '0'
     jne pa_bad
-    mov byte ptr [flag_f720], 1
+    mov byte ptr [preset_format], 1
     add si, 5
-    jmp pa_sp
+    jmp pa_f_done
+pa_f_360:
+    cmp byte ptr [si + 2], '3'
+    jne pa_f_1x
+    cmp byte ptr [si + 3], '6'
+    jne pa_bad
+    cmp byte ptr [si + 4], '0'
+    jne pa_bad
+    mov byte ptr [preset_format], 2
+    add si, 5
+    jmp pa_f_done
+pa_f_1x:
+    cmp byte ptr [si + 2], '1'
+    jne pa_bad
+    cmp byte ptr [si + 3], '.'
+    jne pa_f_1200
+    cmp byte ptr [si + 4], '2'
+    jne pa_bad
+    mov byte ptr [preset_format], 3
+    add si, 5
+    jmp pa_f_done
+pa_f_1200:
+    cmp byte ptr [si + 3], '2'
+    jne pa_f_1440
+    cmp byte ptr [si + 4], '0'
+    jne pa_bad
+    cmp byte ptr [si + 5], '0'
+    jne pa_bad
+    mov byte ptr [preset_format], 3
+    add si, 6
+    jmp pa_f_done
+pa_f_1440:
+    cmp byte ptr [si + 3], '4'
+    jne pa_bad
+    cmp byte ptr [si + 4], '4'
+    jne pa_bad
+    cmp byte ptr [si + 5], '0'
+    jne pa_bad
+    mov byte ptr [preset_format], 4
+    add si, 6
+pa_f_done:
+    mov al, [si]
+    test al, al
+    jz pa_ok
+    cmp al, 0x0D
+    je pa_ok
+    cmp al, ' '
+    je pa_sp
+    cmp al, 9
+    je pa_sp
+    jmp pa_bad
 pa_try_one:
     cmp al, '1'
     jne pa_try_four
@@ -270,8 +322,14 @@ pa_try_one:
     jmp pa_sp
 pa_try_four:
     cmp al, '4'
-    jne pa_skip
+    jne pa_try_eight
     mov byte ptr [flag_four], 1
+    inc si
+    jmp pa_sp
+pa_try_eight:
+    cmp al, '8'
+    jne pa_skip
+    mov byte ptr [flag_eight], 1
     inc si
     jmp pa_sp
 pa_ok:
@@ -354,54 +412,137 @@ pvl_done:
 /* Apply classic floppy geometry switches after BIOS probing. */
 apply_presets:
     push ax
+    push bx
+    push cx
     push dx
-    mov al, [flag_f720]
-    and al, [flag_four]
-    jnz ap_fail
-    mov al, [flag_f720]
+    push di
+    push es
+    mov al, [preset_format]
+    test al, al
+    jz ap_options
+    cmp byte ptr [flag_four], 0
+    jne ap_fail
+    cmp byte ptr [flag_eight], 0
+    je ap_options
+    cmp al, 2                       /* /8 may refine the 360K preset */
+    jne ap_fail
+ap_options:
+    mov al, [preset_format]
     or al, [flag_four]
     or al, [flag_one]
+    or al, [flag_eight]
     jz ap_ok
     cmp byte ptr [drive_dl], 0x80
     jae ap_fail
 
-    cmp byte ptr [flag_f720], 0
-    je ap_four
+    mov al, [preset_format]
+    cmp al, 1
+    je ap_720
+    cmp al, 2
+    je ap_360
+    cmp al, 3
+    je ap_1200
+    cmp al, 4
+    je ap_1440
+    cmp byte ptr [flag_four], 0
+    jne ap_360
+    cmp byte ptr [flag_eight], 0
+    jne ap_320
+    jmp ap_one
+
+ap_720:
     mov word ptr [bpb_spt], 9
     mov word ptr [bpb_heads], 2
     mov word ptr [bpb_totsec], 1440
     mov word ptr [bpb_totsec_hi], 0
     mov byte ptr [preset_media], 0xF9
-    jmp ap_one
+    jmp ap_eight
 
-ap_four:
-    cmp byte ptr [flag_four], 0
-    je ap_one
+ap_360:
     mov word ptr [bpb_spt], 9
     mov word ptr [bpb_heads], 2
     mov word ptr [bpb_totsec], 720
     mov word ptr [bpb_totsec_hi], 0
     mov byte ptr [preset_media], 0xFD
+    jmp ap_eight
+
+ap_1200:
+    mov word ptr [bpb_spt], 15
+    mov word ptr [bpb_heads], 2
+    mov word ptr [bpb_totsec], 2400
+    mov word ptr [bpb_totsec_hi], 0
+    mov byte ptr [preset_media], 0xF9
+    jmp ap_eight
+
+ap_1440:
+    mov word ptr [bpb_spt], 18
+    mov word ptr [bpb_heads], 2
+    mov word ptr [bpb_totsec], 2880
+    mov word ptr [bpb_totsec_hi], 0
+    mov byte ptr [preset_media], 0xF0
+
+ap_eight:
+    cmp byte ptr [flag_eight], 0
+    je ap_one
+ap_320:
+    mov word ptr [bpb_spt], 8
+    mov word ptr [bpb_heads], 2
+    mov word ptr [bpb_totsec], 640
+    mov word ptr [bpb_totsec_hi], 0
+    mov byte ptr [preset_media], 0xFF
 
 ap_one:
     cmp byte ptr [flag_one], 0
-    je ap_ok
+    je ap_select
     cmp word ptr [bpb_heads], 1
     jbe ap_one_media
     mov word ptr [bpb_heads], 1
     shr word ptr [bpb_totsec_hi], 1
     rcr word ptr [bpb_totsec], 1
 ap_one_media:
+    cmp byte ptr [flag_eight], 0
+    je ap_one_360
+    mov byte ptr [preset_media], 0xFE
+    jmp ap_select
+ap_one_360:
     cmp byte ptr [flag_four], 0
-    je ap_ok
+    jne ap_one_180
+    cmp byte ptr [preset_format], 2
+    jne ap_select
+ap_one_180:
     mov byte ptr [preset_media], 0xFC
+
+ap_select:
+    /* Keep INT 1Eh/FDC media parameters in sync with the selected geometry. */
+    mov ax, [bpb_totsec]
+    xor dx, dx
+    div word ptr [bpb_heads]
+    xor dx, dx
+    div word ptr [bpb_spt]
+    test ax, ax
+    jz ap_fail
+    dec ax
+    mov ch, al
+    mov cl, byte ptr [bpb_spt]
+    mov dl, [drive_dl]
+    mov ah, 0x18
+    int 0x13
+    jc ap_fail
 ap_ok:
+    pop es
+    pop di
     pop dx
+    pop cx
+    pop bx
     pop ax
     clc
     ret
 ap_fail:
+    pop es
+    pop di
     pop dx
+    pop cx
+    pop bx
     pop ax
     stc
     ret
@@ -1814,11 +1955,14 @@ flag_s:
     .byte 0
 flag_v:
     .byte 0
-flag_f720:
+/* 0=BIOS geometry, 1=720K, 2=360K, 3=1.2M, 4=1.44M */
+preset_format:
     .byte 0
 flag_one:
     .byte 0
 flag_four:
+    .byte 0
+flag_eight:
     .byte 0
 preset_media:
     .byte 0
@@ -1938,7 +2082,7 @@ msg_err:
 msg_geo:
     .ascii "Bad geometry\r\n$"
 msg_u:
-    .ascii "FORMAT [d:] [/S] [/Y] [/V[:label]] [/F:720] [/1] [/4]\r\n$"
+    .ascii "FORMAT [d:] [/S] [/Y] [/V[:label]] [/F:360|720|1200|1.2|1440] [/1] [/4] [/8]\r\n$"
 msg_label:
     .ascii "Volume label (11 characters, ENTER for none)? $"
 msg_crlf:

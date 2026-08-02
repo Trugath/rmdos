@@ -160,9 +160,30 @@ zfm:
 zpr:
     call prm
     jmp fin
+/* AH=15: AH=type (3=HD), CX:DX=sectors; CF clear. Not routed through fin
+ * because fin treats non-zero AH as an error status. */
 zds:
     call dsd
-    jmp fin
+    jc zds_none
+    mov byte ptr [lst], 0
+    mov byte ptr [cfl], 0
+    mov word ptr [sa], 0x0300
+    pop di
+    pop si
+    pop ax
+    pop ax
+    pop bx
+    pop ax
+    mov ax, [sa]
+    mov cx, [sc]
+    mov dx, [sd]
+    jmp skip_cxdx
+zds_none:
+    xor ax, ax
+    mov [lst], al
+    mov [sa], ax
+    mov byte ptr [cfl], 0
+    jmp out
 
 good:
     xor ah, ah
@@ -377,7 +398,7 @@ dsd:
     mul cx
     mov [sc], dx
     mov [sd], ax
-    mov ah, 2
+    mov ah, 3                      /* fixed disk DASD type */
     clc
     ret
 

@@ -19,6 +19,7 @@ IMAGE = BUILD / "os-batch.img"
 MARKERS = (
     "EXISTS",
     "RENAMED",
+    "REDIR2 OK",
     "BAR",
     "rmDOS DOS 3.31",
     "PROMPT OK",
@@ -36,6 +37,7 @@ MARKERS = (
     "ERASED",
     "AUTOEXEC.BAT",
     "CMD OK",
+    "CMD_C OK",
     "ENV OK",
     "PIPE OK",
     "ELCD OK",
@@ -51,6 +53,9 @@ MARKERS = (
     "VOLC OK",
     "1A",
     "FORNEST OK",
+    "BADCMD OK",
+    "DIRTIME OK",
+    "DELW OK",
     "BATCH OK",
 )
 

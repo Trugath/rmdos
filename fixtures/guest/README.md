@@ -57,10 +57,11 @@ A:\
 Optional `CONFIG.SYS` (not on default images) can `INSTALL=` `BIN\NET.COM` for a
 resident NE2000 stack, or `DEVICE=` `BIN\ANSI.SYS` for ANSI CON filtering.
 
-`FORMAT [d:] [/S] [/Y] [/V[:label]] [/F:720] [/1] [/4]` builds a FAT12 or FAT16
-filesystem from INT 13h geometry (floppy or HDD up to 128 MB), optionally
-installing a bootable rmDOS system (`/S`). `SYS [d:]` copies `KERNEL.SYS` and
-`COMMAND.COM` and installs boot metadata on an rmDOS-formatted filesystem
+`FORMAT [d:] [/S] [/Y] [/V[:label]] [/F:360|720|1200|1.2|1440] [/1] [/4] [/8]`
+builds a FAT12 or FAT16 filesystem from INT 13h geometry (floppy or HDD up to
+128 MB), optionally installing a bootable rmDOS system (`/S`).
+`SYS [src:] dest:` copies `KERNEL.SYS` and `COMMAND.COM` from the optional
+source drive and installs boot metadata on an rmDOS-formatted filesystem
 (FORMAT reserves the RFAT sector even without `/S`). Drive letters follow A:/B:
 floppies then DOS primaries and extended
 logicals on each HD (`80h`…). `PARTEDIT` (`/CREATE` `/CREATEEXT` `/CREATELOG`

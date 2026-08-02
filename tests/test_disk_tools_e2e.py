@@ -16,7 +16,15 @@ ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "firmware" / "build"
 IMAGE = BUILD / "os-disk.img"
 SERIAL = BUILD / "serial.log"
-MARKERS = ("moved", "RA-- MOVED.TXT", "CHKDSK OK", "DISK OK")
+MARKERS = (
+    "XCOPYS OK",
+    "-A-- ONE.TXT",
+    "moved",
+    "RA-- MOVED.TXT",
+    "Volume label set",
+    "CHKDSK OK",
+    "DISK OK",
+)
 
 
 def _env() -> dict[str, str]:

@@ -131,7 +131,8 @@ int13_handler:
     xor ax, ax
     mov bx, 0x0003
     mov cx, 0x4F09
-    mov dx, 0x0101
+    mov dx, 0x0100
+    call .i13_floppy_count
     xor ah, ah
     clc
     jmp .i13_ret
@@ -141,7 +142,8 @@ int13_handler:
     xor ax, ax
     mov bx, 0x0001
     mov cx, 0x2709
-    mov dx, 0x0101
+    mov dx, 0x0100
+    call .i13_floppy_count
     xor ah, ah
     clc
     jmp .i13_ret
@@ -151,7 +153,8 @@ int13_handler:
     xor ax, ax
     mov bx, 0x0002
     mov cx, 0x4F0F
-    mov dx, 0x0101
+    mov dx, 0x0100
+    call .i13_floppy_count
     xor ah, ah
     clc
     jmp .i13_ret
@@ -161,10 +164,36 @@ int13_handler:
     xor ax, ax
     mov bx, 0x0004
     mov cx, 0x4F12
-    mov dx, 0x0101
+    mov dx, 0x0100
+    call .i13_floppy_count
     xor ah, ah
     clc
     jmp .i13_ret
+
+.i13_floppy_count:
+    /* Equipment bits 6–7 encode installed floppy count minus one. */
+    push ax
+    push ds
+    mov ax, BDA_SEG
+    mov ds, ax
+    mov dl, byte ptr [BDA_EQUIP]
+    test dl, 0x01
+    jz .i13_floppy_none
+    shr dl, 1
+    shr dl, 1
+    shr dl, 1
+    shr dl, 1
+    shr dl, 1
+    shr dl, 1
+    and dl, 0x03
+    inc dl
+    jmp .i13_floppy_count_done
+.i13_floppy_none:
+    xor dl, dl
+.i13_floppy_count_done:
+    pop ds
+    pop ax
+    ret
 
 .i13_dasd:
     /* AH=15: diskette with change-line support → AH=02 */

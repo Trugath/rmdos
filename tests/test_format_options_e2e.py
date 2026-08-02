@@ -121,8 +121,30 @@ def test_format_one_side() -> None:
     assert struct.unpack_from("<HH", raw, 24) == (9, 1)
 
 
+def test_format_size_presets() -> None:
+    for option, total, sectors, media in (
+        ("/F:360", 720, 9, 0xFD),
+        ("/F:1200", 2400, 15, 0xF9),
+        ("/F:1.2", 2400, 15, 0xF9),
+        ("/F:1440", 2880, 18, 0xF0),
+    ):
+        raw = _format(option)
+        assert _totsec(raw) == total, option
+        assert struct.unpack_from("<HH", raw, 24) == (sectors, 2), option
+        assert raw[21] == media, option
+
+
+def test_format_eight_sectors() -> None:
+    raw = _format("/8")
+    assert _totsec(raw) == 640
+    assert struct.unpack_from("<HH", raw, 24) == (8, 2)
+    assert raw[21] == 0xFF
+
+
 if __name__ == "__main__":
     test_format_f720_and_label()
     test_format_four_preset()
     test_format_one_side()
+    test_format_size_presets()
+    test_format_eight_sectors()
     print("test_format_options_e2e: OK")

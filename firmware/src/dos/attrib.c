@@ -2,6 +2,7 @@
 #include "dos.h"
 
 static char pattern[64];
+static char full_path[80];
 static char dta[128];
 static char sep[3] = " $";
 static char crlf[4] = "\r\n$";
@@ -11,6 +12,43 @@ static char msg_e[17] = "ATTRIB failed\r\n$";
 static int mask;
 static int bits;
 static int set_mode;
+
+static void build_found_path(char *out, char *search, char *name)
+{
+    int i;
+    int last;
+    int c;
+
+    i = 0;
+    last = 0;
+    while (1) {
+        c = buf_get(search, i);
+        if (c == 0) {
+            break;
+        }
+        if (c == '\\' || c == '/' || c == ':') {
+            last = i + 1;
+        }
+        i = i + 1;
+    }
+
+    i = 0;
+    while (i < last && i < 79) {
+        buf_set(out, i, buf_get(search, i));
+        i = i + 1;
+    }
+    last = 0;
+    while (i < 79) {
+        c = buf_get(name, last);
+        if (c == 0) {
+            break;
+        }
+        buf_set(out, i, c);
+        i = i + 1;
+        last = last + 1;
+    }
+    buf_set(out, i, 0);
+}
 
 static void show_attrs(int attr)
 {
@@ -42,7 +80,6 @@ int main(void)
     int cl;
     int attr;
     int name_i;
-    int p;
 
     mask = 0;
     bits = 0;
@@ -68,10 +105,11 @@ int main(void)
             }
             if (cl != 0) {
                 mask = mask | cl;
+                bits = bits & ~cl;
                 if (c == '+') {
                     bits = bits | cl;
-                    set_mode = 1;
                 }
+                set_mode = 1;
             }
         } else {
             name_i = 0;
@@ -102,15 +140,13 @@ int main(void)
         attr = buf_get(dta, 0x15);
         if (set_mode) {
             attr = (attr & 0x3F & ~mask) | bits;
-            p = buf_addr(dta, 0x1E);
-            if (dos_chmod(p, 1, attr) == -1) {
+            build_found_path(full_path, pattern, buf_addr(dta, 0x1E));
+            if (dos_chmod(full_path, 1, attr) == -1) {
                 print_dollar(msg_e);
                 return 1;
             }
-            attr = buf_get(dta, 0x15);
-            attr = (attr & 0x3F & ~mask) | bits;
         }
-        show_attrs(buf_get(dta, 0x15));
+        show_attrs(attr);
         print_dollar(sep);
         print_string(buf_addr(dta, 0x1E));
         print_dollar(crlf);

@@ -472,13 +472,17 @@ dos_ah19:
     clc
     jmp int21_iret
 
-/* AH=0Eh — select drive DL; AL = number of logical drives */
+/* AH=0Eh — select drive DL; AL = configured LASTDRIVE count */
 dos_ah0e:
     push dx
     call dos_rebuild_drivemap
     call dos_select_drive
     pop dx
-    mov al, byte ptr cs:[num_drives]
+    mov al, byte ptr cs:[cfg_lastdrive]
+    cmp al, CDS_COUNT
+    jbe .a0e_count_ok
+    mov al, CDS_COUNT
+.a0e_count_ok:
     clc
     jmp int21_iret
 
@@ -656,8 +660,18 @@ dos_ah2b:
     clc
     jmp int21_iret
 
-/* AH=2Ch — get time → CH:CL:DH:DL from BIOS ticks */
+/* AH=2Ch — get time → CH:CL:DH:DL from soft time or BIOS ticks */
 dos_ah2c:
+    cmp byte ptr cs:[dos_time_set], 0
+    je .a2c_ticks
+    mov ch, byte ptr cs:[dos_hour]
+    mov cl, byte ptr cs:[dos_minute]
+    mov dh, byte ptr cs:[dos_second]
+    mov dl, byte ptr cs:[dos_hsecond]
+    clc
+    jmp int21_iret
+
+.a2c_ticks:
     push ax
     push bx
     push si
@@ -667,32 +681,57 @@ dos_ah2c:
     mov ax, [0x6C]
     mov dx, [0x6E]
     pop ds
-    /* ticks / 18 ≈ seconds */
+    /* Use 18 ticks/second. Divide into hours first so DIV cannot overflow. */
+    mov bx, 64800
+    div bx
+    cmp ax, 24
+    jb .a2c_hour_ok
+    sub ax, 24
+.a2c_hour_ok:
+    mov ch, al
+    mov ax, dx
+    xor dx, dx
+    mov bx, 1080
+    div bx
+    mov cl, al
+    mov ax, dx
+    xor dx, dx
     mov bx, 18
     div bx
-    xor dx, dx
-    mov bx, 60
-    div bx                       /* DX=sec, AX=total minutes */
-    mov si, dx                   /* SI = seconds */
-    xor dx, dx
-    div bx                       /* DX=min, AX=total hours */
-    mov bx, dx                   /* BX = minutes */
-    mov cl, 24
-    div cl                       /* AH = hour of day */
-    mov ch, ah
-    mov cl, bl
-    mov dx, si
-    mov dh, dl
-    xor dl, dl
+    mov dh, al
+    mov si, dx
+    mov ax, si
+    mov bx, 100
+    mul bx
+    mov bx, 18
+    div bx
+    mov dl, al
     pop si
     pop bx
     pop ax
     clc
     jmp int21_iret
 
-/* AH=2Dh — set time CH:CL:DH:DL (accept, no RTC) */
+/* AH=2Dh — set soft time CH:CL:DH:DL (no RTC required) */
 dos_ah2d:
+    cmp ch, 23
+    ja .a2d_bad
+    cmp cl, 59
+    ja .a2d_bad
+    cmp dh, 59
+    ja .a2d_bad
+    cmp dl, 99
+    ja .a2d_bad
+    mov byte ptr cs:[dos_hour], ch
+    mov byte ptr cs:[dos_minute], cl
+    mov byte ptr cs:[dos_second], dh
+    mov byte ptr cs:[dos_hsecond], dl
+    mov byte ptr cs:[dos_time_set], 1
     xor al, al
+    clc
+    jmp int21_iret
+.a2d_bad:
+    mov al, 0xFF
     clc
     jmp int21_iret
 
@@ -717,18 +756,32 @@ dos_ah34:
     clc
     jmp int21_iret
 
+/* DL = logical drive index (0=A) → BX = its CS:dos_dpb slot. */
+dpb_ptr_for_drive:
+    push ax
+    mov al, dl
+    mov bl, DPB_SIZE
+    mul bl
+    lea bx, [dos_dpb]
+    add bx, ax
+    pop ax
+    ret
+
 /*
- * Fill CS:dos_dpb from the currently mounted BPB.
+ * Fill the per-drive DPB slot from the currently mounted BPB.
  * DL = logical drive index (0=A). Clobbers AX,BX.
  */
 dpb_fill_from_bpb:
+    push di
+    call dpb_ptr_for_drive
+    mov di, bx
     mov al, dl
-    mov byte ptr cs:[dos_dpb], al           /* +00 drive 0=A */
-    mov byte ptr cs:[dos_dpb + 1], al       /* +01 unit */
-    mov word ptr cs:[dos_dpb + 2], 512      /* +02 bytes/sector */
+    mov byte ptr cs:[di], al                /* +00 drive 0=A */
+    mov byte ptr cs:[di + 1], al            /* +01 unit */
+    mov word ptr cs:[di + 2], 512           /* +02 bytes/sector */
     mov al, byte ptr cs:[bpb_spc]
     dec al
-    mov byte ptr cs:[dos_dpb + 4], al       /* +04 spc-1 */
+    mov byte ptr cs:[di + 4], al            /* +04 spc-1 */
     mov al, byte ptr cs:[bpb_spc]
     xor ah, ah
     xor bx, bx                              /* cluster → sector shift */
@@ -739,33 +792,34 @@ dpb_fill_from_bpb:
     inc bx
     jmp .dpb_sh
 .dpb_sh_done:
-    mov byte ptr cs:[dos_dpb + 5], bl
+    mov byte ptr cs:[di + 5], bl
     mov ax, word ptr cs:[bpb_reserved]
-    mov word ptr cs:[dos_dpb + 6], ax       /* +06 reserved */
+    mov word ptr cs:[di + 6], ax            /* +06 reserved */
     mov al, byte ptr cs:[bpb_fats]
-    mov byte ptr cs:[dos_dpb + 8], al
+    mov byte ptr cs:[di + 8], al
     mov ax, word ptr cs:[bpb_root_ents]
-    mov word ptr cs:[dos_dpb + 9], ax
+    mov word ptr cs:[di + 9], ax
     mov ax, word ptr cs:[bpb_data_lba]
     sub ax, word ptr cs:[vol_want_base]
-    mov word ptr cs:[dos_dpb + 0x0B], ax    /* +0B first data sector */
+    mov word ptr cs:[di + 0x0B], ax         /* +0B first data sector */
     mov ax, word ptr cs:[bpb_max_clust]
-    mov word ptr cs:[dos_dpb + 0x0D], ax    /* +0D max cluster */
+    mov word ptr cs:[di + 0x0D], ax         /* +0D max cluster */
     mov ax, word ptr cs:[bpb_spf]
-    mov word ptr cs:[dos_dpb + 0x0F], ax
+    mov word ptr cs:[di + 0x0F], ax
     mov ax, word ptr cs:[bpb_root_lba]
     sub ax, word ptr cs:[vol_want_base]
-    mov word ptr cs:[dos_dpb + 0x11], ax    /* +11 first dir sector */
+    mov word ptr cs:[di + 0x11], ax         /* +11 first dir sector */
     lea ax, [dev_nul_hdr]
-    mov word ptr cs:[dos_dpb + 0x13], ax    /* +13 device header off */
-    mov word ptr cs:[dos_dpb + 0x15], cs    /* +15 device header seg */
+    mov word ptr cs:[di + 0x13], ax         /* +13 device header off */
+    mov word ptr cs:[di + 0x15], cs         /* +15 device header seg */
     mov al, byte ptr cs:[bpb_media]
-    mov byte ptr cs:[dos_dpb + 0x17], al
-    mov byte ptr cs:[dos_dpb + 0x18], 0xFF  /* not accessed */
-    mov word ptr cs:[dos_dpb + 0x19], 0
-    mov word ptr cs:[dos_dpb + 0x1B], 0
-    mov word ptr cs:[dos_dpb + 0x1D], 0
-    mov word ptr cs:[dos_dpb + 0x1F], 0xFFFF
+    mov byte ptr cs:[di + 0x17], al
+    mov byte ptr cs:[di + 0x18], 0xFF       /* not accessed */
+    mov word ptr cs:[di + 0x19], 0
+    mov word ptr cs:[di + 0x1B], 0
+    mov word ptr cs:[di + 0x1D], 0
+    mov word ptr cs:[di + 0x1F], 0xFFFF
+    pop di
     ret
 
 /*
@@ -797,9 +851,9 @@ dos_resolve_drive_dl:
 dos_ah1f:
     mov dl, byte ptr cs:[cur_drive]
     call dpb_fill_from_bpb
+    call dpb_ptr_for_drive
     push cs
     pop ds
-    lea bx, [dos_dpb]
     xor al, al
     clc
     jmp int21_iret
@@ -812,11 +866,11 @@ dos_ah32:
     call dos_mount_drive
     jc .a32_bad_m
     call dpb_fill_from_bpb
+    call dpb_ptr_for_drive
     call dos_remount_current
     pop dx
     push cs
     pop ds
-    lea bx, [dos_dpb]
     xor al, al
     clc
     jmp int21_iret
@@ -894,13 +948,17 @@ dos_ah68:
     stc
     jmp int21_iret_cf
 
-/* AH=36h — disk free space: DX=clusters free, AX=spc, BX=avail, CX=bps */
+/* AH=36h — AX=spc, BX=free clusters, CX=bps, DX=total clusters */
 dos_ah36:
     push si
     push di
     push ds
     push cs
     pop ds
+    call dos_resolve_drive_dl
+    jc .a36_fail
+    call dos_mount_drive
+    jc .a36_fail_m
     /* count free FAT entries */
     xor si, si                   /* free count */
     mov di, 2
@@ -916,14 +974,28 @@ dos_ah36:
     inc di
     jmp .a36_loop
 .a36_done:
-    mov dx, si                   /* free clusters */
-    mov bx, si                   /* available (same) */
+    mov bx, si
+    mov dx, word ptr cs:[bpb_max_clust]
+    cmp dx, 2
+    jb .a36_total_done
+    sub dx, 2
+.a36_total_done:
     mov ax, cs:[bpb_spc]
     xor ah, ah
     mov cx, 512
+    call dos_remount_current
     pop ds
     pop di
     pop si
+    clc
+    jmp int21_iret
+.a36_fail_m:
+    call dos_remount_current
+.a36_fail:
+    pop ds
+    pop di
+    pop si
+    mov ax, 0xFFFF
     clc
     jmp int21_iret
 
@@ -1193,7 +1265,11 @@ dos_sysvars_refresh:
     je .svr_cds_dpb
     or word ptr [di + 0x43], 0x1000
 .svr_cds_dpb:
-    lea ax, [dos_dpb]
+    mov ax, bx
+    mov cl, DPB_SIZE
+    mul cl
+    lea si, [dos_dpb]
+    add ax, si
     mov word ptr [di + 0x45], ax
     mov word ptr [di + 0x47], cs
 .svr_cds_next:

@@ -1133,9 +1133,23 @@ dos_ah44:
     je .a44_outstat
     cmp al, 8
     je .a44_remov
+    cmp al, 9
+    je .a44_local
+    cmp al, 0x0A
+    je .a44_local
     cmp al, 0x0D
     je .a44_bad
+    cmp al, 0x0E
+    je .a44_bad
+    cmp al, 0x0F
+    je .a44_bad
     jmp .a44_bad
+
+/* AL=09/0A — local drive/handle (remote bit clear). */
+.a44_local:
+    xor ax, ax
+    clc
+    jmp int21_iret
 
 .a44_getinfo:
     push di
@@ -1673,7 +1687,7 @@ dos_ah5c:
 
 /*
  * AH=60h — truename: DS:SI source path, ES:DI dest buffer.
- * Writes D:\PATH\FILE form (drive from path or current).
+ * Writes canonical D:\PATH\FILE form, expands SUBST, and folds . / ...
  */
 dos_ah60:
     push ax
@@ -1686,7 +1700,6 @@ dos_ah60:
     push es
     push bp
 
-    mov bp, di                   /* dest */
     mov al, [si]
     call .a60_up
     cmp al, 'A'
@@ -1702,58 +1715,87 @@ dos_ah60:
 .a60_nodrv:
     mov bl, byte ptr cs:[cur_drive]
 .a60_have_drv:
-    mov al, bl
-    add al, 'A'
-    mov es:[bp], al
-    mov byte ptr es:[bp + 1], ':'
-    add bp, 2
-
+    mov byte ptr cs:[truename_drive], bl
+    mov word ptr cs:[truename_src_off], si
+    mov ax, ds
+    mov word ptr cs:[truename_src_seg], ax
+    mov byte ptr cs:[truename_abs], 0
     mov al, [si]
     cmp al, '\\'
-    je .a60_abs
+    je .a60_mark_abs
     cmp al, '/'
-    je .a60_abs
-    /* relative: emit cwd_path then \\ if needed then SI */
-    push si
+    jne .a60_drive_out
+.a60_mark_abs:
+    mov byte ptr cs:[truename_abs], 1
+
+.a60_drive_out:
+    /* SUBST paths are returned on their real drive. */
+    mov al, bl
+    xor bh, bh
+    cmp bl, CDS_COUNT
+    jae .a60_emit_letter
+    cmp bl, byte ptr cs:[cfg_lastdrive]
+    jae .a60_emit_letter
+    mov ah, byte ptr cs:[subst_real + bx]
+    cmp ah, 0xFF
+    je .a60_emit_letter
+    mov al, ah
+.a60_emit_letter:
+    add al, 'A'
+    mov es:[di], al
+    mov byte ptr es:[di + 1], ':'
+    mov byte ptr es:[di + 2], '\\'
+    lea bp, [di + 3]
+    mov word ptr cs:[truename_root_end], bp
+
+    /* A SUBST root becomes a real-drive prefix and is a canonical floor. */
+    mov bl, byte ptr cs:[truename_drive]
+    xor bh, bh
+    cmp bl, CDS_COUNT
+    jae .a60_after_subst
+    cmp bl, byte ptr cs:[cfg_lastdrive]
+    jae .a60_after_subst
+    cmp byte ptr cs:[subst_real + bx], 0xFF
+    je .a60_after_subst
     push ds
     push cs
     pop ds
-    lea si, [cwd_path]
-.a60_cwd:
-    lodsb
-    test al, al
-    jz .a60_cwd_done
-    mov es:[bp], al
-    inc bp
-    jmp .a60_cwd
-.a60_cwd_done:
+    mov ax, bx
+    mov cl, 6
+    shl ax, cl
+    lea si, [subst_prefix]
+    add si, ax
+    call .a60_add_path
     pop ds
-    pop si
-    cmp byte ptr [si], 0
-    je .a60_term
-    cmp bp, 2
-    je .a60_slash
-    cmp byte ptr es:[bp - 1], '\\'
-    je .a60_copy
-.a60_slash:
-    mov byte ptr es:[bp], '\\'
-    inc bp
-    jmp .a60_copy
-.a60_abs:
-.a60_copy:
-    lodsb
-    test al, al
-    jz .a60_term
-    cmp al, '/'
-    jne .a60_store
-    mov al, '\\'
-.a60_store:
-    call .a60_up
-    mov es:[bp], al
-    inc bp
-    jmp .a60_copy
-.a60_term:
+    mov word ptr cs:[truename_root_end], bp
+.a60_after_subst:
+
+    /* Drive-relative names inherit that logical drive's remembered CWD. */
+    cmp byte ptr cs:[truename_abs], 0
+    jne .a60_source
+    call dos_cwd_save_current
+    mov bl, byte ptr cs:[truename_drive]
+    xor bh, bh
+    cmp bl, CDS_COUNT
+    jae .a60_source
+    mov ax, bx
+    mov cl, 6
+    shl ax, cl
+    push ds
+    push cs
+    pop ds
+    lea si, [drive_cwd_path]
+    add si, ax
+    call .a60_add_path
+    pop ds
+
+.a60_source:
+    mov ax, word ptr cs:[truename_src_seg]
+    mov ds, ax
+    mov si, word ptr cs:[truename_src_off]
+    call .a60_add_path
     mov byte ptr es:[bp], 0
+
     pop bp
     pop es
     pop ds
@@ -1766,6 +1808,94 @@ dos_ah60:
     xor ax, ax
     clc
     jmp int21_iret
+
+/*
+ * Add DS:SI path components to ES:DI/BP. DI is destination base, BP is end.
+ * Repeated separators and "." are skipped; ".." cannot pass root_end.
+ */
+.a60_add_path:
+    push ax
+    push bx
+    push cx
+    push dx
+    push si
+.a60_ap_next:
+    mov al, [si]
+    test al, al
+    jz .a60_ap_done
+    cmp al, '/'
+    je .a60_ap_sep
+    cmp al, '\\'
+    jne .a60_ap_component
+.a60_ap_sep:
+    inc si
+    jmp .a60_ap_next
+
+.a60_ap_component:
+    mov bx, si
+    xor cx, cx
+.a60_ap_scan:
+    mov al, [si]
+    test al, al
+    jz .a60_ap_scanned
+    cmp al, '/'
+    je .a60_ap_scanned
+    cmp al, '\\'
+    je .a60_ap_scanned
+    inc si
+    inc cx
+    jmp .a60_ap_scan
+.a60_ap_scanned:
+    cmp cx, 1
+    jne .a60_ap_dotdot_check
+    cmp byte ptr [bx], '.'
+    je .a60_ap_next
+.a60_ap_dotdot_check:
+    cmp cx, 2
+    jne .a60_ap_store
+    cmp byte ptr [bx], '.'
+    jne .a60_ap_store
+    cmp byte ptr [bx + 1], '.'
+    jne .a60_ap_store
+    mov ax, word ptr cs:[truename_root_end]
+    cmp bp, ax
+    jbe .a60_ap_next
+.a60_ap_pop:
+    dec bp
+    cmp bp, ax
+    jbe .a60_ap_clamp
+    cmp byte ptr es:[bp], '\\'
+    jne .a60_ap_pop
+    jmp .a60_ap_next
+.a60_ap_clamp:
+    mov bp, ax
+    jmp .a60_ap_next
+
+.a60_ap_store:
+    lea ax, [di + 3]
+    cmp bp, ax
+    jbe .a60_ap_copy
+    mov byte ptr es:[bp], '\\'
+    inc bp
+.a60_ap_copy:
+    mov dx, cx
+    mov si, bx
+.a60_ap_copy_loop:
+    lodsb
+    call .a60_up
+    mov es:[bp], al
+    inc bp
+    dec dx
+    jnz .a60_ap_copy_loop
+    jmp .a60_ap_next
+
+.a60_ap_done:
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
 
 .a60_up:
     cmp al, 'a'

@@ -1,6 +1,8 @@
 /*
  * INT 25h / 26h — absolute disk read / write (logical sectors).
  * AL=drive, CX=count, DX=start sector, DS:BX=buffer.
+ * With CX=FFFFh, DS:BX points to the DOS 3.31 packet:
+ *   +0 DWORD start sector, +4 WORD count, +6 DWORD buffer (off, seg).
  * Returns via RETF leaving original FLAGS on the caller's stack.
  */
 
@@ -64,7 +66,8 @@ int26_handler:
     retf
 
 /*
- * IN: AL=drive, CX=count, DX=start, DS:BX=buf; CS:abs_write
+ * IN: AL=drive, CX=count, DX=start, DS:BX=buf; CS:abs_write.
+ *     CX=FFFFh selects the DOS 3.31 packet described above.
  * OUT: CF clear + AX=0 on success; CF set + AX=error on failure.
  *
  * Sector transfers that would cross a physical 64K boundary use CS:sector_buf
@@ -83,18 +86,31 @@ absdisk_xfer:
     mov byte ptr cs:[abs_saved_drv], 0xFF
     mov ah, byte ptr cs:[cur_drive]
     mov byte ptr cs:[abs_saved_drv], ah
-    /* Save INT 25h/26h args before dos_select_drive clobbers DX via DL. */
+    /*
+     * Decode arguments before dos_select_drive clobbers DX via DL.
+     * During the loop DS holds the high word of the logical sector; the
+     * caller's DS has already been saved and ES holds the transfer segment.
+     */
     mov si, cx
     mov di, dx
     mov bp, bx
+    push ds
+    pop es
+    xor dx, dx
+    cmp cx, 0xFFFF
+    jne .ax_args_ready
+    mov di, word ptr [bx]
+    mov dx, word ptr [bx + 2]
+    mov si, word ptr [bx + 4]
+    mov bp, word ptr [bx + 6]
+    mov es, word ptr [bx + 8]
+.ax_args_ready:
+    mov ds, dx
     push ax
     mov dl, al
     call dos_select_drive
     pop ax
     jc .ax_drv
-
-    push ds
-    pop es
 
 .ax_loop:
     test si, si
@@ -112,7 +128,7 @@ absdisk_xfer:
     ja .ax_bounce
 
     mov ax, di
-    xor dx, dx
+    mov dx, ds
     add ax, word ptr cs:[vol_base_lba]
     adc dx, 0
     mov bx, bp
@@ -127,6 +143,11 @@ absdisk_xfer:
 .ax_next:
     add bp, 512
     inc di
+    jnz .ax_lba_next
+    mov ax, ds
+    inc ax
+    mov ds, ax
+.ax_lba_next:
     dec si
     jmp .ax_loop
 
@@ -139,7 +160,7 @@ absdisk_xfer:
     pop es
     lea bx, [sector_buf]
     mov ax, di
-    xor dx, dx
+    mov dx, ds
     add ax, word ptr cs:[vol_base_lba]
     adc dx, 0
     call fat12_read_lba
@@ -162,6 +183,10 @@ absdisk_xfer:
 
 .ax_bounce_wr:
     /* Copy ES:BP → sector_buf, then write */
+    mov ax, di
+    mov dx, ds
+    add ax, word ptr cs:[vol_base_lba]
+    adc dx, 0
     push ds
     push si
     push di
@@ -180,10 +205,6 @@ absdisk_xfer:
     push cs
     pop es
     lea bx, [sector_buf]
-    mov ax, di
-    xor dx, dx
-    add ax, word ptr cs:[vol_base_lba]
-    adc dx, 0
     call fat12_write_lba
     pop es
     pop di

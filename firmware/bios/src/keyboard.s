@@ -47,7 +47,10 @@ isr_09:
 .k09_not_ctrl:
     cmp ah, 0x38                      /* Alt */
     jne .k09_not_alt
+    test byte ptr [BDA_KBD_FLAG0], 0x08
+    jnz .k09_eoi
     or byte ptr [BDA_KBD_FLAG0], 0x08
+    mov byte ptr [BDA_KBD_ALT_NUM], 0
     jmp .k09_eoi
 .k09_not_alt:
     cmp ah, 0x2A                      /* Left Shift */
@@ -85,7 +88,7 @@ isr_09:
 .k09_post_esc:
     /* During POST, Esc make latches skip — RAM test sees it between chunks. */
     cmp ah, 0x01                      /* Esc */
-    jne .k09_prtsc
+    jne .k09_alt_keypad
     push es
     xor bx, bx
     mov es, bx
@@ -97,6 +100,31 @@ isr_09:
 .k09_esc_queue:
     pop es
     jmp .k09_enqueue
+
+.k09_alt_keypad:
+    /* Alt+keypad digits accumulate an unsigned decimal byte until Alt break. */
+    test byte ptr [BDA_KBD_FLAG0], 0x08
+    jz .k09_prtsc
+    cmp ah, 0x47
+    jb .k09_prtsc
+    cmp ah, 0x53
+    ja .k09_prtsc
+    mov bl, ah
+    sub bl, 0x47
+    xor bh, bh
+    mov al, cs:[keypad_num_table + bx]
+    cmp al, '0'
+    jb .k09_prtsc
+    cmp al, '9'
+    ja .k09_prtsc
+    sub al, '0'
+    mov cl, al
+    mov al, [BDA_KBD_ALT_NUM]
+    mov bl, 10
+    mul bl
+    add al, cl
+    mov [BDA_KBD_ALT_NUM], al
+    jmp .k09_eoi
 
 .k09_prtsc:
     /* Shift+PrtSc (37h) → INT 5; bare 37h is keypad '*'. */
@@ -117,6 +145,12 @@ isr_09:
     cmp ah, 0x38
     jne .k09_brk_shift
     and byte ptr [BDA_KBD_FLAG0], 0xF7
+    mov al, [BDA_KBD_ALT_NUM]
+    mov byte ptr [BDA_KBD_ALT_NUM], 0
+    test al, al
+    jz .k09_eoi
+    xor ah, ah
+    call kbd_enqueue
     jmp .k09_eoi
 .k09_brk_shift:
     cmp ah, 0x2A

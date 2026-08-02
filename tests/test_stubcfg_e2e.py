@@ -1,4 +1,4 @@
-"""CONFIG.SYS honesty: unknown directives + LASTDRIVE parse."""
+"""CONFIG.SYS advisory no-ops + LASTDRIVE parse."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "firmware" / "build"
 SERIAL = BUILD / "serial.log"
 IMAGE = BUILD / "os-stubcfg.img"
-MARKERS = ("COM1 set: 9600,N,8,1", "CONFIG: ignored", "STUBCFG OK")
+MARKERS = ("COM1 set: 9600,N,8,1", "STUBCFG OK")
 
 
 def test_stubcfg_e2e() -> None:
@@ -43,6 +43,7 @@ def test_stubcfg_e2e() -> None:
                 if SERIAL.is_file():
                     text = SERIAL.read_text(errors="replace")
                     if all(m in text for m in MARKERS):
+                        assert "CONFIG: ignored" not in text
                         return
                 if proc.poll() is not None:
                     break

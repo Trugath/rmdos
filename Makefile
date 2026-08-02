@@ -158,7 +158,7 @@ U18_ELF := $(BUILD_DIR)/u18.elf
 U18_BIN := $(BUILD_DIR)/u18.bin
 U19_BIN := $(BUILD_DIR)/u19.bin
 
-BIOS_TEST_NAMES := bt_equip bt_bda bt_video bt_scroll bt_disk bt_disk144 bt_disk120 bt_disk360 bt_disk_stat bt_disk_upgrade bt_timer bt_int1c bt_kbd_flags bt_kbd_ext bt_modes_text bt_modes_gfx bt_mode4 bt_mode6 bt_serial bt_int15 bt_pixel bt_misc bt_ctype bt_gfx_scroll bt_pixel6 bt_prtsc bt_ident bt_entry bt_cad bt_fdc_rw bt_fdc_fmt bt_fdc_type bt_page bt_palette bt_bel bt_int1a_set bt_hd_params bt_hd_rw bt_kbd_irq bt_kbd_prtsc bt_brk bt_int18 bt_chgline bt_str bt_cfg bt_readchar bt_writech bt_kbd_read bt_kbd_shift bt_int13_err bt_hd_verify bt_motor bt_timer_of
+BIOS_TEST_NAMES := bt_equip bt_bda bt_video bt_scroll bt_disk bt_disk144 bt_disk120 bt_disk360 bt_disk_stat bt_disk_upgrade bt_timer bt_int1c bt_kbd_flags bt_kbd_ext bt_modes_text bt_modes_gfx bt_mode4 bt_mode6 bt_serial bt_int15 bt_pixel bt_misc bt_ctype bt_gfx_scroll bt_pixel6 bt_prtsc bt_ident bt_entry bt_cad bt_fdc_rw bt_fdc_fmt bt_fdc_type bt_page bt_palette bt_bel bt_int1a_set bt_hd_params bt_hd_rw bt_kbd_irq bt_kbd_prtsc bt_brk bt_int18 bt_chgline bt_str bt_cfg bt_readchar bt_writech bt_kbd_read bt_kbd_shift bt_int13_err bt_hd_verify bt_motor bt_timer_of bt_hd_svc bt_hd_fmt bt_kbd_locks bt_kbd_full bt_int19_hd
 BIOS_TEST_DIR := firmware/bios/tests/boot
 BIOS_TEST_LINK := firmware/bios/tests/linker/boot_test.ld
 BIOS_TEST_BUILD := $(BUILD_DIR)/bios_tests
@@ -173,7 +173,7 @@ FD_IMG := emulator/k8086/disks/fd.img
 
 K8086_ROMS_DIR := emulator/k8086/roms
 
-.PHONY: all bios os os-disk.img bios-tests clean run run-fd run-elite setup test test-fd-img test-dos-compat test-ping test-dhcp test-telnet test-net test-star test-bigexe test-elite test-dir test-format test-format-options test-sys test-format-hd test-fat16-hd test-partedit-hd test-multilet-hd test-extpart-hd test-subst test-batch test-disk test-gzip test-utils test-diskcopy test-diskcomp test-ansi test-stubcfg test-install-hd install-roms install-floppy
+.PHONY: all bios os os-disk.img bios-tests clean run run-fd run-elite setup test test-bios test-fd-img test-dos-compat test-ping test-dhcp test-telnet test-net test-star test-bigexe test-elite test-dir test-format test-format-options test-sys test-format-hd test-fat16-hd test-partedit-hd test-multilet-hd test-extpart-hd test-subst test-batch test-disk test-gzip test-utils test-diskcopy test-diskcomp test-ansi test-stubcfg test-install-hd install-roms install-floppy
 
 all: bios os
 
@@ -591,6 +591,10 @@ run-elite: bios $(ELITE_IMAGE)
 
 setup:
 	./setup.sh
+
+test-bios: bios-tests
+	$(PYTHON) -m tests.test_bios_roms
+	$(PYTHON) -m tests.test_bios_services
 
 test: all bios-tests $(COMPAT_IMAGE) $(PING_IMAGE) $(DHCP_IMAGE) $(TELNET_IMAGE) $(NET_IMAGE) $(STAR_IMAGE) $(BIGEXE_IMAGE) $(DIR_IMAGE) $(FORMAT_IMAGE) $(FORMAT_HD_IMAGE) $(FAT16_HD_IMAGE) $(PARTEDIT_HD_IMAGE) $(MULTILET_HD_IMAGE) $(EXTPART_HD_IMAGE) $(SUBST_IMAGE) $(BATCH_IMAGE) $(DISK_IMAGE) $(GZIP_IMAGE) $(UTILS_IMAGE) $(DISKCOPY_IMAGE) $(DISKCOMP_IMAGE) $(ANSI_IMAGE) $(STUBCFG_IMAGE) $(INSTALL_IMAGE)
 	$(PYTHON) -m tests.test_wcc

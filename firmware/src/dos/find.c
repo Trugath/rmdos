@@ -8,7 +8,7 @@ static char one[2];
 static int linelen;
 static int found;
 static int handle;
-static char msg_usage[22] = "FIND \"string\" file\r\n$";
+static char msg_usage[24] = "FIND \"string\" [file]\r\n$";
 static char msg_err[21] = "FIND: open failed\r\n$";
 
 static int toupper_al(int c)
@@ -77,14 +77,14 @@ int main(void)
         print_dollar(msg_usage);
         return 2;
     }
-    if (!args_token(pathbuf, 64)) {
-        print_dollar(msg_usage);
-        return 2;
-    }
-    handle = dos_open(pathbuf, 0);
-    if (handle == -1) {
-        print_dollar(msg_err);
-        return 2;
+    if (args_token(pathbuf, 64)) {
+        handle = dos_open(pathbuf, 0);
+        if (handle == -1) {
+            print_dollar(msg_err);
+            return 2;
+        }
+    } else {
+        handle = 0;
     }
     while (1) {
         n = dos_read(handle, one, 1);
@@ -92,7 +92,9 @@ int main(void)
             break;
         }
         if (n == -1) {
-            dos_close(handle);
+            if (handle != 0) {
+                dos_close(handle);
+            }
             print_dollar(msg_err);
             return 2;
         }
@@ -107,7 +109,9 @@ int main(void)
         }
     }
     flush_line();
-    dos_close(handle);
+    if (handle != 0) {
+        dos_close(handle);
+    }
     if (found) {
         return 0;
     }

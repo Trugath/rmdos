@@ -4,11 +4,12 @@
 .global _start
 
 /*
- * SYS [d:]
+ * SYS [src:] dest:
  *
- * Copy KERNEL.SYS and COMMAND.COM from the current drive to the target, then
- * install the rmDOS boot code and regenerate RFAT1 from KERNEL.SYS' target
- * cluster chain. The target FAT, BPB, and unrelated root entries are retained.
+ * Copy KERNEL.SYS and COMMAND.COM from the selected source drive to the target,
+ * then install the rmDOS boot code and regenerate RFAT1 from KERNEL.SYS' target
+ * cluster chain. With one drive argument, the current drive remains the source.
+ * The target FAT, BPB, and unrelated root entries are retained.
  */
 _start:
     push cs
@@ -22,6 +23,7 @@ _start:
     int 0x21
     mov [source_drive], al
     mov byte ptr [target_drive], 0
+    mov byte ptr [arg_count], 0
 
     mov si, 0x81
 .arg_skip:
@@ -46,23 +48,36 @@ _start:
     cmp byte ptr [si + 1], ':'
     jne usage
     sub al, 'A'
+    cmp byte ptr [arg_count], 0
+    jne .arg_second
+    mov [first_drive], al
+    mov byte ptr [arg_count], 1
+    jmp .arg_advance
+.arg_second:
+    cmp byte ptr [arg_count], 1
+    jne usage
+    mov ah, [first_drive]
+    mov [source_drive], ah
     mov [target_drive], al
+    mov byte ptr [arg_count], 2
+.arg_advance:
     add si, 2
-.arg_tail:
     cmp byte ptr [si], ' '
-    je .arg_tail_inc
+    je .arg_skip
     cmp byte ptr [si], 9
-    je .arg_tail_inc
+    je .arg_skip
     cmp byte ptr [si], 0x0D
     je .args_done
     cmp byte ptr [si], 0
     je .args_done
     jmp usage
-.arg_tail_inc:
-    inc si
-    jmp .arg_tail
 
 .args_done:
+    cmp byte ptr [arg_count], 1
+    jne .args_ready
+    mov al, [first_drive]
+    mov [target_drive], al
+.args_ready:
     call build_paths
 
     /* Boot code comes from the current/source volume. */
@@ -537,6 +552,10 @@ source_drive:
     .byte 0
 target_drive:
     .byte 0
+first_drive:
+    .byte 0
+arg_count:
+    .byte 0
 src_h:
     .word 0xFFFF
 dst_h:
@@ -588,7 +607,7 @@ dst_cmd:
 msg_ok:
     .ascii "System transferred\r\nSYS OK\r\n$"
 msg_u:
-    .ascii "SYS [d:]\r\n$"
+    .ascii "SYS [src:] dest:\r\n$"
 msg_e:
     .ascii "SYS failed\r\n$"
 xfer:

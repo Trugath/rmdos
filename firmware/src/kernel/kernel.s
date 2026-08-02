@@ -5,6 +5,7 @@
 
 .equ CDS_ENTRY_SIZE, 81
 .equ CDS_COUNT, 16
+.equ DPB_SIZE, 0x21
 
 /*
  * rmDOS KERNEL.SYS — INT 21h + writable FAT12/FAT16 + tools.
@@ -269,28 +270,9 @@ dos_indos:
     .byte 0
 dos_alloc_strategy:
     .word 0
-/* Minimal DPB for AH=1F/32 (filled live from BPB; +00 drive 0=A). */
+/* Per-drive DPBs for AH=1F/32, one 21h-byte slot per LASTDRIVE entry. */
 dos_dpb:
-    .byte 1                      /* +00 drive number */
-    .byte 0                      /* +01 unit */
-    .word 512                    /* +02 bytes/sector */
-    .byte 0                      /* +04 sectors/cluster-1 */
-    .byte 0                      /* +05 cluster shift */
-    .word 1                      /* +06 reserved sectors */
-    .byte 2                      /* +08 FATs */
-    .word 224                    /* +09 root entries */
-    .word 0                      /* +0B first data sector */
-    .word 0xFFE                  /* +0D max cluster */
-    .word 9                      /* +0F sectors/FAT */
-    .word 19                     /* +11 first dir sector */
-    .word 0                      /* +13 device driver header off */
-    .word 0                      /* +15 device driver header seg */
-    .byte 0                      /* +17 media */
-    .byte 0xFF                   /* +18 accessed */
-    .word 0                      /* +19 next DPB off */
-    .word 0                      /* +1B next DPB seg */
-    .word 0                      /* +1D first free cluster */
-    .word 0xFFFF                 /* +1F free clusters */
+    .space (CDS_COUNT * DPB_SIZE), 0
 dos_country_id:
     .word 1
 tmp_name_ctr:
@@ -371,6 +353,26 @@ dos_day:
     .byte 31
 dos_dow:
     .byte 5
+dos_time_set:
+    .byte 0
+dos_hour:
+    .byte 0
+dos_minute:
+    .byte 0
+dos_second:
+    .byte 0
+dos_hsecond:
+    .byte 0
+truename_src_off:
+    .word 0
+truename_src_seg:
+    .word 0
+truename_drive:
+    .byte 0
+truename_abs:
+    .byte 0
+truename_root_end:
+    .word 0
 save_ss_tbl:
     .word 0, 0, 0, 0
 save_sp_tbl:
@@ -451,6 +453,14 @@ cfg_kw_lastdrive:
     .asciz "LASTDRIVE"
 cfg_kw_break:
     .asciz "BREAK"
+cfg_kw_stacks:
+    .asciz "STACKS"
+cfg_kw_fcbs:
+    .asciz "FCBS"
+cfg_kw_country:
+    .asciz "COUNTRY"
+cfg_kw_drivparm:
+    .asciz "DRIVPARM"
 msg_cfg_install:
     .ascii "CONFIG: INSTALL failed\r\n$"
 msg_cfg_ignored:

@@ -16,6 +16,44 @@ static char msg_fs4[15] = " bytes free\r\n$";
 static char msg_nf[18] = "File not found\r\n$";
 static char msg_crlf[4] = "\r\n$";
 
+static void print_two_digits(int n)
+{
+    if (n < 10) {
+        print_char('0');
+    }
+    print_num(n);
+}
+
+static void print_dta_datetime(void)
+{
+    int date;
+    int time;
+    int month;
+    int day;
+    int year;
+    int hour;
+    int minute;
+
+    time = peek_word(buf_addr(dta, 0x16));
+    date = peek_word(buf_addr(dta, 0x18));
+    day = date & 31;
+    month = (date >> 5) & 15;
+    year = ((date >> 9) & 127) + 1980;
+    hour = (time >> 11) & 31;
+    minute = (time >> 5) & 63;
+
+    print_dollar("  $");
+    print_two_digits(month);
+    print_char('-');
+    print_two_digits(day);
+    print_char('-');
+    print_num(year);
+    print_char(' ');
+    print_two_digits(hour);
+    print_char(':');
+    print_two_digits(minute);
+}
+
 static void build_pattern(void)
 {
     int i;
@@ -143,6 +181,7 @@ static void print_entry(void)
         hi = peek_word(buf_addr(dta, 0x1C));
         print_u32(lo, hi);
     }
+    print_dta_datetime();
     print_dollar(msg_crlf);
     /* skip . and .. for counts */
     if (peek_byte(nam) == '.' && peek_byte(nam + 1) == 0) {

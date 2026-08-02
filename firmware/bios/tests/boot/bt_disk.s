@@ -33,6 +33,12 @@ _start:
     cmp word ptr [0x8000 + 510], 0xAA55
     jne .fail_sig
 
+    /* Force equipment word to advertise two floppies; AH=08 DL must follow it. */
+    mov ax, 0x0040
+    mov es, ax
+    and byte ptr es:[0x10], 0x3E
+    or byte ptr es:[0x10], 0x41
+
     mov ah, 0x08
     mov dl, [0x7e00]
     int 0x13
@@ -41,6 +47,8 @@ _start:
     mov al, cl
     and al, 0x3F
     cmp al, 9
+    jne .fail_params
+    cmp dl, 2
     jne .fail_params
 
     push cs

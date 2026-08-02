@@ -63,6 +63,7 @@ Headless (serial log):
 
 ```bash
 make test           # ROMs + BIOS service units + os.img e2e + ping gate
+make test-bios      # BIOS ROM static checks + boot-sector service units
 make test-dos-compat
 make test-fd-img    # k8086 disks/fd.img → A:> on rmDOS U18/U19
 make test-ping      # PING.COM → virtual gateway (DE-220 NIC)
