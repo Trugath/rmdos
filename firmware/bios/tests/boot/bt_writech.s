@@ -44,6 +44,24 @@ _start:
     cmp byte ptr es:[bx + 1], 0x2E
     jne .fail_attr
 
+    /* AH=09 CX=4 fills four cells from cursor */
+    mov ah, 0x02
+    xor bh, bh
+    mov dx, 0x0500
+    int 0x10
+    mov ah, 0x09
+    mov al, 'Z'
+    mov bl, 0x1F
+    mov cx, 4
+    int 0x10
+    mov bx, (5 * 80) * 2
+    cmp word ptr es:[bx], 0x1F5A
+    jne .fail_cx
+    cmp word ptr es:[bx + 6], 0x1F5A
+    jne .fail_cx
+    cmp word ptr es:[bx + 8], 0x0720
+    jne .fail_cx
+
     push cs
     pop ds
     mov si, offset name
@@ -59,6 +77,11 @@ _start:
     pop ds
     mov si, offset msg_attr
     call fail_and_halt
+.fail_cx:
+    push cs
+    pop ds
+    mov si, offset msg_cx
+    call fail_and_halt
 
 name:
     .asciz "bt_writech"
@@ -66,5 +89,7 @@ msg_ch:
     .asciz "bt_writech:ch"
 msg_attr:
     .asciz "bt_writech:attr"
+msg_cx:
+    .asciz "bt_writech:cx"
 
 .include "firmware/bios/tests/boot/common.inc"

@@ -434,7 +434,7 @@ entry, Shift+PrtSc, AH=05 buffer-full CF (`bt_kbd_full`), INT 17h LPT1 success
 + missing-port timeout (`bt_misc`), INT 05h/INT 18h no-BASIC, INT 19h floppy→HD
 fallback (`bt_int19_hd`), ROM identity/checksum, IBM entry trampolines,
 Ctrl-Break→INT 1Bh (`bt_brk`), INT 13h AH=17/18 (`bt_fdc_type`), plus
-`bt_readchar`/`bt_writech`/`bt_kbd_read`/`bt_int13_err`/`bt_hd_verify`/
+`bt_readchar`/`bt_writech`/`bt_tty`/`bt_kbd_read`/`bt_int13_err`/`bt_hd_verify`/
 `bt_motor`/`bt_timer_of`. Host-only inject assists: `0x8901` scancode,
 `0x8902` FDC disk-change, `0x8903` Microsoft serial mouse event (buttons, dx,
 dy → COM1 RX). COM2/LPT2 work when ISA cards populate BDA bases
