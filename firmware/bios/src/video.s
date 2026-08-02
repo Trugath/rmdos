@@ -421,10 +421,8 @@ int10_handler:
     pop ax
     mov ah, bl
     jcxz .i10_wc_done
-.i10_wc_loop:
-    mov es:[di], ax
-    add di, 2
-    loop .i10_wc_loop
+    cld
+    rep stosw
     jmp .i10_wc_done
 .i10_wc_gfx:
     /* AL=char, BL=color, CX=count; write at cursor without advancing. */
@@ -644,6 +642,7 @@ int10_handler:
     pop ax
     mov ah, 0x07
     mov es:[di], ax
+    /* DI = write byte offset; reuse for CRTC after advance. */
 
 .i10_tt_advance:
     mov bl, [BDA_CRT_PAGE]
@@ -652,54 +651,43 @@ int10_handler:
     inc byte ptr [BDA_CURSOR_POS + bx]
     mov al, byte ptr [BDA_CRT_COLS]
     cmp byte ptr [BDA_CURSOR_POS + bx], al
-    jb .i10_tt_done
+    jb .i10_tt_crtc_di
     mov byte ptr [BDA_CURSOR_POS + bx], 0
-    jmp .i10_lf
+    /* Wrap → LF; keep DI across scroll so CRTC = write_offset/2 + 1. */
+    push di
+    call teletype_lf
+    pop di
+    jmp .i10_tt_crtc_di
 .i10_cr:
     mov bl, [BDA_CRT_PAGE]
     xor bh, bh
     shl bx, 1
     mov byte ptr [BDA_CURSOR_POS + bx], 0
-    jmp .i10_tt_done
+    jmp .i10_tt_crtc_bda
 .i10_lf:
-    mov bl, [BDA_CRT_PAGE]
-    xor bh, bh
-    shl bx, 1
-    inc byte ptr [BDA_CURSOR_POS + bx + 1]
-    cmp byte ptr [BDA_CURSOR_POS + bx + 1], 25
-    jb .i10_tt_done
-    mov byte ptr [BDA_CURSOR_POS + bx + 1], 24
-    cmp byte ptr [BDA_CRT_MODE], 4
-    jae .i10_lf_gfx
-    push ax
-    push bx
-    push cx
-    push dx
-    mov ax, 0x0601
-    mov bh, 0x07
-    xor cx, cx
-    mov dx, 0x184F
-    call video_scroll_up
-    pop dx
-    pop cx
-    pop bx
-    pop ax
-    jmp .i10_tt_done
-.i10_lf_gfx:
-    call gfx_scroll_up_row
-    jmp .i10_tt_done
+    call teletype_lf
+    jmp .i10_tt_crtc_bda
 .i10_bs:
     mov bl, [BDA_CRT_PAGE]
     xor bh, bh
     shl bx, 1
     cmp byte ptr [BDA_CURSOR_POS + bx], 0
-    je .i10_tt_done
+    je .i10_tt_crtc_bda
     dec byte ptr [BDA_CURSOR_POS + bx]
-    jmp .i10_tt_done
+    jmp .i10_tt_crtc_bda
 .i10_bel:
     call speaker_beep
-.i10_tt_done:
-    /* Keep CRTC cursor in sync for text modes. */
+    jmp .i10_tt_iret              /* BEL does not move cursor */
+.i10_tt_crtc_di:
+    /* Text printable (or wrap): CRTC char addr = write_DI/2 + 1. */
+    cmp byte ptr [BDA_CRT_MODE], 4
+    jae .i10_tt_iret
+    mov bx, di
+    shr bx, 1
+    inc bx
+    call crtc_set_char_addr
+    jmp .i10_tt_iret
+.i10_tt_crtc_bda:
     cmp byte ptr [BDA_CRT_MODE], 4
     jae .i10_tt_iret
     mov bl, [BDA_CRT_PAGE]
@@ -717,6 +705,31 @@ int10_handler:
     pop es
     pop ds
     iret
+
+/*
+ * Advance cursor one row (teletype LF). Scroll at row 25.
+ * DS=BDA. Clobbers AX,BX,CX,DX,SI,DI,ES.
+ */
+teletype_lf:
+    mov bl, [BDA_CRT_PAGE]
+    xor bh, bh
+    shl bx, 1
+    inc byte ptr [BDA_CURSOR_POS + bx + 1]
+    cmp byte ptr [BDA_CURSOR_POS + bx + 1], 25
+    jb .ttl_done
+    mov byte ptr [BDA_CURSOR_POS + bx + 1], 24
+    cmp byte ptr [BDA_CRT_MODE], 4
+    jae .ttl_gfx
+    mov ax, 0x0601
+    mov bh, 0x07
+    xor cx, cx
+    mov dx, 0x184F
+    call video_scroll_up
+    ret
+.ttl_gfx:
+    call gfx_scroll_up_row
+.ttl_done:
+    ret
 
 /*
  * AH=13h write string: ES:BP = text, CX = length, DH/DL = row/col,
@@ -1623,8 +1636,22 @@ crtc_set_cursor_addr:
     push dx
     push di
     call cursor_to_offset        /* DI = byte offset in regen for active page */
-    shr di, 1                    /* character offset within page */
-    mov bx, di                   /* BX = CRTC cursor address */
+    mov bx, di
+    shr bx, 1                    /* character offset within page */
+    call crtc_set_char_addr
+    pop di
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+/*
+ * DS=BDA. BX=character offset within active page. Program CRTC 0Eh/0Fh.
+ * Clobbers AX,DX (port). Preserves BX.
+ */
+crtc_set_char_addr:
+    push bx
     mov dx, [BDA_CRT_PORT]
     mov al, 0x0E
     out dx, al
@@ -1637,11 +1664,7 @@ crtc_set_cursor_addr:
     inc dx
     mov al, bl
     out dx, al
-    pop di
-    pop dx
-    pop cx
     pop bx
-    pop ax
     ret
 
 /* Short PIT ch2 + PPI speaker beep (BEL). Clobbers AX,CX,DX. */
