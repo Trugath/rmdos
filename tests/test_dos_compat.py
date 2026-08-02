@@ -25,6 +25,8 @@ IOCTL_OK = "IOCTL OK"
 XTRA_OK = "XTRA OK"
 FILES_OK = "FILES OK"
 EXEC1_OK = "EXEC1 OK"
+AUXPRN_OK = "AUXPRN OK"
+BREAK23_OK = "BREAK23 OK"
 UTILS_OK = "UTILS OK"
 FIND_NEEDLE = "HELLO rmDOS"
 
@@ -87,6 +89,8 @@ def test_compat_e2e() -> None:
                     and XTRA_OK in text
                     and FILES_OK in text
                     and EXEC1_OK in text
+                    and AUXPRN_OK in text
+                    and BREAK23_OK in text
                     and FIND_NEEDLE in text
                     and UTILS_OK in text
                 ):

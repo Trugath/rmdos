@@ -578,10 +578,58 @@ _start:
 .x_1bf:
     pop ds
     mov ah, 0x09
-    lea dx, [msg_xf8]
+    lea dx, [msg_xf9]
     int 0x21
     jmp fail_exit
 .x_1b_ok:
+
+    /* AH=1F default DPB + AH=1C for A: (match 1B spc) */
+    push ds
+    mov ah, 0x1F
+    int 0x21
+    cmp al, 0xFF
+    je .x_1ff
+    mov ax, ds
+    test ax, ax
+    jz .x_1ff
+    cmp byte ptr ds:[bx], 0          /* drive A = 0 */
+    jne .x_1ff
+    pop ds
+    jmp .x_1f_ok
+.x_1ff:
+    pop ds
+    mov ah, 0x09
+    lea dx, [msg_xfa]
+    int 0x21
+    jmp fail_exit
+.x_1f_ok:
+
+    push ds
+    mov ah, 0x1B
+    int 0x21
+    xor ah, ah
+    mov si, ax                       /* SI = default spc (BX clobbered by 1C) */
+    pop ds
+    push ds
+    mov ah, 0x1C
+    mov dl, 1                        /* A: */
+    int 0x21
+    xor ah, ah
+    cmp ax, si
+    jne .x_1cf
+    cmp cx, 512
+    jne .x_1cf
+    test dx, dx
+    jz .x_1cf
+    pop ds
+    jmp .x_1c_ok
+.x_1cf:
+    pop ds
+    mov ah, 0x09
+    lea dx, [msg_xfb]
+    int 0x21
+    jmp fail_exit
+.x_1c_ok:
 
     /* AH=26 Create New PSP */
     mov ah, 0x51
@@ -719,6 +767,95 @@ _start:
     jmp fail_exit
 .x_done:
 
+    /* AUX/PRN: AH=04/05 + handle 4 write */
+    push cs
+    pop ds
+    mov ah, 0x04
+    mov dl, 'A'
+    int 0x21
+    mov ah, 0x05
+    mov dl, 'P'
+    int 0x21
+    mov bx, 4
+    mov ah, 0x40
+    mov cx, 1
+    lea dx, [auxprn_ch]
+    int 0x21
+    jc .x_apf
+    cmp ax, 1
+    jne .x_apf
+    mov ah, 0x09
+    lea dx, [msg_auxprn]
+    int 0x21
+    jmp .x_ap_ok
+.x_apf:
+    mov ah, 0x09
+    lea dx, [msg_xf8]
+    int 0x21
+    jmp fail_exit
+.x_ap_ok:
+
+    /* Ctrl-Break → INT 23h when BREAK ON (k8086 scan inject 0x8901) */
+    push ds
+    push es
+    xor ax, ax
+    mov es, ax
+    mov ax, es:[0x23 * 4]
+    mov word ptr [saved_i23_off], ax
+    mov ax, es:[0x23 * 4 + 2]
+    mov word ptr [saved_i23_seg], ax
+    lea ax, [brk23_isr]
+    mov word ptr es:[0x23 * 4], ax
+    mov word ptr es:[0x23 * 4 + 2], cs
+    mov byte ptr [brk23_flag], 0
+
+    mov ax, 0x3301
+    mov dl, 1
+    int 0x21
+
+    mov ax, 0x40
+    mov ds, ax
+    or byte ptr [0x17], 0x04
+    xor ax, ax
+    mov ds, ax
+    mov al, 0x46
+    mov dx, 0x8901
+    out dx, al
+    hlt
+
+    push cs
+    pop ds
+    cmp byte ptr [brk23_flag], 1
+    jne .x_brk_fail
+
+    /* restore INT 23 */
+    xor ax, ax
+    mov es, ax
+    mov ax, word ptr [saved_i23_off]
+    mov word ptr es:[0x23 * 4], ax
+    mov ax, word ptr [saved_i23_seg]
+    mov word ptr es:[0x23 * 4 + 2], ax
+    pop es
+    pop ds
+    mov ah, 0x09
+    lea dx, [msg_brk23]
+    int 0x21
+    jmp .x_brk_ok
+.x_brk_fail:
+    xor ax, ax
+    mov es, ax
+    mov ax, word ptr [saved_i23_off]
+    mov word ptr es:[0x23 * 4], ax
+    mov ax, word ptr [saved_i23_seg]
+    mov word ptr es:[0x23 * 4 + 2], ax
+    pop es
+    pop ds
+    mov ah, 0x09
+    lea dx, [msg_xf8]
+    int 0x21
+    jmp fail_exit
+.x_brk_ok:
+
     push cs
     pop ds
     mov ah, 0x09
@@ -773,6 +910,10 @@ msg_files:
     .ascii "FILES OK\r\n$"
 msg_exec1:
     .ascii "EXEC1 OK\r\n$"
+msg_auxprn:
+    .ascii "AUXPRN OK\r\n$"
+msg_brk23:
+    .ascii "BREAK23 OK\r\n$"
 msg_ok:
     .ascii "INT21X OK\r\n$"
 msg_fcb_fail:
@@ -801,6 +942,12 @@ msg_xf7:
     .ascii "XF7\r\n$"
 msg_xf8:
     .ascii "XF8\r\n$"
+msg_xf9:
+    .ascii "XF9\r\n$"
+msg_xfa:
+    .ascii "XFA\r\n$"
+msg_xfb:
+    .ascii "XFB\r\n$"
 nosuch:
     .asciz "NOSUCH.XYZ"
 xtra_name:
@@ -840,3 +987,21 @@ exec1_epb:
     .word 0, 0                   /* fcb1 */
     .word 0, 0                   /* fcb2 */
     .word 0, 0, 0, 0             /* SP SS IP CS */
+auxprn_ch:
+    .byte '!'
+brk23_flag:
+    .byte 0
+saved_i23_off:
+    .word 0
+saved_i23_seg:
+    .word 0
+
+brk23_isr:
+    push ds
+    push ax
+    push cs
+    pop ds
+    mov byte ptr [brk23_flag], 1
+    pop ax
+    pop ds
+    iret
