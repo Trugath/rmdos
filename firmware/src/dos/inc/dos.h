@@ -460,3 +460,28 @@ int screen_page_lines(void)
     }
     return dos_tmp;
 }
+
+/* AH=48 allocate BX paragraphs → AX=segment, or 0 on failure. */
+int dos_alloc(int paras)
+{
+    asm("mov bx, [bp+4]");
+    asm("mov ah, 0x48");
+    asm("int 0x21");
+    asm("jnc Lda_ok");
+    asm("xor ax, ax");
+    asm("Lda_ok:");
+}
+
+/* AH=49 free ES=segment. Returns 0 ok, -1 fail. */
+int dos_free(int seg)
+{
+    asm("mov ax, [bp+4]");
+    asm("mov es, ax");
+    asm("mov ah, 0x49");
+    asm("int 0x21");
+    asm("mov ax, 0");
+    asm("jnc Ldfree_ok");
+    asm("mov ax, 0xFFFF");
+    asm("Ldfree_ok:");
+    reload_ds();
+}
