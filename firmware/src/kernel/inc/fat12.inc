@@ -46,6 +46,8 @@ fat12_init_bpb:
 
 .fib_at_base:
     /* Convert vol_want_base → CHS via INT 13h AH=08 geometry. */
+    mov ax, [vol_base_lba]
+    mov dx, [vol_base_lba + 2]
     push dx
     push ax
     mov ah, 0x08
@@ -922,9 +924,11 @@ fat12_find_free_dirent:
 .ffd_ent:
     cmp si, 16
     jae .ffd_next
+    push cx                      /* root sector count lives in CX */
     mov bx, si
     mov cl, 5
     shl bx, cl
+    pop cx
     lea di, [sector_buf]
     add di, bx
     mov al, es:[di]

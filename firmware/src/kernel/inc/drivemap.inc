@@ -307,7 +307,9 @@ drm_is_ext_type:
 /* IN: DL ignored (use drm_bios_dl for map), DX:AX=base_lba. CF if full. DS=CS. */
 drm_push:
     push bx
+    push cx
     push dx
+    mov cx, dx                   /* preserve LBA high; DL is reused below */
     mov dl, byte ptr [drm_bios_dl]
     mov bl, [num_drives]
     cmp bl, byte ptr [cfg_lastdrive]
@@ -319,15 +321,17 @@ drm_push:
     add bx, bx
     add bx, bx
     mov [drive_map_base + bx], ax
-    mov [drive_map_base + bx + 2], dx
+    mov [drive_map_base + bx + 2], cx
     inc byte ptr [num_drives]
     clc
     pop dx
+    pop cx
     pop bx
     ret
 .drm_push_full:
     stc
     pop dx
+    pop cx
     pop bx
     ret
 
