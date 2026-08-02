@@ -36,6 +36,9 @@ MARKERS = (
     "AUTOEXEC.BAT",
     "CMD OK",
     "ENV OK",
+    "PIPE OK",
+    "ELCD OK",
+    "CTTY OK",
     "BATCH OK",
 )
 

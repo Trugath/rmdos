@@ -4,7 +4,7 @@
 .global _start
 
 /*
- * FORMAT.COM — FAT12/FAT16 format from INT 13h geometry (floppy or HDD ≤40MB).
+ * FORMAT.COM — FAT12/FAT16 format from INT 13h geometry (floppy or HDD ≤128MB).
  * Usage: FORMAT [d:] [/S] [/Y]
  */
 
@@ -224,16 +224,38 @@ get_geometry:
     push bx
     push cx
     push dx
+    push si
+    push di
     push es
     push ds
     pop es
     mov word ptr [bpb_totsec_hi], 0
     mov word ptr [vol_base_lba], 0
+    /* Cache CHS early so EBR walks use HD geometry (not floppy 9×2 default). */
+    mov ah, 0x08
+    mov dl, [drive_dl]
+    int 0x13
+    jc gg_chs_early_fb
+    mov al, cl
+    and ax, 0x3F
+    test ax, ax
+    jz gg_chs_early_fb
+    mov [bpb_spt], ax
+    mov al, dh
+    inc ax
+    and ax, 0x00FF
+    mov [bpb_heads], ax
+    jmp gg_chs_early_done
+gg_chs_early_fb:
+    mov word ptr [bpb_spt], 17
+    mov word ptr [bpb_heads], 4
+gg_chs_early_done:
+    mov dl, [drive_dl]
     mov ax, 0
     lea bx, [secbuf]
     call read_raw_lba
     jc gg_bios
-    /* Nth DOS primary (C:=0, D:=1, …) makes FORMAT operate on that volume. */
+    /* Nth DOS volume (C:=0, D:=1, …): primaries then extended logicals. */
     cmp word ptr [secbuf + 510], 0xAA55
     jne gg_vbr
     mov dl, [drive_idx]
@@ -269,6 +291,114 @@ gg_part_skip:
 gg_part_next:
     add si, 16
     loop gg_part
+
+    /* Collect extended bases, then walk for remaining index in DL */
+    mov word ptr [fmt_ext0], 0
+    mov word ptr [fmt_ext1], 0
+    xor di, di
+    mov si, 0x1BE
+    mov cx, 4
+gg_col:
+    mov al, [secbuf + si + 4]
+    cmp al, 0x05
+    je gg_col_ext
+    cmp al, 0x0F
+    jne gg_col_n
+gg_col_ext:
+    cmp word ptr [secbuf + si + 10], 0
+    jne gg_col_n
+    mov ax, [secbuf + si + 8]
+    test ax, ax
+    jz gg_col_n
+    cmp di, 4
+    jae gg_col_n
+    mov [fmt_ext0 + di], ax
+    add di, 2
+gg_col_n:
+    add si, 16
+    loop gg_col
+
+    xor di, di
+    mov cx, 2
+gg_walk_exts:
+    mov ax, [fmt_ext0 + di]
+    test ax, ax
+    jz gg_we_next
+    mov [fmt_ext_base], ax
+    call fmt_walk_logicals
+    jc gg_chs_only                 /* CF set → found; vol_base/totsec set */
+gg_we_next:
+    add di, 2
+    loop gg_walk_exts
+    /* HD letter requested but no matching volume */
+    jmp gg_fail
+
+/*
+ * Walk extended at fmt_ext_base. DL = remaining volume index.
+ * On match: set vol_base_lba/totsec, CF=1. Else CF=0, DL updated.
+ * Clobbers secbuf.
+ */
+fmt_walk_logicals:
+    push ax
+    push bx
+    push cx
+    push si
+    mov ax, [fmt_ext_base]
+    mov [fmt_ebr_lba], ax
+.fwl_loop:
+    mov ax, [fmt_ebr_lba]
+    lea bx, [secbuf]
+    call read_raw_lba
+    jc .fwl_miss
+    cmp word ptr [secbuf + 510], 0xAA55
+    jne .fwl_miss
+    mov al, [secbuf + 0x1BE + 4]
+    cmp al, 0x01
+    je .fwl_dos
+    cmp al, 0x04
+    je .fwl_dos
+    cmp al, 0x06
+    jne .fwl_link
+.fwl_dos:
+    cmp word ptr [secbuf + 0x1BE + 10], 0
+    jne .fwl_link
+    mov ax, [fmt_ebr_lba]
+    add ax, [secbuf + 0x1BE + 8]
+    jc .fwl_link
+    test dl, dl
+    jnz .fwl_skip
+    mov [vol_base_lba], ax
+    mov ax, [secbuf + 0x1BE + 12]
+    mov bx, [secbuf + 0x1BE + 14]
+    mov [bpb_totsec], ax
+    mov [bpb_totsec_hi], bx
+    stc
+    jmp .fwl_ret
+.fwl_skip:
+    dec dl
+.fwl_link:
+    mov al, [secbuf + 0x1CE + 4]
+    cmp al, 0x05
+    je .fwl_next
+    cmp al, 0x0F
+    jne .fwl_miss
+.fwl_next:
+    mov ax, [fmt_ext_base]
+    add ax, [secbuf + 0x1CE + 8]
+    jc .fwl_miss
+    cmp ax, [fmt_ebr_lba]
+    je .fwl_miss
+    mov [fmt_ebr_lba], ax
+    jmp .fwl_loop
+.fwl_miss:
+    clc
+.fwl_ret:
+    pop si
+    pop cx
+    pop bx
+    pop ax
+    ret
+
 gg_vbr:
     cmp word ptr [secbuf + 11], 512
     jne gg_bios
@@ -345,15 +475,17 @@ gg_fb:
     mov word ptr [bpb_totsec], 1440
     mov word ptr [bpb_totsec_hi], 0
 gg_cap:
-    /* refuse > 40 MiB (81920 sectors) */
+    /* refuse > 128 MiB (262144 = 0x40000 sectors) */
     mov ax, [bpb_totsec_hi]
-    cmp ax, 1
+    cmp ax, 4
     ja gg_fail
     jb gg_ok
-    cmp word ptr [bpb_totsec], 0x4000
+    cmp word ptr [bpb_totsec], 0
     ja gg_fail
 gg_ok:
     pop es
+    pop di
+    pop si
     pop dx
     pop cx
     pop bx
@@ -362,6 +494,8 @@ gg_ok:
     ret
 gg_fail:
     pop es
+    pop di
+    pop si
     pop dx
     pop cx
     pop bx
@@ -675,8 +809,8 @@ ab_fs_done:
     ret
 
 /*
- * If formatting a DOS primary (vol_base_lba != 0), set MBR type from FS:
- * FAT12→01h, FAT16 <32MB→04h, else→06h.
+ * If formatting a DOS volume (vol_base_lba != 0), set partition type from FS
+ * in the MBR primary entry or the EBR logical entry that matches the base.
  */
 update_part_type:
     push ax
@@ -684,6 +818,7 @@ update_part_type:
     push cx
     push dx
     push si
+    push di
     push es
     mov ax, [vol_base_lba]
     test ax, ax
@@ -703,29 +838,103 @@ upt_scan:
     cmp word ptr [secbuf + si + 10], 0
     jne upt_next
     cmp [secbuf + si + 8], dx
-    jne upt_next
-    mov al, 0x01
-    cmp byte ptr [fat_type], 16
-    jne upt_set
-    mov al, 0x04
-    mov bx, [bpb_totsec_hi]
-    test bx, bx
-    jnz upt_t6
-    cmp word ptr [bpb_totsec], 65535
-    jbe upt_set
-upt_t6:
-    mov al, 0x06
-upt_set:
-    mov [secbuf + si + 4], al
+    jne upt_try_ext
+    call upt_set_type
     xor ax, ax
     lea bx, [secbuf]
     call write_raw_lba
     jmp upt_done
+upt_try_ext:
+    mov al, [secbuf + si + 4]
+    cmp al, 0x05
+    je upt_ext
+    cmp al, 0x0F
+    jne upt_next
+upt_ext:
+    mov ax, [secbuf + si + 8]
+    test ax, ax
+    jz upt_next
+    push si
+    push cx
+    mov [fmt_ext_base], ax
+    call upt_logical
+    pop cx
+    pop si
+    jc upt_done
 upt_next:
     add si, 16
     loop upt_scan
 upt_done:
     pop es
+    pop di
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+/* Set type byte at [secbuf+si+4] from fat_type / size. */
+upt_set_type:
+    mov al, 0x01
+    cmp byte ptr [fat_type], 16
+    jne .ust
+    mov al, 0x04
+    mov bx, [bpb_totsec_hi]
+    test bx, bx
+    jnz .ust6
+    cmp word ptr [bpb_totsec], 65535
+    jbe .ust
+.ust6:
+    mov al, 0x06
+.ust:
+    mov [secbuf + si + 4], al
+    ret
+
+/* Find logical with absolute base == vol_base_lba; update EBR. CF if done. */
+upt_logical:
+    push ax
+    push bx
+    push cx
+    push dx
+    push si
+    mov ax, [fmt_ext_base]
+    mov [fmt_ebr_lba], ax
+    mov dx, [vol_base_lba]
+.ul_loop:
+    mov ax, [fmt_ebr_lba]
+    lea bx, [secbuf]
+    call read_raw_lba
+    jc .ul_miss
+    cmp word ptr [secbuf + 510], 0xAA55
+    jne .ul_miss
+    mov ax, [fmt_ebr_lba]
+    add ax, [secbuf + 0x1BE + 8]
+    cmp ax, dx
+    jne .ul_link
+    lea si, [secbuf + 0x1BE]
+    call upt_set_type
+    mov ax, [fmt_ebr_lba]
+    lea bx, [secbuf]
+    call write_raw_lba
+    stc
+    jmp .ul_ret
+.ul_link:
+    mov al, [secbuf + 0x1CE + 4]
+    cmp al, 0x05
+    je .ul_next
+    cmp al, 0x0F
+    jne .ul_miss
+.ul_next:
+    mov ax, [fmt_ext_base]
+    add ax, [secbuf + 0x1CE + 8]
+    cmp ax, [fmt_ebr_lba]
+    je .ul_miss
+    mov [fmt_ebr_lba], ax
+    jmp .ul_loop
+.ul_miss:
+    clc
+.ul_ret:
     pop si
     pop dx
     pop cx
@@ -1345,6 +1554,14 @@ drive_let:
 drive_idx:
     .byte 0
 vol_base_lba:
+    .word 0
+fmt_ext_base:
+    .word 0
+fmt_ebr_lba:
+    .word 0
+fmt_ext0:
+    .word 0
+fmt_ext1:
     .word 0
 bpb_spc:
     .byte 1

@@ -21,7 +21,9 @@ FLOPPY = BUILD / "os-format-hd.img"
 HD_10M = 306 * 4 * 17 * 512
 HD_20M = 20 * 1024 * 1024
 HD_40M = 40 * 1024 * 1024
-MAX_SECS_40M = 40 * 1024 * 1024 // 512
+HD_64M = 64 * 1024 * 1024
+HD_130M = 130 * 1024 * 1024
+MAX_SECS_128M = 128 * 1024 * 1024 // 512
 
 
 def _blank_hd(path: Path, size: int) -> None:
@@ -30,8 +32,12 @@ def _blank_hd(path: Path, size: int) -> None:
 
 
 def _run_format_hd(
-    hd_path: Path, timeout: float = 180.0, *, hd_int13_bios: bool | None = None
-) -> str:
+    hd_path: Path,
+    timeout: float = 180.0,
+    *,
+    hd_int13_bios: bool | None = None,
+    want_ok: bool = True,
+) -> tuple[str, bytes]:
     env = os.environ.copy()
     env["K8086_U18_ROM"] = str(BUILD / "u18.bin")
     env["K8086_U19_ROM"] = str(BUILD / "u19.bin")
@@ -65,8 +71,11 @@ def _run_format_hd(
             while time.time() < deadline:
                 if SERIAL.is_file():
                     text = SERIAL.read_text(errors="replace")
-                    if "HD OK" in text and "Format complete" in text:
+                    if want_ok and "HD OK" in text and "Format complete" in text:
                         break
+                    if not want_ok and "HD OK" in text:
+                        if "Format failed" in text or "Bad geometry" in text:
+                            break
                 if proc.poll() is not None:
                     break
                 time.sleep(0.25)
@@ -74,11 +83,17 @@ def _run_format_hd(
                 text = SERIAL.read_text(errors="replace") if SERIAL.is_file() else ""
                 raise AssertionError(f"FORMAT C: gate timed out.\n---\n{text}\n---")
             text = SERIAL.read_text(errors="replace") if SERIAL.is_file() else ""
-            if "HD OK" not in text or "Format complete" not in text:
-                raise AssertionError(f"FORMAT C: gate failed.\n---\n{text}\n---")
+            if want_ok:
+                if "HD OK" not in text or "Format complete" not in text:
+                    raise AssertionError(f"FORMAT C: gate failed.\n---\n{text}\n---")
+            else:
+                if "Format failed" not in text and "Bad geometry" not in text:
+                    raise AssertionError(f"expected Format failed/Bad geometry.\n---\n{text}\n---")
+                if "Format complete" in text:
+                    raise AssertionError(f"unexpected Format complete.\n---\n{text}\n---")
         finally:
             terminate_emulator(proc)
-        return hd.read_bytes()
+        return text, hd.read_bytes()
     finally:
         unlink_retry(floppy)
         unlink_retry(hd)
@@ -114,7 +129,7 @@ def _assert_fat_volume(img: bytes, *, expect_fat16: bool, size_bytes: int) -> No
     tot = _bpb_totsec(img)
     expect = _geometry_totsec(size_bytes)
     assert tot == expect, f"totsec {tot} != geometry {expect}"
-    assert 1 <= tot <= MAX_SECS_40M
+    assert 1 <= tot <= MAX_SECS_128M
     spc = img[13]
     reserved = struct.unpack_from("<H", img, 14)[0]
     fats = img[16]
@@ -134,31 +149,45 @@ def _assert_fat_volume(img: bytes, *, expect_fat16: bool, size_bytes: int) -> No
 def test_format_hd_10m_fat12() -> None:
     hd = BUILD / "hd-10m.img"
     _blank_hd(hd, HD_10M)
-    img = _run_format_hd(hd)
+    _, img = _run_format_hd(hd)
     _assert_fat_volume(img, expect_fat16=False, size_bytes=HD_10M)
 
 
 def test_format_hd_20m_fat16() -> None:
     hd = BUILD / "hd-20m.img"
     _blank_hd(hd, HD_20M)
-    img = _run_format_hd(hd, timeout=240.0)
+    _, img = _run_format_hd(hd, timeout=240.0)
     _assert_fat_volume(img, expect_fat16=True, size_bytes=HD_20M)
 
 
 def test_format_hd_40m_fat16_totsec32() -> None:
     hd = BUILD / "hd-40m.img"
     _blank_hd(hd, HD_40M)
-    img = _run_format_hd(hd, timeout=300.0)
+    _, img = _run_format_hd(hd, timeout=300.0)
     _assert_fat_volume(img, expect_fat16=True, size_bytes=HD_40M)
     assert struct.unpack_from("<H", img, 19)[0] == 0
     assert _bpb_totsec(img) == _geometry_totsec(HD_40M)
+
+
+def test_format_hd_64m_fat16() -> None:
+    hd = BUILD / "hd-64m.img"
+    _blank_hd(hd, HD_64M)
+    _, img = _run_format_hd(hd, timeout=420.0)
+    _assert_fat_volume(img, expect_fat16=True, size_bytes=HD_64M)
+
+
+def test_format_hd_130m_refused() -> None:
+    hd = BUILD / "hd-130m.img"
+    _blank_hd(hd, HD_130M)
+    text, _ = _run_format_hd(hd, timeout=120.0, want_ok=False)
+    assert "Bad geometry" in text or "Format failed" in text
 
 
 def test_format_hd_host_bios_smoke() -> None:
     """Host FixedDiskBios still works when explicitly enabled."""
     hd = BUILD / "hd-10m-hostbios.img"
     _blank_hd(hd, HD_10M)
-    img = _run_format_hd(hd, hd_int13_bios=True)
+    _, img = _run_format_hd(hd, hd_int13_bios=True)
     _assert_fat_volume(img, expect_fat16=False, size_bytes=HD_10M)
 
 
@@ -167,5 +196,7 @@ if __name__ == "__main__":
     test_format_hd_10m_fat12()
     test_format_hd_20m_fat16()
     test_format_hd_40m_fat16_totsec32()
+    test_format_hd_64m_fat16()
+    test_format_hd_130m_refused()
     test_format_hd_host_bios_smoke()
     print("test_format_hd_e2e: OK")

@@ -44,7 +44,7 @@ ANSI_SYS := $(BUILD_DIR)/ansi.sys
 ANSITST_COM := $(BUILD_DIR)/ansitst.com
 
 # wcc C COM tools (same basename: foo.c -> foo.com), plus starfield.c -> star.com
-DOS_C_TOOLS := command dir type copy del attrib label move xcopy chkdsk find choice more mem fc tree sort edit debug diskcopy diskcomp mode
+DOS_C_TOOLS := command dir type copy del attrib label move xcopy chkdsk find choice more mem fc tree sort edit debug diskcopy diskcomp mode subst
 COMMAND_COM := $(BUILD_DIR)/command.com
 DIR_COM := $(BUILD_DIR)/dir.com
 TYPE_COM := $(BUILD_DIR)/type.com
@@ -67,6 +67,7 @@ DEBUG_COM := $(BUILD_DIR)/debug.com
 DISKCOPY_COM := $(BUILD_DIR)/diskcopy.com
 DISKCOMP_COM := $(BUILD_DIR)/diskcomp.com
 MODE_COM := $(BUILD_DIR)/mode.com
+SUBST_COM := $(BUILD_DIR)/subst.com
 
 STAR_C := $(SRC_DIR)/dos/starfield.c
 STAR_ASM := $(BUILD_DIR)/starfield.s
@@ -120,6 +121,10 @@ PARTEDIT_HD_IMAGE := $(BUILD_DIR)/os-partedit-hd.img
 PARTEDIT_HD_AUTOEXEC := fixtures/guest/AUTOEXEC.PARTEDIT.BAT
 MULTILET_HD_IMAGE := $(BUILD_DIR)/os-multilet-hd.img
 MULTILET_HD_AUTOEXEC := fixtures/guest/AUTOEXEC.MULTILET.BAT
+EXTPART_HD_IMAGE := $(BUILD_DIR)/os-extpart-hd.img
+EXTPART_HD_AUTOEXEC := fixtures/guest/AUTOEXEC.EXTPART.BAT
+SUBST_IMAGE := $(BUILD_DIR)/os-subst.img
+SUBST_AUTOEXEC := fixtures/guest/AUTOEXEC.SUBST.BAT
 BATCH_IMAGE := $(BUILD_DIR)/os-batch.img
 BATCH_AUTOEXEC := fixtures/guest/AUTOEXEC.BATCH.BAT
 DISK_IMAGE := $(BUILD_DIR)/os-disk.img
@@ -148,7 +153,7 @@ U18_ELF := $(BUILD_DIR)/u18.elf
 U18_BIN := $(BUILD_DIR)/u18.bin
 U19_BIN := $(BUILD_DIR)/u19.bin
 
-BIOS_TEST_NAMES := bt_equip bt_bda bt_video bt_scroll bt_disk bt_disk144 bt_disk120 bt_disk360 bt_disk_stat bt_disk_upgrade bt_timer bt_int1c bt_kbd_flags bt_kbd_ext bt_modes_text bt_modes_gfx bt_mode4 bt_mode6 bt_serial bt_int15 bt_pixel bt_misc bt_ctype bt_gfx_scroll bt_pixel6 bt_prtsc bt_ident bt_entry bt_fdc_rw bt_fdc_fmt bt_fdc_type bt_page bt_palette bt_bel bt_int1a_set bt_hd_params bt_hd_rw bt_kbd_irq bt_kbd_prtsc bt_brk bt_int18 bt_chgline bt_str bt_cfg bt_readchar bt_writech bt_kbd_read bt_kbd_shift bt_int13_err bt_hd_verify bt_motor bt_timer_of
+BIOS_TEST_NAMES := bt_equip bt_bda bt_video bt_scroll bt_disk bt_disk144 bt_disk120 bt_disk360 bt_disk_stat bt_disk_upgrade bt_timer bt_int1c bt_kbd_flags bt_kbd_ext bt_modes_text bt_modes_gfx bt_mode4 bt_mode6 bt_serial bt_int15 bt_pixel bt_misc bt_ctype bt_gfx_scroll bt_pixel6 bt_prtsc bt_ident bt_entry bt_cad bt_fdc_rw bt_fdc_fmt bt_fdc_type bt_page bt_palette bt_bel bt_int1a_set bt_hd_params bt_hd_rw bt_kbd_irq bt_kbd_prtsc bt_brk bt_int18 bt_chgline bt_str bt_cfg bt_readchar bt_writech bt_kbd_read bt_kbd_shift bt_int13_err bt_hd_verify bt_motor bt_timer_of
 BIOS_TEST_DIR := firmware/bios/tests/boot
 BIOS_TEST_LINK := firmware/bios/tests/linker/boot_test.ld
 BIOS_TEST_BUILD := $(BUILD_DIR)/bios_tests
@@ -163,7 +168,7 @@ FD_IMG := emulator/k8086/disks/fd.img
 
 K8086_ROMS_DIR := emulator/k8086/roms
 
-.PHONY: all bios os os-disk.img bios-tests clean run run-fd run-elite setup test test-fd-img test-dos-compat test-ping test-dhcp test-telnet test-net test-star test-bigexe test-elite test-dir test-format test-format-hd test-fat16-hd test-partedit-hd test-multilet-hd test-batch test-disk test-gzip test-utils test-diskcopy test-diskcomp test-ansi test-install-hd install-roms install-floppy
+.PHONY: all bios os os-disk.img bios-tests clean run run-fd run-elite setup test test-fd-img test-dos-compat test-ping test-dhcp test-telnet test-net test-star test-bigexe test-elite test-dir test-format test-format-hd test-fat16-hd test-partedit-hd test-multilet-hd test-extpart-hd test-subst test-batch test-disk test-gzip test-utils test-diskcopy test-diskcomp test-ansi test-install-hd install-roms install-floppy
 
 all: bios os
 
@@ -322,7 +327,7 @@ OS_IMAGE_COMMON_DEPS := $(BOOT_BIN) $(KERNEL_BIN) $(HELLO_COM) $(HELLO_EXE) \
 	$(DIR_COM) $(TYPE_COM) $(COMMAND_COM) $(COPY_COM) $(DEL_COM) $(ATTRIB_COM) $(LABEL_COM) \
 	$(MOVE_COM) $(XCOPY_COM) $(CHKDSK_COM) $(SYS_COM) $(PARTEDIT_COM) $(FORMAT_COM) \
 	$(FIND_COM) $(CHOICE_COM) $(MORE_COM) $(MEM_COM) $(FC_COM) $(TREE_COM) $(SORT_COM) \
-	$(EDIT_COM) $(DEBUG_COM) $(DISKCOPY_COM) $(DISKCOMP_COM) $(MODE_COM) \
+	$(EDIT_COM) $(DEBUG_COM) $(DISKCOPY_COM) $(DISKCOMP_COM) $(MODE_COM) $(SUBST_COM) \
 	$(COMPAT_COM) $(INT21X_COM) $(PING_COM) $(DHCP_COM) $(TELNET_COM) $(NET_COM) $(GZIP_COM) $(GUNZIP_COM) \
 	$(ANSI_SYS) $(ANSITST_COM) \
 	$(STAR_COM) $(SAMPLE_TXT) $(DBG_SCR) $(BIG_TXT) $(SHIFT_BAT) $(INSTALL_BAT) \
@@ -356,6 +361,7 @@ define PACK_OS_IMAGE
 		--file BIN/DISKCOPY.COM=$(DISKCOPY_COM) \
 		--file BIN/DISKCOMP.COM=$(DISKCOMP_COM) \
 		--file BIN/MODE.COM=$(MODE_COM) \
+		--file BIN/SUBST.COM=$(SUBST_COM) \
 		--file BIN/PING.COM=$(PING_COM) \
 		--file BIN/DHCP.COM=$(DHCP_COM) \
 		--file BIN/TELNET.COM=$(TELNET_COM) \
@@ -405,6 +411,7 @@ define PACK_OS_IMAGE_CFG
 		--file BIN/DISKCOPY.COM=$(DISKCOPY_COM) \
 		--file BIN/DISKCOMP.COM=$(DISKCOMP_COM) \
 		--file BIN/MODE.COM=$(MODE_COM) \
+		--file BIN/SUBST.COM=$(SUBST_COM) \
 		--file BIN/PING.COM=$(PING_COM) \
 		--file BIN/DHCP.COM=$(DHCP_COM) \
 		--file BIN/TELNET.COM=$(TELNET_COM) \
@@ -461,6 +468,12 @@ $(PARTEDIT_HD_IMAGE): $(OS_IMAGE_COMMON_DEPS) $(PARTEDIT_HD_AUTOEXEC)
 
 $(MULTILET_HD_IMAGE): $(OS_IMAGE_COMMON_DEPS) $(MULTILET_HD_AUTOEXEC)
 	$(call PACK_OS_IMAGE,$@,$(MULTILET_HD_AUTOEXEC))
+
+$(EXTPART_HD_IMAGE): $(OS_IMAGE_COMMON_DEPS) $(EXTPART_HD_AUTOEXEC)
+	$(call PACK_OS_IMAGE,$@,$(EXTPART_HD_AUTOEXEC))
+
+$(SUBST_IMAGE): $(OS_IMAGE_COMMON_DEPS) $(SUBST_AUTOEXEC)
+	$(call PACK_OS_IMAGE,$@,$(SUBST_AUTOEXEC))
 
 $(BATCH_IMAGE): $(OS_IMAGE_COMMON_DEPS) $(BATCH_AUTOEXEC)
 	$(call PACK_OS_IMAGE,$@,$(BATCH_AUTOEXEC))
@@ -524,7 +537,7 @@ run-elite: bios $(ELITE_IMAGE)
 setup:
 	./setup.sh
 
-test: all bios-tests $(COMPAT_IMAGE) $(PING_IMAGE) $(DHCP_IMAGE) $(TELNET_IMAGE) $(NET_IMAGE) $(STAR_IMAGE) $(BIGEXE_IMAGE) $(DIR_IMAGE) $(FORMAT_IMAGE) $(FORMAT_HD_IMAGE) $(FAT16_HD_IMAGE) $(PARTEDIT_HD_IMAGE) $(MULTILET_HD_IMAGE) $(BATCH_IMAGE) $(DISK_IMAGE) $(GZIP_IMAGE) $(UTILS_IMAGE) $(DISKCOPY_IMAGE) $(DISKCOMP_IMAGE) $(ANSI_IMAGE) $(INSTALL_IMAGE)
+test: all bios-tests $(COMPAT_IMAGE) $(PING_IMAGE) $(DHCP_IMAGE) $(TELNET_IMAGE) $(NET_IMAGE) $(STAR_IMAGE) $(BIGEXE_IMAGE) $(DIR_IMAGE) $(FORMAT_IMAGE) $(FORMAT_HD_IMAGE) $(FAT16_HD_IMAGE) $(PARTEDIT_HD_IMAGE) $(MULTILET_HD_IMAGE) $(EXTPART_HD_IMAGE) $(SUBST_IMAGE) $(BATCH_IMAGE) $(DISK_IMAGE) $(GZIP_IMAGE) $(UTILS_IMAGE) $(DISKCOPY_IMAGE) $(DISKCOMP_IMAGE) $(ANSI_IMAGE) $(INSTALL_IMAGE)
 	$(PYTHON) -m tests.test_wcc
 	$(PYTHON) -m tests.test_bios_roms
 	$(PYTHON) -m tests.test_bios_services
@@ -542,6 +555,8 @@ test: all bios-tests $(COMPAT_IMAGE) $(PING_IMAGE) $(DHCP_IMAGE) $(TELNET_IMAGE)
 	$(PYTHON) -m tests.test_fat16_hd_e2e
 	$(PYTHON) -m tests.test_partedit_hd_e2e
 	$(PYTHON) -m tests.test_multilet_hd_e2e
+	$(PYTHON) -m tests.test_extpart_hd_e2e
+	$(PYTHON) -m tests.test_subst_e2e
 	$(PYTHON) -m tests.test_batch_e2e
 	$(PYTHON) -m tests.test_disk_tools_e2e
 	$(PYTHON) -m tests.test_gzip_e2e
@@ -596,6 +611,12 @@ test-partedit-hd: $(PARTEDIT_HD_IMAGE)
 
 test-multilet-hd: $(MULTILET_HD_IMAGE)
 	$(PYTHON) -m tests.test_multilet_hd_e2e
+
+test-extpart-hd: $(EXTPART_HD_IMAGE)
+	$(PYTHON) -m tests.test_extpart_hd_e2e
+
+test-subst: $(SUBST_IMAGE)
+	$(PYTHON) -m tests.test_subst_e2e
 
 test-batch: $(BATCH_IMAGE)
 	$(PYTHON) -m tests.test_batch_e2e

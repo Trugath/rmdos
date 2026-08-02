@@ -24,7 +24,9 @@
 | `AUTOEXEC.FAT16.HD.BAT` | PARTEDIT + `FORMAT C: /S` + multi-cluster/subdir I/O for `os-fat16-hd.img` |
 | `AUTOEXEC.PARTEDIT.BAT` | `PARTEDIT /CREATE` + `/LIST` then `FORMAT C: /S /Y` for partitioned-HD e2e |
 | `AUTOEXEC.MULTILET.BAT` | Two primaries → `FORMAT C:`/`D:` lettering gate |
-| `AUTOEXEC.BATCH.BAT` | Batch language / redirection gate for `os-batch.img` |
+| `AUTOEXEC.EXTPART.BAT` | Primary + extended + logical → `FORMAT C:`/`D:` |
+| `AUTOEXEC.SUBST.BAT` | `SUBST E: A:\TEST` round-trip + FIND via E: |
+| `AUTOEXEC.BATCH.BAT` | Batch language / redirection / pipe / ERRORLEVEL / CTTY gate |
 | `AUTOEXEC.DISK.BAT` | ATTRIB/LABEL/MOVE/XCOPY/CHKDSK gate for `os-disk.img` |
 | `AUTOEXEC.GZIP.BAT` | `BIN\GZIP` / `BIN\GUNZIP` file and pipe round-trips for `os-gzip.img` |
 | `AUTOEXEC.UTILS.BAT` | `MEM` / `FC` / `TREE` / `SORT` / `EDIT` / `DEBUG` / `MODE` smoke for `os-utils.img` |
@@ -44,7 +46,7 @@ A:\
   AUTOEXEC.BAT
   BIN\     DIR TYPE COPY DEL ATTRIB LABEL MOVE XCOPY CHKDSK SYS PARTEDIT
            FORMAT FIND CHOICE MORE MEM FC TREE SORT EDIT DEBUG DISKCOPY
-           DISKCOMP MODE PING DHCP TELNET NET GZIP GUNZIP ANSI.SYS
+           DISKCOMP MODE SUBST PING DHCP TELNET NET GZIP GUNZIP ANSI.SYS
   DEMO\    HELLO.COM HELLO.EXE COMPAT.COM ANSITST.COM STAR.COM
   TEST\    SAMPLE.TXT DBG.SCR BIG.TXT
   SHIFT.BAT
@@ -55,11 +57,12 @@ Optional `CONFIG.SYS` (not on default images) can `INSTALL=` `BIN\NET.COM` for a
 resident NE2000 stack, or `DEVICE=` `BIN\ANSI.SYS` for ANSI CON filtering.
 
 `FORMAT [d:] [/S] [/Y]` builds a FAT12 or FAT16 filesystem from INT 13h geometry
-(floppy or HDD up to 40 MB), optionally installing a bootable rmDOS system
-(`/S`). Drive letters follow A:/B: floppies then DOS primaries on each HD
-(`80h`…). `PARTEDIT` (bare = list + menu; `/CREATE` `/LIST` `/DELETE` `/ACTIVE`
-`/TYPE`) edits primary partitions; FORMAT targets the letter’s volume. Without a
-DOS partition table, FORMAT retains its whole-disk HDD behavior.
+(floppy or HDD up to 128 MB), optionally installing a bootable rmDOS system
+(`/S`). Drive letters follow A:/B: floppies then DOS primaries and extended
+logicals on each HD (`80h`…). `PARTEDIT` (`/CREATE` `/CREATEEXT` `/CREATELOG`
+`/LIST`) edits primary and extended/logical partitions; FORMAT targets the
+letter’s volume. Without a DOS partition table, FORMAT retains its whole-disk
+HDD behavior.
 
 To install onto an attached hard disk from a bootable floppy, run `INSTALL`
 (or `INSTALL.BAT`). That script runs PARTEDIT, formats `C:` with `/S`, and prints

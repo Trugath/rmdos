@@ -319,6 +319,20 @@ last_size_hi:
     .word 0
 cwd_cluster:
     .word 0
+/* Per-drive last cwd: cluster word + 64-byte path, CDS_COUNT entries */
+drive_cwd_cluster:
+    .space (CDS_COUNT * 2), 0
+drive_cwd_path:
+    .space (CDS_COUNT * 64), 0
+/* SUBST: 0xFF = inactive; else real drive index. Prefix path 64 bytes each. */
+subst_real:
+    .space CDS_COUNT, 0xFF
+subst_prefix:
+    .space (CDS_COUNT * 64), 0
+subst_walk:
+    .byte 0
+subst_walk_idx:
+    .byte 0
 path_resolve_cluster:
     .word 0
 path_resolve_drive:
@@ -439,6 +453,20 @@ drive_map_bios:
     .space DRIVEMAP_MAX, 0
 drive_map_base:
     .space DRIVEMAP_MAX * 2, 0
+drm_ext_base:
+    .word 0
+drm_ebr_lba:
+    .word 0
+drm_spt:
+    .word 17
+drm_heads:
+    .word 4
+drm_bios_dl:
+    .byte 0x80
+drm_saw_mbr:
+    .byte 0
+drm_ext_list:
+    .word 0, 0, 0, 0
 abs_write:
     .byte 0
 abs_saved_drv:

@@ -547,22 +547,80 @@ dos_remount_current:
 
 /*
  * Select logical drive DL (0=A): mount it and make it current (AH=0Eh).
- * Resets cwd to root. CF if unavailable.
+ * Saves/restores per-drive cwd. CF if unavailable.
  */
 dos_select_drive:
     push ax
+    push bx
+    push cx
+    push si
+    push di
+    push es
+    push ds
+    push dx
+    push cs
+    pop ds
+    push cs
+    pop es
+    /* Save cwd of current drive into per-drive slot */
+    mov bl, [cur_drive]
+    xor bh, bh
+    cmp bl, CDS_COUNT
+    jae .dsd_mount
+    mov ax, [cwd_cluster]
+    add bx, bx
+    mov [drive_cwd_cluster + bx], ax
+    mov bl, [cur_drive]
+    xor bh, bh
+    mov ax, bx
+    mov cl, 6
+    shl ax, cl                   /* *64 */
+    lea di, [drive_cwd_path]
+    add di, ax
+    lea si, [cwd_path]
+    mov cx, 64
+    rep movsb
+.dsd_mount:
+    pop dx
     push dx
     call dos_mount_drive
     jc .dsd_bad
-    mov byte ptr cs:[cur_drive], dl
-    mov word ptr cs:[cwd_cluster], 0
-    mov byte ptr cs:[cwd_path], 0
+    mov byte ptr [cur_drive], dl
+    /* Restore cwd for new drive */
+    mov bl, dl
+    xor bh, bh
+    cmp bl, CDS_COUNT
+    jae .dsd_root
+    mov si, bx
+    add si, si
+    mov ax, [drive_cwd_cluster + si]
+    mov [cwd_cluster], ax
+    mov ax, bx
+    mov cl, 6
+    shl ax, cl
+    lea si, [drive_cwd_path]
+    add si, ax
+    lea di, [cwd_path]
+    mov cx, 64
+    rep movsb
+    jmp .dsd_ok
+.dsd_root:
+    mov word ptr [cwd_cluster], 0
+    mov byte ptr [cwd_path], 0
+.dsd_ok:
+    call dos_sysvars_refresh
     clc
     jmp .dsd_done
 .dsd_bad:
     stc
 .dsd_done:
     pop dx
+    pop ds
+    pop es
+    pop di
+    pop si
+    pop cx
+    pop bx
     pop ax
     ret
 
@@ -1075,12 +1133,14 @@ dos_sysvars_refresh:
     mov byte ptr [dos_sysvars + 0x21], al
     mov al, byte ptr [cur_drive]
     mov byte ptr [dos_sysvars + 0x22], al
+    call dos_cwd_save_current
 
-    /* CDS[i] = "X:\" + NUL for i < num_drives; clear flags */
+    /* CDS[i] = "X:" + cwd; SUBST flag when active */
     xor bx, bx
 .svr_cds:
     cmp bx, CDS_COUNT
     jae .svr_done
+    /* clear entry */
     mov ax, bx
     mov cl, CDS_ENTRY_SIZE
     mul cl
@@ -1089,20 +1149,54 @@ dos_sysvars_refresh:
     mov cx, CDS_ENTRY_SIZE
     xor al, al
     rep stosb
+
+    mov al, 0
+    cmp bl, byte ptr [num_drives]
+    jb .svr_cds_use
+    cmp byte ptr [subst_real + bx], 0xFF
+    je .svr_cds_next
+.svr_cds_use:
     mov ax, bx
     mov cl, CDS_ENTRY_SIZE
     mul cl
     lea di, [dos_cds]
     add di, ax
-    cmp bl, byte ptr [num_drives]
-    jae .svr_cds_next
     mov al, bl
     add al, 'A'
     mov byte ptr [di], al
     mov byte ptr [di + 1], ':'
     mov byte ptr [di + 2], '\\'
     mov byte ptr [di + 3], 0
-    mov word ptr [di + 0x43], 0x4000  /* physical drive present */
+    /* copy drive_cwd_path after X: if non-empty */
+    push bx
+    mov ax, bx
+    mov cl, 6
+    shl ax, cl
+    lea si, [drive_cwd_path]
+    add si, ax
+    cmp byte ptr [si], 0
+    je .svr_cds_no_cwd
+    lea di, [di + 2]
+    cmp byte ptr [si], '\\'
+    jne .svr_cds_cp_loop
+    inc si
+.svr_cds_cp_loop:
+    lodsb
+    stosb
+    test al, al
+    jnz .svr_cds_cp_loop
+.svr_cds_no_cwd:
+    pop bx
+    mov ax, bx
+    mov cl, CDS_ENTRY_SIZE
+    mul cl
+    lea di, [dos_cds]
+    add di, ax
+    mov word ptr [di + 0x43], 0x4000
+    cmp byte ptr [subst_real + bx], 0xFF
+    je .svr_cds_dpb
+    or word ptr [di + 0x43], 0x1000
+.svr_cds_dpb:
     lea ax, [dos_dpb]
     mov word ptr [di + 0x45], ax
     mov word ptr [di + 0x47], cs
@@ -1110,6 +1204,24 @@ dos_sysvars_refresh:
     inc bx
     jmp .svr_cds
 .svr_done:
+    /* LASTDRIVE = max used letter index+1 */
+    mov al, byte ptr [num_drives]
+    xor bx, bx
+.svr_ld2:
+    cmp bx, CDS_COUNT
+    jae .svr_ld2_done
+    cmp byte ptr [subst_real + bx], 0xFF
+    je .svr_ld2_n
+    mov ah, bl
+    inc ah
+    cmp ah, al
+    jbe .svr_ld2_n
+    mov al, ah
+.svr_ld2_n:
+    inc bx
+    jmp .svr_ld2
+.svr_ld2_done:
+    mov byte ptr [dos_sysvars + 0x21], al
     pop ds
     pop es
     pop di

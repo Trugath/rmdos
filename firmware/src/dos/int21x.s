@@ -347,6 +347,42 @@ _start:
     je .psp_c9
     jmp fail_psp
 .psp_c9:
+    /* Live CDS: MD+CD then AH=52 path for A: must contain marker */
+    mov ah, 0x39
+    lea dx, [cds_dir]
+    int 0x21
+    jc .psp_cds_skip
+    mov ah, 0x3B
+    lea dx, [cds_dir]
+    int 0x21
+    jc .psp_cds_skip
+    mov ah, 0x52
+    int 0x21
+    mov si, es:[bx + 0x16]
+    mov ax, es:[bx + 0x18]
+    mov es, ax
+    /* CDS[0] path bytes — look for 'C','D','S','P' */
+    mov di, si
+    add di, 2
+    mov cx, 64
+.psp_cds_scan:
+    cmp byte ptr es:[di], 'C'
+    jne .psp_cds_n
+    cmp byte ptr es:[di + 1], 'D'
+    jne .psp_cds_n
+    cmp byte ptr es:[di + 2], 'S'
+    jne .psp_cds_n
+    cmp byte ptr es:[di + 3], 'P'
+    je .psp_cds_ok
+.psp_cds_n:
+    inc di
+    loop .psp_cds_scan
+    jmp fail_psp
+.psp_cds_ok:
+    mov ah, 0x3B
+    lea dx, [cds_root]
+    int 0x21
+.psp_cds_skip:
 
     mov ah, 0x09
     lea dx, [msg_psp]
@@ -1151,6 +1187,10 @@ msg_psp:
     .ascii "PSP OK\r\n$"
 msg_temp:
     .ascii "TEMP OK\r\n$"
+cds_dir:
+    .asciz "CDSP"
+cds_root:
+    .asciz "\\"
 msg_ioctl:
     .ascii "IOCTL OK\r\n$"
 msg_xtra:

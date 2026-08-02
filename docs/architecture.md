@@ -134,7 +134,7 @@ DOS 3.3-ish real-mode kernel and shell, aimed at programs that run on an
 | Layer | Location | Role |
 |-------|----------|------|
 | Boot | `firmware/src/boot/` | Sector 0 + RFAT1 chain to `KERNEL.SYS` |
-| Kernel | `firmware/src/kernel/` | INT 20h/21h, FAT12/FAT16 (≤40 MB), MCB memory, streaming `.COM` / MZ `.EXE` loader |
+| Kernel | `firmware/src/kernel/` | INT 20h/21h, FAT12/FAT16 (≤128 MB), MCB memory, streaming `.COM` / MZ `.EXE` loader |
 | Shell / tools | `firmware/src/dos/` | `COMMAND.COM` and userland tools (see C vs asm below) |
 
 ### C vs assembly in userland
@@ -181,8 +181,9 @@ get (AH=65h AL=01), **AH=31h TSR**. AH=30h reports DOS 3.31. Gate:
 last-fit AH=58, AH=46/57, INT 25h boot signature).
 
 **Out of scope for INT 21h/2Fh fidelity:** AH=53h BPB translate; real
-SHARE/PRINT/APPEND/XMS TSR bodies; full CDS/JOIN/SUBST and SHARE/network SFT
-graphs; network redirector multiplex beyond “not installed.”
+SHARE/PRINT/APPEND/XMS TSR bodies; JOIN and full SHARE/network SFT graphs;
+network redirector multiplex beyond “not installed.” Live CDS paths and
+`SUBST.COM` (via INT 2Fh `AX=12E0h`/`12E1h`) are in scope.
 
 After the FAT self-test, the kernel opens **`CONFIG.SYS`** if present (missing file
 is ignored). Supported lines: `INSTALL=` (load+run a COM), `DEVICE=` (`.SYS`
@@ -203,14 +204,19 @@ when the driver is loaded.
 `COMMAND.COM` supports internal CD/MD/RD/CLS/REN/VER/SET/PAUSE/REM/`PATH`/`ERASE`,
 external program exec with `PATH` walk and `%var%` from the PSP environment, `ECHO`,
 `IF ERRORLEVEL` / `IF EXIST`, `GOTO`/`CALL`, batch `%0`–`%9`, redirection and pipes, and
-`AUTOEXEC.BAT`. `PATH=A:\BIN` is set in the kernel environment. Internals present:
+`AUTOEXEC.BAT`. Pipes use a sequential temp file on the **current drive**
+(`X:\PIPE.$$$`) and support chained `|` (still not concurrent DOS pipe
+semantics). `ERRORLEVEL` is updated for external EXEC and for CD/MD/RD/DEL/REN/
+CTTY failures. `CTTY CON`/`NUL` with one-level restore of handles 0/1/2.
+`PATH=A:\BIN` is set in the kernel environment. Internals present:
 `FOR`, `PROMPT` (including `$e` → ESC), `DATE`/`TIME`, `VOL`, `VERIFY`,
 `BREAK`, `SHIFT`, `EXIT`, string `IF`, `CTTY` (CON/NUL). DIR headers use the current
 drive/cwd. Wave-1 utilities present:
 `MEM`, `FC`, `TREE`, `SORT`. Wave-2: `EDIT` (16 KiB heap buffer, find, `/Q` smoke),
 `DEBUG` (debuggee arena, R/G/T/P), `DISKCOPY` / `DISKCOMP`, `MODE` (COM1 baud;
 CON columns via INT 10h AH=0Fh; LPT1 status / `LPT1:=COM1` ack), `COPY` (`/V`
-VERIFY during copy; `/A`/`/B` ASCII/binary). `BIN\ANSI.SYS` is packed for optional
+VERIFY during copy; `/A`/`/B` ASCII/binary), `SUBST` (drive→path via INT 2Fh
+`12E0h`/`12E1h`). `BIN\ANSI.SYS` is packed for optional
 `DEVICE=` load (off by default).
 
 `CHKDSK [d:] [/F]` audits the volume via INT 25h: BPB sanity, FAT1↔FAT2 compare,
@@ -237,16 +243,27 @@ yiaddr / gateway / mask / DNS. `DHCP.COM` writes the file; `PING`/`TELNET`
 require it.
 
 **Resident (optional):** `INSTALL=A:\BIN\NET.COM` in `CONFIG.SYS` loads
-`NET.COM`, which hooks **INT 60h** `AH=B8h` (multiplex version in `BX`,
-currently **2**) and stays resident (AH=31; frees its env, shrinks the PSP).
+`NET.COM`, which hooks **INT 60h** `AH=B8h` and stays resident (AH=31; frees
+its env, shrinks the PSP). This multiplex is an **rmDOS-only ABI** — not a
+Crynwr/FTP packet-driver interface and not an INT 2Fh network redirector.
+
+| AL | Function | Notes |
+|----|----------|-------|
+| 0 | Install check | `AL=FFh`, `BX`=version (currently **2**) |
+| 1 | Get MAC | `ES:DI` ← 6 bytes |
+| 2 | Transmit | `DS:SI` frame, `CX`=len; CF=error via IRET flags |
+| 3 | Receive | `ES:DI` buf, `BX`=max; CF=none else `CX`=len |
+| 4 | Get lease | `ES:DI` ← 24-byte lease; CF=invalid |
+| 5 | Set lease | `DS:SI` → 24-byte lease |
+| 6 | NIC ready | `AL=1` if NIC initialized |
+| 7 | Prepare unload | restore INT 60; `BX`=TSR PSP |
+
 The NIC is initialized lazily on the first MAC/TX/RX multiplex call (with
 `ES=DS=CS` inside the TSR). When present, DHCP/PING/TELNET use the multiplex
 for MAC/TX/RX and lease (`AL=1`–`5`; no `LEASE.DAT`) so the TSR owns the NIC
-exclusively. `AL=0` install check, `AL=6` NIC-ready, `AL=7` prepare-unload
-(restore INT 60; caller frees the PSP). `NET /U` unloads when the version
-matches. CF for TX/RX/lease is returned via the IRET flags frame.
-`BIN\NETTEST.COM` on `os-net.img` smoke-tests the mux. Default images leave
-INSTALL **off**. (INT 60h avoids colliding with DOS INT 2Fh probes.)
+exclusively. `NET /U` unloads when the version matches. `BIN\NETTEST.COM` on
+`os-net.img` smoke-tests install-check, MAC, TX, and NIC-ready. Default images
+leave INSTALL **off**. (INT 60h avoids colliding with DOS INT 2Fh probes.)
 
 `PING`/`TELNET` accept an IPv4 address or DNS hostname and resolve A records via
 the lease DNS server (typically the NAT gateway `10.0.2.2`). `TELNET host [port]`
@@ -262,14 +279,14 @@ sectors per cluster) so volumes are not limited to a hardcoded 720 KB map.
 `FORMAT [d:] [/S] [/Y]` builds FAT12 or FAT16 from INT 13h AH=08 geometry
 (auto-selected by cluster count; `CountOfClusters < 4085` → FAT12) and can
 install `KERNEL.SYS` + `COMMAND.COM` (`/S`). Drive letters: `A:`/`B:` are
-floppies; hard-disk DOS primaries (`01h`/`04h`/`06h`) are assigned `C:` onward in
-slot order per BIOS unit (`80h`, `81h`, …). A whole-disk FAT VBR (no DOS
-partition) still gets one letter at LBA 0. `PARTEDIT` lists HD addresses and
-primaries (with letters), edits via an interactive menu or scriptable
-`/CREATE` `/DELETE` `/ACTIVE` `/TYPE` `/LIST` (primaries only; optional
+floppies; hard-disk DOS primaries (`01h`/`04h`/`06h`) and logicals inside
+extended containers (`05h`/`0Fh`) are assigned `C:` onward in slot order per
+BIOS unit (`80h`, `81h`, …). A whole-disk FAT VBR (no DOS partition) still gets
+one letter at LBA 0. `PARTEDIT` lists HD addresses and volumes (with letters),
+and supports scriptable `/CREATE` `/CREATEEXT` `/CREATELOG` `/LIST` (optional
 `/SIZE`). `PARTEDIT /CREATE` creates an active primary (leaving track zero for
 an MBR) and picks type by size (`01`/`04`/`06`); `FORMAT` rewrites that type to
-match the filesystem it built. Hard disks are limited to **40 MB**; larger
+match the filesystem it built. Hard disks are limited to **128 MB**; larger
 geometries are rejected. The kernel uses a windowed FAT cache and remounts when
 the current drive changes.
 
@@ -285,7 +302,7 @@ A:\
   AUTOEXEC.BAT
   BIN\     DIR TYPE COPY DEL ATTRIB LABEL MOVE XCOPY CHKDSK SYS PARTEDIT
            FORMAT FIND CHOICE MORE MEM FC TREE SORT EDIT DEBUG DISKCOPY
-           DISKCOMP MODE PING DHCP TELNET NET GZIP GUNZIP ANSI.SYS
+           DISKCOMP MODE SUBST PING DHCP TELNET NET GZIP GUNZIP ANSI.SYS
             (os-net.img also: NETTEST)
   DEMO\    HELLO.COM HELLO.EXE COMPAT.COM INT21X.COM ANSITST.COM STAR.COM
   TEST\    SAMPLE.TXT DBG.SCR BIG.TXT
@@ -326,7 +343,7 @@ timeout, INT 05h/INT 18h no-BASIC, ROM identity/checksum, IBM entry trampolines,
 Ctrl-Break→INT 1Bh (`bt_brk`), INT 13h AH=17/18 (`bt_fdc_type`), plus
 `bt_readchar`/`bt_writech`/`bt_kbd_read`/`bt_int13_err`/`bt_hd_verify`/
 `bt_motor`/`bt_timer_of`. Host-only inject assists: `0x8901` scancode,
-`0x8902` FDC disk-change. Not covered: COM2–4, CAD warm-boot unit (e2e elsewhere).
+`0x8902` FDC disk-change. Not covered: COM2–4.
 
 ## References
 

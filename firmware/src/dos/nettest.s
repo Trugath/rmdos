@@ -63,6 +63,12 @@ _start:
 
     call nic_rx                       /* CF ok — may be empty */
 
+    /* AL=6 NIC-ready after MAC/TX path */
+    mov ax, 0xB806
+    int 0x60
+    cmp al, 1
+    jne .fail_ready
+
     mov ah, 0x09
     lea dx, [msg_ok]
     int 0x21
@@ -86,6 +92,13 @@ _start:
 .fail_tx:
     mov ah, 0x09
     lea dx, [msg_tx]
+    int 0x21
+    mov ax, 0x4C01
+    int 0x21
+
+.fail_ready:
+    mov ah, 0x09
+    lea dx, [msg_ready]
     int 0x21
     mov ax, 0x4C01
     int 0x21
@@ -140,3 +153,5 @@ msg_mac:
     .ascii "NETTEST: bad MAC\r\n$"
 msg_tx:
     .ascii "NETTEST: TX fail\r\n$"
+msg_ready:
+    .ascii "NETTEST: not ready\r\n$"

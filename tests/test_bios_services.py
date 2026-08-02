@@ -53,6 +53,7 @@ TESTS = [
     "bt_prtsc",
     "bt_ident",
     "bt_entry",
+    "bt_cad",
     "bt_fdc_rw",
     "bt_fdc_fmt",
     "bt_fdc_type",

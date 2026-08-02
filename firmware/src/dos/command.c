@@ -52,6 +52,12 @@ static int verify_on;
 static int break_on;
 static int batch_argc;
 static int batch_abort;
+static int ctty_saved0;
+static int ctty_saved1;
+static int ctty_saved2;
+static int ctty_active;
+static char pipe_tmp[16];
+
 
 void dos_set_verify(int on)
 {
@@ -1163,17 +1169,47 @@ void do_ctty(void)
     int h;
     if (!next_token(arg1, PATH_MAX)) {
         print_dollar("CTTY device\r\n$");
+        last_errorlevel = 1;
+        return;
+    }
+    /* CTTY CON restores prior handles when we previously switched away. */
+    if (str_eq(arg1, "CON") && ctty_active) {
+        if (ctty_saved0 != 0) {
+            dos_force_dup(ctty_saved0, 0);
+            dos_close(ctty_saved0);
+        }
+        if (ctty_saved1 != 0) {
+            dos_force_dup(ctty_saved1, 1);
+            dos_close(ctty_saved1);
+        }
+        if (ctty_saved2 != 0) {
+            dos_force_dup(ctty_saved2, 2);
+            dos_close(ctty_saved2);
+        }
+        ctty_saved0 = 0;
+        ctty_saved1 = 0;
+        ctty_saved2 = 0;
+        ctty_active = 0;
+        last_errorlevel = 0;
         return;
     }
     h = dos_open(arg1, 2);
     if (h == -1) {
         print_dollar("Invalid device\r\n$");
+        last_errorlevel = 1;
         return;
+    }
+    if (!ctty_active) {
+        ctty_saved0 = dos_dup(0);
+        ctty_saved1 = dos_dup(1);
+        ctty_saved2 = dos_dup(2);
+        ctty_active = 1;
     }
     dos_force_dup(h, 0);
     dos_force_dup(h, 1);
     dos_force_dup(h, 2);
     if (h > 2) dos_close(h);
+    last_errorlevel = 0;
 }
 
 void dispatch(void);
@@ -1642,15 +1678,25 @@ void dispatch_plain(void)
     if (str_eq(prog, "TYPE")) { do_type(); return; }
     if (str_eq(prog, "COPY")) { do_copy(); return; }
     if (str_eq(prog, "DEL") || str_eq(prog, "ERASE")) {
-        if (next_token(arg1, PATH_MAX) && dos_delete(arg1) == 0) print_dollar("deleted\r\n$");
-        else print_dollar("DEL file\r\n$");
+        if (next_token(arg1, PATH_MAX) && dos_delete(arg1) == 0) {
+            print_dollar("deleted\r\n$");
+            last_errorlevel = 0;
+        } else {
+            print_dollar("DEL file\r\n$");
+            last_errorlevel = 1;
+        }
         return;
     }
     if (str_eq(prog, "PATH")) { do_path(); return; }
     if (str_eq(prog, "CLS")) { clear_screen(); return; }
     if (str_eq(prog, "CD") || str_eq(prog, "CHDIR")) {
         if (next_token(arg1, PATH_MAX)) {
-            if (dos_chdir(arg1) == -1) print_dollar("Invalid directory\r\n$");
+            if (dos_chdir(arg1) == -1) {
+                print_dollar("Invalid directory\r\n$");
+                last_errorlevel = 1;
+            } else {
+                last_errorlevel = 0;
+            }
         } else {
             drive = dos_current_drive();
             print_char(drive + 'A');
@@ -1658,19 +1704,35 @@ void dispatch_plain(void)
             get_cwd(cwd);
             print_string(cwd);
             print_crlf();
+            last_errorlevel = 0;
         }
         return;
     }
     if (str_eq(prog, "MD") || str_eq(prog, "MKDIR")) {
-        if (!next_token(arg1, PATH_MAX) || dos_mkdir(arg1) == -1) print_dollar("Unable to create directory\r\n$");
+        if (!next_token(arg1, PATH_MAX) || dos_mkdir(arg1) == -1) {
+            print_dollar("Unable to create directory\r\n$");
+            last_errorlevel = 1;
+        } else {
+            last_errorlevel = 0;
+        }
         return;
     }
     if (str_eq(prog, "RD") || str_eq(prog, "RMDIR")) {
-        if (!next_token(arg1, PATH_MAX) || dos_rmdir(arg1) == -1) print_dollar("Invalid path, not directory,\r\nor directory not empty\r\n$");
+        if (!next_token(arg1, PATH_MAX) || dos_rmdir(arg1) == -1) {
+            print_dollar("Invalid path, not directory,\r\nor directory not empty\r\n$");
+            last_errorlevel = 1;
+        } else {
+            last_errorlevel = 0;
+        }
         return;
     }
     if (str_eq(prog, "REN") || str_eq(prog, "RENAME")) {
-        if (!next_token(arg1, PATH_MAX) || !next_token(arg2, PATH_MAX) || dos_rename(arg1, arg2) == -1) print_dollar("RENAME old new\r\n$");
+        if (!next_token(arg1, PATH_MAX) || !next_token(arg2, PATH_MAX) || dos_rename(arg1, arg2) == -1) {
+            print_dollar("RENAME old new\r\n$");
+            last_errorlevel = 1;
+        } else {
+            last_errorlevel = 0;
+        }
         return;
     }
     if (str_eq(prog, "ECHO") || is_echo_punct(prog)) {
@@ -1758,35 +1820,78 @@ int run_pipe(void)
 {
     int i;
     int h;
+    int drive;
+    int first;
+    first = 1;
     i = 0;
     while (buf_get(cmd, i) != 0 && buf_get(cmd, i) != '|') i = i + 1;
     if (buf_get(cmd, i) == 0) return 0;
-    buf_set(cmd, i, 0);
-    str_copy(pipe_rhs, buf_addr(cmd, i + 1), LINE_MAX);
-    h = dos_create("A:\\PIPE.$$$", 0);
-    if (h == -1) return 1;
-    saved_stdout = dos_dup(1);
-    if (saved_stdout != -1) {
-        dos_force_dup(h, 1);
-        dispatch();
-        dos_force_dup(saved_stdout, 1);
-        dos_close(saved_stdout);
-    }
-    dos_close(h);
-    h = dos_open("A:\\PIPE.$$$", 0);
-    if (h != -1) {
-        saved_stdin = dos_dup(0);
-        if (saved_stdin != -1) {
-            dos_force_dup(h, 0);
-            str_copy(cmd, pipe_rhs, LINE_MAX);
-            dispatch();
+
+    drive = dos_current_drive();
+    buf_set(pipe_tmp, 0, drive + 'A');
+    buf_set(pipe_tmp, 1, ':');
+    buf_set(pipe_tmp, 2, '\\');
+    buf_set(pipe_tmp, 3, 'P');
+    buf_set(pipe_tmp, 4, 'I');
+    buf_set(pipe_tmp, 5, 'P');
+    buf_set(pipe_tmp, 6, 'E');
+    buf_set(pipe_tmp, 7, '.');
+    buf_set(pipe_tmp, 8, '$');
+    buf_set(pipe_tmp, 9, '$');
+    buf_set(pipe_tmp, 10, '$');
+    buf_set(pipe_tmp, 11, 0);
+
+    while (1) {
+        i = 0;
+        while (buf_get(cmd, i) != 0 && buf_get(cmd, i) != '|') i = i + 1;
+        if (buf_get(cmd, i) == '|') {
+            buf_set(cmd, i, 0);
+            str_copy(pipe_rhs, buf_addr(cmd, i + 1), LINE_MAX);
+        } else {
+            /* Final segment: already have stdin from prior temp if !first */
+            parse_redirection();
+            if (setup_redirection()) {
+                dispatch_plain();
+                restore_redirection();
+            }
+            if (!first) {
+                dos_force_dup(saved_stdin, 0);
+                dos_close(saved_stdin);
+                dos_delete(pipe_tmp);
+            }
+            return 1;
+        }
+        h = dos_create(pipe_tmp, 0);
+        if (h == -1) return 1;
+        saved_stdout = dos_dup(1);
+        if (saved_stdout != -1) {
+            dos_force_dup(h, 1);
+            parse_redirection();
+            if (setup_redirection()) {
+                dispatch_plain();
+                restore_redirection();
+            }
+            dos_force_dup(saved_stdout, 1);
+            dos_close(saved_stdout);
+        }
+        dos_close(h);
+        if (!first) {
             dos_force_dup(saved_stdin, 0);
             dos_close(saved_stdin);
         }
+        h = dos_open(pipe_tmp, 0);
+        if (h == -1) {
+            dos_delete(pipe_tmp);
+            return 1;
+        }
+        saved_stdin = dos_dup(0);
+        if (saved_stdin != -1) {
+            dos_force_dup(h, 0);
+        }
         dos_close(h);
+        str_copy(cmd, pipe_rhs, LINE_MAX);
+        first = 0;
     }
-    dos_delete("A:\\PIPE.$$$");
-    return 1;
 }
 
 void dispatch(void)

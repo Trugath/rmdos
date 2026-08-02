@@ -243,8 +243,23 @@ path_resolve:
     sub al, 'A'
     mov byte ptr cs:[path_resolve_drive], al
     push si
+    mov bl, al
+    xor bh, bh
+    cmp bl, CDS_COUNT
+    jae .pr_drv_mount
+    cmp byte ptr cs:[subst_real + bx], 0xFF
+    je .pr_drv_mount
+    /* SUBST: mount real drive; remember for abs prefix walk */
+    mov al, byte ptr cs:[subst_real + bx]
+    mov byte ptr cs:[path_resolve_drive], al
+    mov byte ptr cs:[subst_walk], 1
+    mov byte ptr cs:[subst_walk_idx], bl
+    jmp .pr_drv_mount2
+.pr_drv_mount:
+    mov byte ptr cs:[subst_walk], 0
+.pr_drv_mount2:
     mov dl, al
-    call dos_mount_drive           /* access drive; do not change cur_drive */
+    call dos_mount_drive
     pop si
     jc .pr_err
     add si, 2
@@ -256,7 +271,19 @@ path_resolve:
     /* Relative/default path: ensure current drive volume is mounted. */
     mov al, byte ptr cs:[cur_drive]
     mov byte ptr cs:[path_resolve_drive], al
+    mov byte ptr cs:[subst_walk], 0
     push si
+    mov bl, al
+    xor bh, bh
+    cmp bl, CDS_COUNT
+    jae .pr_no_m
+    cmp byte ptr cs:[subst_real + bx], 0xFF
+    je .pr_no_m
+    mov al, byte ptr cs:[subst_real + bx]
+    mov byte ptr cs:[path_resolve_drive], al
+    mov byte ptr cs:[subst_walk], 1
+    mov byte ptr cs:[subst_walk_idx], bl
+.pr_no_m:
     mov dl, al
     call dos_mount_drive
     pop si
@@ -274,6 +301,53 @@ path_resolve:
     xor bp, bp
     mov bh, 1
     inc si
+    /* If SUBST, walk prefix components before remaining path */
+    cmp byte ptr cs:[subst_walk], 0
+    je .pr_body
+    push si
+    mov bl, byte ptr cs:[subst_walk_idx]
+    xor bh, bh
+    mov ax, bx
+    mov cl, 6
+    shl ax, cl
+    push ds
+    push cs
+    pop ds
+    lea si, [subst_prefix]
+    add si, ax
+    cmp byte ptr [si], '\\'
+    jne .pr_pref_ok
+    inc si
+.pr_pref_ok:
+    /* walk prefix dirs into BP; DS=CS */
+.pr_pref_loop:
+    cmp byte ptr [si], 0
+    je .pr_pref_done
+    call path_to_83_component
+    jc .pr_pref_fail
+    cmp al, 1
+    je .pr_pref_loop
+    cmp al, 2
+    je .pr_pref_fail
+    mov dx, bp
+    call fat12_find_in_dir
+    jc .pr_pref_fail
+    push ax
+    call path_read_attr
+    pop dx
+    jc .pr_pref_fail
+    test al, 0x10
+    jz .pr_pref_fail
+    mov bp, dx
+    jmp .pr_pref_loop
+.pr_pref_fail:
+    pop ds
+    pop si
+    jmp .pr_err
+.pr_pref_done:
+    pop ds
+    pop si
+    mov bh, 1
 
 .pr_body:
     cmp byte ptr [si], 0
@@ -955,6 +1029,7 @@ dos_ah3b:
     mov byte ptr cs:[cur_drive], al
     mov dx, bp
     call path_rebuild_cwd
+    call dos_cwd_save_current
 .a3b_noop:
     pop bp
     pop es

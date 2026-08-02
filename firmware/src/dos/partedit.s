@@ -4,10 +4,16 @@
 .global _start
 
 /*
- * PARTEDIT — create/list primary DOS partitions on BIOS drive 80h.
- * Usage: PARTEDIT /CREATE [/SIZE n] | /P | /AUTO | /LIST [C:]
+ * PARTEDIT — create/list primary and extended/logical DOS partitions on BIOS
+ * drive 80h.
+ * Usage:
+ *   PARTEDIT /CREATE [/SIZE n] | /P | /AUTO | /LIST [C:]
+ *   PARTEDIT /CREATEEXT [/SIZE n]
+ *   PARTEDIT /CREATELOG [/SIZE n]
  * /CREATE adds the next free primary (start LBA 17 if empty). /SIZE sets
  * sector count; omit to use remaining disk space after track 0.
+ * /CREATEEXT adds a type-05 extended container; /CREATELOG adds a logical
+ * DOS volume inside the first extended partition.
  */
 
 _start:
@@ -19,6 +25,8 @@ _start:
     mov byte ptr [list_only], 0
     mov byte ptr [have_size], 0
     mov byte ptr [want_create], 0
+    mov byte ptr [want_create_ext], 0
+    mov byte ptr [want_create_log], 0
     mov word ptr [req_size], 0
     mov si, 0x81
     call parse_args
@@ -29,10 +37,24 @@ _start:
     jc fail
     jmp ok_exit
 .chk_create:
-    cmp byte ptr [want_create], 0
-    je usage
+    mov al, [want_create]
+    or al, [want_create_ext]
+    or al, [want_create_log]
+    jz usage
     call geometry
     jc fail
+    cmp byte ptr [want_create_ext], 0
+    je .chk_log
+    call do_create_ext
+    jc fail
+    jmp ok_exit
+.chk_log:
+    cmp byte ptr [want_create_log], 0
+    je .do_pri
+    call do_create_log
+    jc fail
+    jmp ok_exit
+.do_pri:
     call do_create
     jc fail
 ok_exit:
@@ -143,6 +165,27 @@ parse_args:
     jne .bad
     cmp byte ptr [si + 5], 'E'
     jne .bad
+    /* CREATEEXT / CREATELOG / CREATE */
+    cmp byte ptr [si + 6], 'E'
+    jne .try_clog
+    cmp byte ptr [si + 7], 'X'
+    jne .try_clog
+    cmp byte ptr [si + 8], 'T'
+    jne .try_clog
+    mov byte ptr [want_create_ext], 1
+    add si, 9
+    jmp .skip
+.try_clog:
+    cmp byte ptr [si + 6], 'L'
+    jne .try_cpri
+    cmp byte ptr [si + 7], 'O'
+    jne .try_cpri
+    cmp byte ptr [si + 8], 'G'
+    jne .try_cpri
+    mov byte ptr [want_create_log], 1
+    add si, 9
+    jmp .skip
+.try_cpri:
     mov byte ptr [want_create], 1
     add si, 6
     jmp .skip
@@ -217,13 +260,8 @@ geometry:
     inc ax
     mul word ptr [heads]
     mul word ptr [spt]
-    cmp dx, 1
-    ja .geo_bad
-    cmp dx, 1
-    jb .size_ok
-    cmp ax, 0x4000
-    ja .geo_bad
-.size_ok:
+    test dx, dx
+    jnz .geo_bad
     cmp ax, 18
     jbe .geo_bad
     mov [total], ax
@@ -461,6 +499,275 @@ do_create:
     stc
     ret
 
+/*
+ * Create type-05 extended container in next free primary slot.
+ * Leaves first EBR empty (no logical yet) with AA55 signature.
+ */
+do_create_ext:
+    call geometry
+    jc .dce_bad
+    call clear_buf
+    xor ax, ax
+    lea bx, [secbuf]
+    call read_lba
+    jc .dce_fresh
+    cmp word ptr [secbuf + 510], 0xAA55
+    je .dce_have
+.dce_fresh:
+    call clear_buf
+    call install_mbr_code
+    mov word ptr [secbuf + 510], 0xAA55
+.dce_have:
+    mov word ptr [part_start], 17
+    mov byte ptr [slot], 0
+    mov si, 0x1BE
+    mov cx, 4
+.dce_scan:
+    mov al, [secbuf + si + 4]
+    test al, al
+    jz .dce_free
+    mov ax, [secbuf + si + 8]
+    add ax, [secbuf + si + 12]
+    cmp ax, [part_start]
+    jbe .dce_next
+    mov [part_start], ax
+.dce_next:
+    add si, 16
+    inc byte ptr [slot]
+    loop .dce_scan
+    jmp .dce_bad
+.dce_free:
+    mov ax, [total]
+    sub ax, [part_start]
+    jbe .dce_bad
+    cmp byte ptr [have_size], 0
+    je .dce_use_rest
+    mov bx, [req_size]
+    test bx, bx
+    jz .dce_bad
+    cmp bx, ax
+    ja .dce_bad
+    mov ax, bx
+.dce_use_rest:
+    mov [part_secs], ax
+    push si
+    lea di, [secbuf]
+    add di, si
+    call fill_entry_ext
+    pop si
+    mov word ptr [secbuf + 510], 0xAA55
+    xor ax, ax
+    lea bx, [secbuf]
+    call write_lba
+    jc .dce_bad
+    /* Empty first EBR at part_start */
+    call clear_buf
+    mov word ptr [secbuf + 510], 0xAA55
+    mov ax, [part_start]
+    lea bx, [secbuf]
+    call write_lba
+    jc .dce_bad
+    clc
+    ret
+.dce_bad:
+    stc
+    ret
+
+/* Fill DI with type-05 extended entry from part_start/part_secs. Never active. */
+fill_entry_ext:
+    mov byte ptr [di], 0
+    mov ax, [part_start]
+    xor dx, dx
+    div word ptr [spt]
+    mov bl, dl
+    inc bl
+    xor dx, dx
+    div word ptr [heads]
+    mov [di + 1], dl
+    mov [di + 3], al
+    mov al, ah
+    and al, 3
+    mov cl, 6
+    shl al, cl
+    or al, bl
+    mov [di + 2], al
+    mov byte ptr [di + 4], 0x05
+    mov byte ptr [di + 5], 0xFF
+    mov byte ptr [di + 6], 0xFF
+    mov byte ptr [di + 7], 0xFF
+    mov ax, [part_start]
+    mov [di + 8], ax
+    mov word ptr [di + 10], 0
+    mov ax, [part_secs]
+    mov [di + 12], ax
+    mov word ptr [di + 14], 0
+    ret
+
+/*
+ * Add a logical DOS volume inside the first extended partition.
+ */
+do_create_log:
+    call geometry
+    jc .dcl_bad
+    call clear_buf
+    xor ax, ax
+    lea bx, [secbuf]
+    call read_lba
+    jc .dcl_bad
+    cmp word ptr [secbuf + 510], 0xAA55
+    jne .dcl_bad
+    /* Find first extended */
+    mov si, 0x1BE
+    mov cx, 4
+.dcl_find_ext:
+    mov al, [secbuf + si + 4]
+    cmp al, 0x05
+    je .dcl_got_ext
+    cmp al, 0x0F
+    je .dcl_got_ext
+    add si, 16
+    loop .dcl_find_ext
+    jmp .dcl_bad
+.dcl_got_ext:
+    mov ax, [secbuf + si + 8]
+    mov [ext_base], ax
+    mov ax, [secbuf + si + 12]
+    mov [ext_secs], ax
+    /* Walk EBR chain; find empty first entry or append */
+    mov ax, [ext_base]
+    mov [ebr_lba], ax
+    mov word ptr [prev_ebr], 0xFFFF
+.dcl_walk:
+    mov ax, [ebr_lba]
+    lea bx, [secbuf]
+    call read_lba
+    jc .dcl_bad
+    cmp word ptr [secbuf + 510], 0xAA55
+    jne .dcl_bad
+    mov al, [secbuf + 0x1BE + 4]
+    test al, al
+    jz .dcl_fill_here
+    /* occupied: follow link or append after this logical */
+    mov al, [secbuf + 0x1CE + 4]
+    cmp al, 0x05
+    je .dcl_follow
+    cmp al, 0x0F
+    je .dcl_follow
+    /* No next link: create new EBR after this logical */
+    mov ax, [ebr_lba]
+    add ax, [secbuf + 0x1BE + 8]
+    add ax, [secbuf + 0x1BE + 12]
+    jc .dcl_bad
+    mov [new_ebr], ax
+    /* Link from current EBR */
+    mov ax, [new_ebr]
+    sub ax, [ext_base]
+    mov [secbuf + 0x1CE + 8], ax
+    mov word ptr [secbuf + 0x1CE + 10], 0
+    /* size of link entry = remaining; CHS junk FF */
+    mov byte ptr [secbuf + 0x1CE + 4], 0x05
+    mov byte ptr [secbuf + 0x1CE], 0
+    mov byte ptr [secbuf + 0x1CE + 5], 0xFF
+    mov byte ptr [secbuf + 0x1CE + 6], 0xFF
+    mov byte ptr [secbuf + 0x1CE + 7], 0xFF
+    mov ax, [ext_base]
+    add ax, [ext_secs]
+    sub ax, [new_ebr]
+    mov [secbuf + 0x1CE + 12], ax
+    mov word ptr [secbuf + 0x1CE + 14], 0
+    mov ax, [ebr_lba]
+    lea bx, [secbuf]
+    call write_lba
+    jc .dcl_bad
+    mov ax, [new_ebr]
+    mov [ebr_lba], ax
+    call clear_buf
+    mov word ptr [secbuf + 510], 0xAA55
+    jmp .dcl_fill_here
+.dcl_follow:
+    mov ax, [ext_base]
+    add ax, [secbuf + 0x1CE + 8]
+    mov [prev_ebr], ax
+    mov word ptr [ebr_lba], ax
+    jmp .dcl_walk
+
+.dcl_fill_here:
+    /* First sector of EBR is reserved; logical starts at ebr+1 */
+    mov word ptr [part_start], 1
+    mov ax, [ext_base]
+    add ax, [ext_secs]
+    sub ax, [ebr_lba]
+    dec ax                       /* minus EBR sector */
+    jbe .dcl_bad
+    cmp byte ptr [have_size], 0
+    je .dcl_use_rest
+    mov bx, [req_size]
+    test bx, bx
+    jz .dcl_bad
+    cmp bx, ax
+    ja .dcl_bad
+    mov ax, bx
+.dcl_use_rest:
+    mov [part_secs], ax
+    /* Write logical entry at 0x1BE relative to this EBR */
+    lea di, [secbuf + 0x1BE]
+    mov byte ptr [di], 0
+    /* crude CHS */
+    mov byte ptr [di + 1], 0
+    mov byte ptr [di + 2], 1
+    mov byte ptr [di + 3], 0
+    mov ax, [part_secs]
+    cmp ax, 32768
+    jae .dcl_t4
+    mov byte ptr [di + 4], 0x01
+    jmp .dcl_tend
+.dcl_t4:
+    cmp ax, 65535
+    ja .dcl_t6
+    mov byte ptr [di + 4], 0x04
+    jmp .dcl_tend
+.dcl_t6:
+    mov byte ptr [di + 4], 0x06
+.dcl_tend:
+    mov byte ptr [di + 5], 0xFF
+    mov byte ptr [di + 6], 0xFF
+    mov byte ptr [di + 7], 0xFF
+    mov word ptr [di + 8], 1
+    mov word ptr [di + 10], 0
+    mov ax, [part_secs]
+    mov [di + 12], ax
+    mov word ptr [di + 14], 0
+    /* clear link slot if fresh EBR */
+    mov byte ptr [secbuf + 0x1CE + 4], 0
+    mov word ptr [secbuf + 510], 0xAA55
+    mov ax, [ebr_lba]
+    lea bx, [secbuf]
+    call write_lba
+    jc .dcl_bad
+    /* VBR at ebr_lba+1 */
+    call clear_buf
+    push ds
+    push es
+    push cs
+    pop ds
+    lea si, [vbr_boot]
+    lea di, [secbuf]
+    mov cx, 256
+    rep movsw
+    pop es
+    pop ds
+    mov word ptr [secbuf + 510], 0xAA55
+    mov ax, [ebr_lba]
+    inc ax
+    lea bx, [secbuf]
+    call write_lba
+    jc .dcl_bad
+    clc
+    ret
+.dcl_bad:
+    stc
+    ret
+
 do_list:
     call geometry
     jc .dl_bad
@@ -475,8 +782,11 @@ do_list:
     cmp word ptr [secbuf + 510], 0xAA55
     jne .dl_none
     mov byte ptr [list_let], 'C'
+    mov word ptr [list_ext0], 0
+    mov word ptr [list_ext1], 0
     mov si, 0x1BE
     mov cx, 4
+    xor di, di
 .dl_scan:
     mov al, [secbuf + si + 4]
     cmp al, 0x01
@@ -484,7 +794,12 @@ do_list:
     cmp al, 0x04
     je .dl_dos
     cmp al, 0x06
-    jne .dl_n
+    je .dl_dos
+    cmp al, 0x05
+    je .dl_ext
+    cmp al, 0x0F
+    je .dl_ext
+    jmp .dl_n
 .dl_dos:
     cmp word ptr [secbuf + si + 10], 0
     jne .dl_n
@@ -496,14 +811,86 @@ do_list:
     mov ah, 9
     int 0x21
     inc byte ptr [list_let]
+    jmp .dl_n
+.dl_ext:
+    cmp word ptr [secbuf + si + 10], 0
+    jne .dl_n
+    mov ax, [secbuf + si + 8]
+    test ax, ax
+    jz .dl_n
+    cmp di, 4
+    jae .dl_n
+    mov [list_ext0 + di], ax
+    add di, 2
 .dl_n:
     add si, 16
     loop .dl_scan
+    /* Walk collected extended bases after MBR scan */
+    xor di, di
+    mov cx, 2
+.dl_walk_exts:
+    mov ax, [list_ext0 + di]
+    test ax, ax
+    jz .dl_we_next
+    mov [ext_base], ax
+    call list_logicals
+.dl_we_next:
+    add di, 2
+    loop .dl_walk_exts
 .dl_none:
     clc
     ret
 .dl_bad:
     stc
+    ret
+
+/* List logicals in extended at ext_base; advances list_let. */
+list_logicals:
+    push ax
+    push bx
+    push cx
+    push dx
+    mov ax, [ext_base]
+    mov [ebr_lba], ax
+.ll_loop:
+    mov ax, [ebr_lba]
+    lea bx, [secbuf]
+    call read_lba
+    jc .ll_done
+    cmp word ptr [secbuf + 510], 0xAA55
+    jne .ll_done
+    mov al, [secbuf + 0x1BE + 4]
+    cmp al, 0x01
+    je .ll_dos
+    cmp al, 0x04
+    je .ll_dos
+    cmp al, 0x06
+    jne .ll_link
+.ll_dos:
+    mov al, [list_let]
+    mov [msg_let], al
+    lea dx, [msg_let_line]
+    mov ah, 9
+    int 0x21
+    inc byte ptr [list_let]
+.ll_link:
+    mov al, [secbuf + 0x1CE + 4]
+    cmp al, 0x05
+    je .ll_next
+    cmp al, 0x0F
+    jne .ll_done
+.ll_next:
+    mov ax, [ext_base]
+    add ax, [secbuf + 0x1CE + 8]
+    cmp ax, [ebr_lba]
+    je .ll_done
+    mov [ebr_lba], ax
+    jmp .ll_loop
+.ll_done:
+    pop dx
+    pop cx
+    pop bx
+    pop ax
     ret
 
 /* Copied verbatim to sector zero.  It loads RFAT1 at 0600 then KERNEL.SYS. */
@@ -615,6 +1002,8 @@ vbr_boot:
 drive:      .byte 0x80
 list_only:  .byte 0
 want_create:.byte 0
+want_create_ext:.byte 0
+want_create_log:.byte 0
 have_size:  .byte 0
 slot:       .byte 0
 list_let:   .byte 'C'
@@ -624,10 +1013,17 @@ heads:      .word 4
 total:      .word 0
 part_start: .word 0
 part_secs:  .word 0
+ext_base:   .word 0
+ext_secs:   .word 0
+ebr_lba:    .word 0
+prev_ebr:   .word 0
+new_ebr:    .word 0
+list_ext0:  .word 0
+list_ext1:  .word 0
 secbuf:     .space 512, 0
 msg_ok:     .ascii "PARTEDIT OK\r\n$"
 msg_hd:     .ascii "HD 80\r\n$"
 msg_let_line:
 msg_let:    .ascii "C:\r\n$"
-msg_usage:  .ascii "PARTEDIT [/CREATE [/SIZE n]|/P|/AUTO|/LIST] [C:]\r\n$"
+msg_usage:  .ascii "PARTEDIT [/CREATE|/CREATEEXT|/CREATELOG [/SIZE n]|/LIST] [C:]\r\n$"
 msg_fail:   .ascii "PARTEDIT failed\r\n$"
