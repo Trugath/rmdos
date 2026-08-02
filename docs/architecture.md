@@ -74,16 +74,18 @@ Sources live under `firmware/bios/src/` (`post`, `init`, `video`, `keyboard`,
 - INT 10h (text + CGA modes 0–6): AH=00–03,05–0F including pixel read/write
   (`0Ch`/`0Dh`), CRTC cursor programming on set cursor/type, BEL beep, and
   graphics teletype scroll
-- INT 13h floppy via onboard FDC (DMA ch2 / IRQ6): AH=00–05, 08, 15–16 with
+- INT 13h floppy via onboard FDC (DMA ch2 / IRQ6): AH=00–05, 08, 15–18 with
   360K/720K/1.2M/1.44M media via BDA `40:8B` hint + INT 1Eh tables (FDC follows
-  the live DPT). HD uses guest C800 Fixed Disk option ROM by default; host Fixed
+  the live DPT; AH=17 stores DASD type at `40:8C`+DL, AH=18 selects media table).
+  HD uses guest C800 Fixed Disk option ROM by default; host Fixed
   Disk BIOS is opt-in (`--hd-int13-bios` / `K8086_HD_INT13_BIOS=1`). Floppy host
   shim is opt-in (`--floppy-int13-shim` / `K8086_FLOPPY_INT13_SHIM=1`).
   INT 14h (COM1 8250 AH=00–03), 15h (AH=86h wait; AH=80h–82h succeed; else CF), 16h
   (AH=00–02,05 stuff,10–12→00–02; Caps/Num/Scroll/Insert flags), 17h
-  (printer timeout stub), 18h, 19h, 1Ah
+  (LPT1 at BDA `40:08` / `0x378`: AH=00–02; DX≠0 timeout), 18h, 19h, 1Ah
 - INT 05h Print Screen (status at `0000:0500`; Shift+PrtSc from INT 09h)
 - IRQ0 timer (INT 08h → INT 1Ch; floppy motor timeout) and IRQ1 keyboard (INT 09h);
+  Ctrl-Break (Ctrl+scancode 46h) latches BDA `40:18` bit7 and invokes INT 1Bh;
   IRQ6 → INT 0Eh for FDC completion; IRQ5 → INT 0Dh for Fixed Disk (guest ROM)
 - Option ROM scan `C000–F400` (`AA55`, checksum, far call +3); Fixed Disk ROM at `C800`
 - INT 18h prints a short “no BASIC” message (U19 is not an interpreter)
@@ -152,33 +154,45 @@ flush+dispatch), FCB open/close/create/delete/rename/seq+random I/O/find/parse
 (AH=0Fh–17h/21h–22h/27h–29h), handle create/open/read/write/seek/delete,
 temp create (AH=5Ah/5Bh), file lock stub (AH=5Ch), truename (AH=60h),
 find-first/next, MCB alloc/free/resize (including grow), EXEC (AH=4Bh AL=0
-load+run, AL=3 overlay), handle dup (AH=45h/46h), file datetime (AH=57h),
-PSP get/set (AH=50h/51h/62h), SysVars (AH=52h), extended error (AH=59h),
+load+run, AL=1 load-only, AL=3 overlay), handle dup (AH=45h/46h), file datetime
+(AH=57h), PSP create/get/set (AH=26h/50h/51h/55h/62h), get DTA (AH=2Fh),
+allocation info (AH=1Bh/1Ch), SysVars (AH=52h), extended error (AH=59h),
 IOCTL get/set info + input/output status (AH=44h AL=00/01/06/07/08/0Dh),
-INT 25h/26h absolute disk, INT 2Fh install-check stubs (DOS AH=12, SHARE,
-PRINT, APPEND, XMS; Windows AX=1600 absent), vectors (AH=25h/35h), Ctrl-C
-(INT 23h abort) / critical error (INT 24h Abort/Retry/Ignore), date/time,
-drive/cwd, mkdir/rmdir/chdir, attrs, rename, country get/set (AH=38h),
+handle count get/set (AH=67h), INT 25h/26h absolute disk, INT 2Fh install-check
+stubs (DOS AH=12, SHARE, PRINT, APPEND, XMS; Windows AX=1600 absent), vectors
+(AH=25h/35h), Ctrl-C (INT 23h abort) / critical error (INT 24h Abort/Retry/Ignore),
+date/time, drive/cwd, mkdir/rmdir/chdir, attrs, rename, country get/set (AH=38h),
 **AH=31h TSR**. AH=30h reports DOS 3.31. Gate: `DEMO\COMPAT.COM` +
-`DEMO\INT21X.COM`.
+`DEMO\INT21X.COM` (markers include `FILES OK`, `EXEC1 OK`).
 
 **Out of scope for INT 21h/2Fh fidelity:** AH=53h BPB translate; real
 SHARE/PRINT/APPEND/XMS TSR bodies; extended FCB; full SysVars/SFT/CDS graphs;
 network redirector multiplex beyond “not installed.”
 
 After the FAT self-test, the kernel opens **`CONFIG.SYS`** if present (missing file
-is ignored). Supported lines: `INSTALL=` / `DEVICE=` (load+run a COM; failures
-print and continue), `FILES=` / `BUFFERS=` (stored), `SHELL=` (overrides the
-command processor path). Comments (`;`) and blank lines are skipped. Default
+is ignored). Supported lines: `INSTALL=` (load+run a COM), `DEVICE=` (`.SYS`
+character drivers via the SYS ABI — INIT + INPUT + OUTPUT — or load+run COM
+otherwise; failures print and continue), `FILES=` / `BUFFERS=` (`FILES=` clamps
+5..64 into the handle table after CONFIG; default 20), `SHELL=` (overrides
+the command processor path). Comments (`;`) and blank lines are skipped. Builtin
+**CON** / **NUL** device headers form the driver chain; `putch`, AH=40 CON writes,
+and AH=01/08/3F CON reads call the current CON driver’s OUTPUT/INPUT. Default
 images ship **without** `CONFIG.SYS`.
 
-`COMMAND.COM` supports internal CD/MD/RD/CLS/REN/VER/SET/PAUSE, external
-program exec, `ECHO`, `IF ERRORLEVEL` / `IF EXIST`, `GOTO`/`CALL`, redirection
-and pipes, and `AUTOEXEC.BAT`. `PATH=A:\BIN` is set in the kernel
-environment. Internals present: `FOR`, `PROMPT`, `DATE`/`TIME`, `VOL`, `VERIFY`,
-`BREAK`, `SHIFT`, `EXIT`, string `IF`, `CTTY` (CON/NUL). Wave-1 utilities present: `MEM`, `FC`, `TREE`, `SORT`. Wave-2:
-`EDIT` (16 KiB heap buffer, find, `/Q` smoke), `DEBUG` (debuggee arena, R/G/T/P),
-`DISKCOPY` / `DISKCOMP`, `MODE` (COM1).
+Optional **`DEVICE=A:\BIN\ANSI.SYS`** loads a CON-named character driver that
+interprets ESC/CSI (cursor, erase, SGR colors) before teletype; ESC/CSI bytes are
+not mirrored to COM1. INPUT forwards to the next CON driver (remap tables deferred).
+`PROMPT $e` emits ESC so ANSI prompts work when the driver is loaded.
+
+`COMMAND.COM` supports internal CD/MD/RD/CLS/REN/VER/SET/PAUSE/REM, external
+program exec with `PATH` walk and `%var%` from the PSP environment, `ECHO`,
+`IF ERRORLEVEL` / `IF EXIST`, `GOTO`/`CALL`, redirection and pipes, and
+`AUTOEXEC.BAT`. `PATH=A:\BIN` is set in the kernel environment. Internals present:
+`FOR`, `PROMPT` (including `$e` → ESC), `DATE`/`TIME`, `VOL`, `VERIFY`,
+`BREAK`, `SHIFT`, `EXIT`, string `IF`, `CTTY` (CON/NUL). Wave-1 utilities present:
+`MEM`, `FC`, `TREE`, `SORT`. Wave-2: `EDIT` (16 KiB heap buffer, find, `/Q` smoke),
+`DEBUG` (debuggee arena, R/G/T/P), `DISKCOPY` / `DISKCOMP`, `MODE` (COM1).
+`BIN\ANSI.SYS` is packed for optional `DEVICE=` load (off by default).
 
 `CHKDSK [d:] [/F]` audits the volume via INT 25h: BPB sanity, FAT1↔FAT2 compare,
 directory chain walk (cross-links / orphans / bad chains), and a classic-style
@@ -252,17 +266,18 @@ A:\
   AUTOEXEC.BAT
   BIN\     DIR TYPE COPY DEL ATTRIB LABEL MOVE XCOPY CHKDSK SYS PARTEDIT
            FORMAT FIND CHOICE MORE MEM FC TREE SORT EDIT DEBUG DISKCOPY
-           DISKCOMP MODE PING DHCP TELNET NET GZIP GUNZIP
+           DISKCOMP MODE PING DHCP TELNET NET GZIP GUNZIP ANSI.SYS
             (os-net.img also: NETTEST)
-  DEMO\    HELLO.COM HELLO.EXE COMPAT.COM INT21X.COM STAR.COM
+  DEMO\    HELLO.COM HELLO.EXE COMPAT.COM INT21X.COM ANSITST.COM STAR.COM
   TEST\    SAMPLE.TXT DBG.SCR BIG.TXT
 ```
 
 Packing fixtures live in [`fixtures/guest/`](../fixtures/guest/README.md)
 (AUTOEXEC variants for compat / ping / dhcp / telnet / net / star / batch / disk / format /
-partedit / multilet / install / fat16 gates). `INSTALL.BAT` on the floppy walks PARTEDIT → FORMAT C: /S
+partedit / multilet / install / fat16 / ansi gates). `INSTALL.BAT` on the floppy walks PARTEDIT → FORMAT C: /S
 → DIR C: for hard-disk installs. `os-net.img` also packs `CONFIG.SYS` with
-`INSTALL=A:\BIN\NET.COM`.
+`INSTALL=A:\BIN\NET.COM`. `os-ansi.img` packs `CONFIG.SYS` with
+`DEVICE=A:\BIN\ANSI.SYS`.
 
 ## Build and test
 
@@ -286,10 +301,10 @@ shim off (reset/read/write/format/DASD/status, 360K/720K/1.2M/1.44M AH=08, 360�
 upgrade, change-line), C800 Fixed Disk AH=08/R/W (with blank HD attached),
 timer/INT 1Ch/INT 1Ah set, INT 14h COM1 loopback, INT 15h wait/no-ops, INT 16h
 flags/extended APIs plus IRQ1 Caps and Shift+PrtSc via scancode inject port
-`0x8901`, INT 17h stub edges, INT 05h/INT 18h no-BASIC, ROM identity/checksum,
-and IBM entry trampolines. Host-only inject assists: `0x8901` scancode,
-`0x8902` FDC disk-change. Not covered: real printer success, COM2–4, CAD warm-boot
-unit (e2e elsewhere).
+`0x8901`, INT 17h LPT1 success + DX≠0 timeout, INT 05h/INT 18h no-BASIC, ROM
+identity/checksum, IBM entry trampolines, Ctrl-Break→INT 1Bh (`bt_brk`), and
+INT 13h AH=17/18 (`bt_fdc_type`). Host-only inject assists: `0x8901` scancode,
+`0x8902` FDC disk-change. Not covered: COM2–4, CAD warm-boot unit (e2e elsewhere).
 
 ## References
 
