@@ -43,6 +43,7 @@ GUNZIP_COM := $(BUILD_DIR)/gunzip.com
 ANSI_SYS := $(BUILD_DIR)/ansi.sys
 MOUSE_COM := $(BUILD_DIR)/mouse.com
 MOUSETST_COM := $(BUILD_DIR)/mousetst.com
+CLOCK_COM := $(BUILD_DIR)/clock.com
 ANSITST_COM := $(BUILD_DIR)/ansitst.com
 EMM_SYS := $(BUILD_DIR)/emm.sys
 EMSTST_COM := $(BUILD_DIR)/emstst.com
@@ -169,7 +170,7 @@ U18_ELF := $(BUILD_DIR)/u18.elf
 U18_BIN := $(BUILD_DIR)/u18.bin
 U19_BIN := $(BUILD_DIR)/u19.bin
 
-BIOS_TEST_NAMES := bt_equip bt_bda bt_video bt_scroll bt_disk bt_disk144 bt_disk120 bt_disk360 bt_disk_stat bt_disk_upgrade bt_timer bt_int1c bt_kbd_flags bt_kbd_ext bt_modes_text bt_modes_gfx bt_mode4 bt_mode6 bt_serial bt_int15 bt_pixel bt_misc bt_ctype bt_gfx_scroll bt_pixel6 bt_prtsc bt_ident bt_entry bt_cad bt_fdc_rw bt_fdc_fmt bt_fdc_type bt_page bt_palette bt_bel bt_int1a_set bt_hd_params bt_hd_rw bt_kbd_irq bt_kbd_prtsc bt_brk bt_int18 bt_chgline bt_str bt_cfg bt_readchar bt_writech bt_tty bt_kbd_read bt_kbd_shift bt_int13_err bt_hd_verify bt_motor bt_timer_of bt_hd_svc bt_hd_fmt bt_kbd_locks bt_kbd_full bt_int19_hd bt_gfx_char bt_font bt_kbd_alt bt_disk_retry
+BIOS_TEST_NAMES := bt_equip bt_bda bt_video bt_scroll bt_disk bt_disk144 bt_disk120 bt_disk360 bt_disk_stat bt_disk_upgrade bt_timer bt_int1c bt_kbd_flags bt_kbd_ext bt_modes_text bt_modes_gfx bt_mode4 bt_mode6 bt_serial bt_int15 bt_pixel bt_misc bt_ctype bt_gfx_scroll bt_pixel6 bt_prtsc bt_ident bt_entry bt_cad bt_fdc_rw bt_fdc_fmt bt_fdc_type bt_page bt_palette bt_bel bt_int1a_set bt_hd_params bt_hd_rw bt_kbd_irq bt_kbd_prtsc bt_brk bt_int18 bt_chgline bt_str bt_cfg bt_readchar bt_writech bt_tty bt_tty2 bt_kbd_read bt_kbd_shift bt_int13_err bt_hd_verify bt_motor bt_timer_of bt_hd_svc bt_hd_fmt bt_kbd_locks bt_kbd_full bt_int19_hd bt_gfx_char bt_font bt_kbd_alt bt_disk_retry
 BIOS_TEST_DIR := firmware/bios/tests/boot
 BIOS_TEST_LINK := firmware/bios/tests/linker/boot_test.ld
 BIOS_TEST_BUILD := $(BUILD_DIR)/bios_tests
@@ -355,7 +356,7 @@ OS_IMAGE_COMMON_DEPS := $(BOOT_BIN) $(KERNEL_BIN) $(HELLO_COM) $(HELLO_EXE) \
 	$(COMP_COM) $(ASSIGN_COM) \
 	$(COMPAT_COM) $(INT21X_COM) $(PING_COM) $(DHCP_COM) $(TELNET_COM) $(NET_COM) $(GZIP_COM) $(GUNZIP_COM) \
 	$(ANSI_SYS) $(ANSITST_COM) $(EMM_SYS) $(EMSTST_COM) \
-	$(MOUSE_COM) $(MOUSETST_COM) \
+	$(MOUSE_COM) $(MOUSETST_COM) $(CLOCK_COM) \
 	$(STAR_COM) $(SAMPLE_TXT) $(DBG_SCR) $(BIG_TXT) $(SHIFT_BAT) $(INSTALL_BAT) \
 	$(EMPTY_AUTOEXEC) scripts/mkfs_fat12.py scripts/fat12.py scripts/disk.py
 
@@ -399,6 +400,7 @@ define PACK_OS_IMAGE
 		--file BIN/ANSI.SYS=$(ANSI_SYS) \
 		--file BIN/EMM.SYS=$(EMM_SYS) \
 		--file BIN/MOUSE.COM=$(MOUSE_COM) \
+		--file BIN/CLOCK.COM=$(CLOCK_COM) \
 		--file DEMO/HELLO.COM=$(HELLO_COM) \
 		--file DEMO/HELLO.EXE=$(HELLO_EXE) \
 		--file DEMO/COMPAT.COM=$(COMPAT_COM) \
@@ -455,6 +457,7 @@ define PACK_OS_IMAGE_CFG
 		--file BIN/ANSI.SYS=$(ANSI_SYS) \
 		--file BIN/EMM.SYS=$(EMM_SYS) \
 		--file BIN/MOUSE.COM=$(MOUSE_COM) \
+		--file BIN/CLOCK.COM=$(CLOCK_COM) \
 		--file BIN/NETTEST.COM=$(NETTEST_COM) \
 		--file DEMO/HELLO.COM=$(HELLO_COM) \
 		--file DEMO/HELLO.EXE=$(HELLO_EXE) \
@@ -552,6 +555,7 @@ $(BATCH_IMAGE): $(OS_IMAGE_COMMON_DEPS) $(BATCH_AUTOEXEC) $(CALLTST_BAT) $(CALLT
 		--file BIN/GUNZIP.COM=$(GUNZIP_COM) \
 		--file BIN/ANSI.SYS=$(ANSI_SYS) \
 		--file BIN/MOUSE.COM=$(MOUSE_COM) \
+		--file BIN/CLOCK.COM=$(CLOCK_COM) \
 		--file DEMO/HELLO.COM=$(HELLO_COM) \
 		--file DEMO/HELLO.EXE=$(HELLO_EXE) \
 		--file DEMO/COMPAT.COM=$(COMPAT_COM) \

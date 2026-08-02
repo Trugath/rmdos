@@ -4,7 +4,7 @@
 .global _start
 
 /*
- * INT 10h AH=0E text teletype: CR, BS, col wrap, LF scroll, CRTC after printable.
+ * INT 10h AH=0E: CRTC after CR/BS/wrap/LF; BEL leaves CRTC unchanged.
  */
 
 .equ CRTC_IDX, 0x3D4
@@ -21,7 +21,7 @@ _start:
     mov ax, 0x0003
     int 0x10
 
-    /* CR: col 5 → 0, same row */
+    /* CR → CRTC 3*80 */
     mov ah, 0x02
     xor bh, bh
     mov dx, 0x0305
@@ -29,64 +29,63 @@ _start:
     mov ah, 0x0E
     mov al, 0x0D
     int 0x10
-    mov ah, 0x03
-    int 0x10
-    cmp dx, 0x0300
+    call read_crtc
+    cmp ax, (3 * 80)
     jne .fail_cr
 
-    /* BS: col 4 → 3 */
+    /* BS → CRTC 4*80+3 */
     mov ah, 0x02
     mov dx, 0x0404
     int 0x10
     mov ah, 0x0E
     mov al, 0x08
     int 0x10
-    mov ah, 0x03
-    int 0x10
-    cmp dx, 0x0403
+    call read_crtc
+    cmp ax, (4 * 80 + 3)
     jne .fail_bs
 
-    /* Wrap at col 79 → next row col 0 */
+    /* Wrap → CRTC 6*80 */
     mov ah, 0x02
     mov dx, 0x054F
     int 0x10
     mov ah, 0x0E
     mov al, 'W'
     int 0x10
-    mov ah, 0x03
-    int 0x10
-    cmp dx, 0x0600
-    jne .fail_wrap
-    mov ax, 0xB800
-    mov es, ax
-    cmp byte ptr es:[(5 * 80 + 79) * 2], 'W'
+    call read_crtc
+    cmp ax, (6 * 80)
     jne .fail_wrap
 
-    /* LF at row 24 scrolls up: 'S' at (1,0) → (0,0) */
-    mov word ptr es:[160], 0x0753
+    /* LF at bottom → CRTC 24*80 */
     mov ah, 0x02
-    xor bh, bh
     mov dx, 0x1800
     int 0x10
     mov ah, 0x0E
     mov al, 0x0A
     int 0x10
-    cmp byte ptr es:[0], 'S'
-    jne .fail_lf
-    cmp byte ptr es:[160], ' '
-    jne .fail_lf
-    mov ah, 0x03
-    int 0x10
-    cmp dx, 0x1800
+    call read_crtc
+    cmp ax, (24 * 80)
     jne .fail_lf
 
-    /* CRTC after printable: (2,3) → addr 164 */
+    /* BEL leaves CRTC alone */
     mov ah, 0x02
-    mov dx, 0x0203
+    mov dx, 0x0101
     int 0x10
+    call read_crtc
+    mov bx, ax
     mov ah, 0x0E
-    mov al, 'C'
+    mov al, 0x07
     int 0x10
+    call read_crtc
+    cmp ax, bx
+    jne .fail_bel
+
+    push cs
+    pop ds
+    mov si, offset name
+    call pass_and_halt
+
+read_crtc:
+    push dx
     mov dx, CRTC_IDX
     mov al, 0x0E
     out dx, al
@@ -98,13 +97,8 @@ _start:
     out dx, al
     mov dx, CRTC_DATA
     in al, dx
-    cmp ax, (2 * 80 + 4)
-    jne .fail_crtc
-
-    push cs
-    pop ds
-    mov si, offset name
-    call pass_and_halt
+    pop dx
+    ret
 
 .fail_cr:
     push cs
@@ -126,23 +120,23 @@ _start:
     pop ds
     mov si, offset msg_lf
     call fail_and_halt
-.fail_crtc:
+.fail_bel:
     push cs
     pop ds
-    mov si, offset msg_crtc
+    mov si, offset msg_bel
     call fail_and_halt
 
 name:
-    .asciz "bt_tty"
+    .asciz "bt_tty2"
 msg_cr:
-    .asciz "bt_tty:cr"
+    .asciz "bt_tty2:cr"
 msg_bs:
-    .asciz "bt_tty:bs"
+    .asciz "bt_tty2:bs"
 msg_wrap:
-    .asciz "bt_tty:wrap"
+    .asciz "bt_tty2:wrap"
 msg_lf:
-    .asciz "bt_tty:lf"
-msg_crtc:
-    .asciz "bt_tty:crtc"
+    .asciz "bt_tty2:lf"
+msg_bel:
+    .asciz "bt_tty2:bel"
 
 .include "firmware/bios/tests/boot/common.inc"
