@@ -161,6 +161,8 @@ int10_handler:
     je .i10_teletype
     cmp ah, 0x0F
     je .i10_get_mode
+    cmp ah, 0x13
+    je .i10_write_string
     iret
 
 .i10_set_mode:
@@ -547,6 +549,98 @@ int10_handler:
     mov dx, [BDA_CURSOR_POS]
     call crtc_set_cursor_addr
 .i10_tt_iret:
+    pop di
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    pop es
+    pop ds
+    iret
+
+/*
+ * AH=13h write string: ES:BP = text, CX = length, DH/DL = row/col,
+ * BH = page, BL = attribute. AL bit0 = update cursor after write.
+ * AL=2/3 (embedded attributes) treated like AL=0/1 (attrs ignored).
+ */
+.i10_write_string:
+    push ds
+    push es
+    push ax
+    push bx
+    push cx
+    push dx
+    push si
+    push di
+    push bp
+
+    mov si, bp                   /* ES:SI = string */
+    mov bp, ax
+    and bp, 1                    /* BP = update-cursor flag */
+
+    mov ax, BDA_SEG
+    mov ds, ax
+
+    mov al, bh
+    xor ah, ah
+    mov di, ax
+    shl di, 1                    /* DI = page cursor slot */
+
+    push word ptr [BDA_CURSOR_POS + di]
+    mov [BDA_CURSOR_POS + di], dx
+
+    jcxz .i10_ws_finish
+
+    call cursor_to_offset        /* DI = regen byte offset */
+    push ds                      /* BDA */
+    push es                      /* string seg */
+    mov ax, CGA_SEG
+    mov es, ax
+    pop ds                       /* DS:SI = string */
+
+.i10_ws_loop:
+    lodsb
+    mov ah, bl
+    stosw                        /* ES:DI char+attr; DI += 2 */
+    loop .i10_ws_loop
+
+    pop ds                       /* DS = BDA */
+
+.i10_ws_finish:
+    mov al, bh
+    xor ah, ah
+    mov di, ax
+    shl di, 1
+
+    pop dx                       /* prior cursor */
+    test bp, bp
+    jz .i10_ws_restore
+
+    /* Cursor after last character (wrap columns). */
+    mov bp, sp
+    /* stack: bp di si dx cx bx ax es ds */
+    mov cx, word ptr [bp + 8]
+    mov ax, word ptr [bp + 6]
+    add al, cl
+    mov bl, byte ptr [BDA_CRT_COLS]
+.i10_ws_wrap:
+    cmp al, bl
+    jb .i10_ws_set
+    sub al, bl
+    inc ah
+    jmp .i10_ws_wrap
+.i10_ws_set:
+    mov [BDA_CURSOR_POS + di], ax
+    cmp byte ptr [BDA_CRT_MODE], 4
+    jae .i10_ws_done
+    mov dx, ax
+    call crtc_set_cursor_addr
+    jmp .i10_ws_done
+.i10_ws_restore:
+    mov [BDA_CURSOR_POS + di], dx
+.i10_ws_done:
+    pop bp
     pop di
     pop si
     pop dx

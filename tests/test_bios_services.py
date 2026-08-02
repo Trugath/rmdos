@@ -67,6 +67,8 @@ TESTS = [
     "bt_brk",
     "bt_int18",
     "bt_chgline",
+    "bt_str",
+    "bt_cfg",
 ]
 
 

@@ -287,6 +287,8 @@ int15_handler:
     sti
     cmp ah, 0x86
     je .i15_wait
+    cmp ah, 0xC0
+    je .i15_config
     cmp ah, 0x80
     je .i15_ok
     cmp ah, 0x81
@@ -305,6 +307,18 @@ int15_handler:
     iret
 
 .i15_ok:
+    push bp
+    mov bp, sp
+    and word ptr [bp + 6], 0xFFFE
+    pop bp
+    iret
+
+/* AH=C0h — return XT ROM configuration table at ES:BX */
+.i15_config:
+    push cs
+    pop es
+    lea bx, [xt_config_table]
+    xor ah, ah
     push bp
     mov bp, sp
     and word ptr [bp + 6], 0xFFFE
@@ -591,3 +605,15 @@ f1_wait:
 
 no_basic_msg:
     .asciz "rmDOS: no ROM BASIC\r\n"
+
+/* INT 15h AH=C0 configuration table (classic XT). */
+xt_config_table:
+    .word 8                      /* length of following bytes */
+    .byte 0xFE                   /* model: IBM PC XT */
+    .byte 0x00                   /* submodel */
+    .byte 0x00                   /* BIOS revision */
+    .byte 0x00                   /* feature byte 1 */
+    .byte 0x00
+    .byte 0x00
+    .byte 0x00
+    .byte 0x00
