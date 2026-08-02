@@ -5,8 +5,10 @@ BIOS chips (U18/U19) plus a DOS-compatible OS. Development and CI run on
 [k8086](https://github.com/Trugath/k8086) (`emulator/k8086/`). The project is
 MIT-licensed; see [LICENSE](../LICENSE) and [NOTICE](../NOTICE).
 
-Cassette BASIC, protected mode, and DOS extenders are out of scope. A later
-project may grow beyond real mode; **rmDOS itself stays real mode only**.
+Cassette BASIC, protected mode, DOS extenders, and XMS/HIMEM (AT extended
+memory / A20) are out of scope. 5155/5160-class machines use conventional RAM,
+optional UMB, and **LIM EMS** for extra memory. A later project may grow beyond
+real mode; **rmDOS itself stays real mode only**.
 
 ## Repository layout
 
@@ -230,7 +232,8 @@ SHARE/PRINT/APPEND/XMS TSR bodies; JOIN and full SHARE/network SFT graphs;
 network redirector multiplex beyond “not installed”; block `DEVICE=` drivers;
 COM3–4 / LPT3; MDA/EGA; FAT16 above 128 MiB. Live CDS paths and
 `SUBST.COM` (via INT 2Fh `AX=12E0h`/`12E1h`) are in scope. COM2/LPT2 are
-supported via ISA cards + BIOS BDA probe / INT 14h/17h.
+supported via ISA cards + BIOS BDA probe / INT 14h/17h. LIM EMS is in scope via
+`DEVICE=A:\BIN\EMM.SYS` + the k8086 `ems-window` card (not XMS).
 
 After the FAT self-test, the kernel opens **`CONFIG.SYS`** if present (missing file
 is ignored). Supported lines: `INSTALL=` (load+run a COM with its trailing
@@ -254,6 +257,12 @@ interprets ESC/CSI (cursor, erase, SGR colors) before teletype; ESC/CSI bytes ar
 not mirrored to COM1. INPUT forwards to the next CON driver unless a tiny CSI `p`
 key-remap entry is active (F1 → `!`). `PROMPT $e` emits ESC so ANSI prompts work
 when the driver is loaded.
+
+Optional **`DEVICE=A:\BIN\EMM.SYS`** loads a LIM EMS 3.2 character driver
+(`EMMXXXX0`, INT 67h) for the k8086 `ems-window` card (I/O `260h`–`263h`, frame
+`D000h`). Default `mem-expansion` UMB also claims `D0000`; use `umbBase=0` when
+combining both. Gate: `DEMO\EMSTST.COM` (`EMS OK`). `MEM.COM` prints an Expanded
+Memory section when EMM is present.
 
 `COMMAND.COM` supports internal CD/MD/RD/CLS/REN/VER/SET/PAUSE/REM/`PATH`/`ERASE`,
 external program exec with `PATH` walk and `%var%` from the PSP environment (env
@@ -428,7 +437,8 @@ Ctrl-Break→INT 1Bh (`bt_brk`), INT 13h AH=17/18 (`bt_fdc_type`), plus
 `0x8902` FDC disk-change. COM2/LPT2 work when ISA cards populate BDA bases
 (POST probes `2F8`/`278`); COM3–4 / LPT3 remain out of scope. Conventional
 memory above motherboard RAM and adapter-hole UMB are provided by the
-`mem-expansion` ISA card (not XMS/A20).
+`mem-expansion` ISA card (not XMS/A20). Expanded memory uses the `ems-window`
+page-frame card plus `BIN\EMM.SYS` (LIM 3.2 INT 67h).
 ## References
 
 - IBM 5160 Technical Reference (behavioral contract for BIOS)

@@ -15,6 +15,8 @@
 | `AUTOEXEC.NET.BAT` | `NETTEST` → `DHCP` → `PING` → `NET /U` after CONFIG loads NET (no `LEASE.DAT`) |
 | `CONFIG.ANSI.SYS` | `DEVICE=A:\BIN\ANSI.SYS` for CON CSI filter (`os-ansi.img`) |
 | `AUTOEXEC.ANSI.BAT` | `DEMO\ANSITST` + `PROMPT $e…` gate for `os-ansi.img` |
+| `CONFIG.EMS.SYS` | `DEVICE=A:\BIN\EMM.SYS` for LIM EMS (`os-ems.img`; needs `ems-window` card) |
+| `AUTOEXEC.EMS.BAT` | `DEMO\EMSTST` gate for `os-ems.img` |
 | `AUTOEXEC.STAR.BAT` | `DEMO\STAR` for `os-star.img` |
 | `AUTOEXEC.BIGEXE.BAT` | `DEMO\BIGEXE.EXE` streaming MZ gate (`os-bigexe.img`) |
 | `AUTOEXEC.ELITE.BAT` | `ELITE` for lean `os-elite.img` (see `fixtures/guest/elite/`) |

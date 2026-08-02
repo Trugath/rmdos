@@ -1,4 +1,4 @@
-/* MEM.COM — walk conventional MCB chain; print free/total. */
+/* MEM.COM — walk conventional MCB chain; print free/total; optional EMS. */
 #include "dos.h"
 
 static int first_mcb;
@@ -9,7 +9,11 @@ static int mcb_id;
 static int free_paras;
 static int used_paras;
 static int total_paras;
+static int ems_ah;
+static int ems_free;
+static int ems_total;
 static char msg_hdr[28] = "Conventional Memory:\r\n$";
+static char msg_ems[24] = "Expanded Memory:\r\n$";
 static char msg_tot[14] = "Total: $";
 static char msg_used[14] = "Used:  $";
 static char msg_free[14] = "Free:  $";
@@ -47,6 +51,50 @@ static void print_kb_from_paras(int paras)
     print_dollar(msg_kb);
 }
 
+static void print_kb_from_pages(int pages)
+{
+    /* 16 KB pages */
+    print_num(pages * 16);
+    print_dollar(msg_kb);
+}
+
+static int ems_present(void)
+{
+    asm("mov ax, 0x3567");
+    asm("int 0x21");
+    asm("cmp word ptr es:[0x0A], 0x4D45");
+    asm("jne Lems_no");
+    asm("cmp word ptr es:[0x0C], 0x584D");
+    asm("jne Lems_no");
+    asm("cmp word ptr es:[0x0E], 0x5858");
+    asm("jne Lems_no");
+    asm("cmp word ptr es:[0x10], 0x3058");
+    asm("jne Lems_no");
+    asm("mov ah, 0x40");
+    asm("int 0x67");
+    asm("mov [ems_ah], ah");
+    asm("push cs");
+    asm("pop ds");
+    asm("jmp Lems_done");
+    asm("Lems_no:");
+    asm("push cs");
+    asm("pop ds");
+    asm("mov byte ptr [ems_ah], 0xFF");
+    asm("Lems_done:");
+    return ems_ah == 0;
+}
+
+static void load_ems_counts(void)
+{
+    asm("mov ah, 0x42");
+    asm("int 0x67");
+    asm("mov [ems_ah], ah");
+    asm("mov [ems_free], bx");
+    asm("mov [ems_total], dx");
+    asm("push cs");
+    asm("pop ds");
+}
+
 int main(void)
 {
     free_paras = 0;
@@ -77,5 +125,16 @@ int main(void)
     print_kb_from_paras(used_paras);
     print_dollar(msg_free);
     print_kb_from_paras(free_paras);
+
+    if (ems_present()) {
+        load_ems_counts();
+        if (ems_ah == 0) {
+            print_dollar(msg_ems);
+            print_dollar(msg_tot);
+            print_kb_from_pages(ems_total);
+            print_dollar(msg_free);
+            print_kb_from_pages(ems_free);
+        }
+    }
     return 0;
 }
