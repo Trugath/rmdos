@@ -185,7 +185,7 @@ FD_IMG := emulator/k8086/disks/fd.img
 
 K8086_ROMS_DIR := emulator/k8086/roms
 
-.PHONY: all bios os os-disk.img bios-tests clean run run-fd run-elite setup test test-bios test-fd-img test-dos-compat test-ping test-dhcp test-telnet test-net test-star test-bigexe test-elite test-dir test-format test-format-options test-sys test-format-hd test-fat16-hd test-lba32-hd test-partedit-hd test-multilet-hd test-extpart-hd test-subst test-batch test-disk test-gzip test-utils test-diskcopy test-diskcomp test-ansi test-ems test-stubcfg test-mouse test-install-hd install-roms install-floppy
+.PHONY: all bios os os-disk.img bios-tests clean run run-fd run-elite setup test test-bios test-fd-img test-dos-compat test-ping test-dhcp test-telnet test-net test-star test-bigexe test-elite test-dir test-format test-format-options test-sys test-format-hd test-fat16-hd test-lba32-hd test-bpb-mount test-partedit-hd test-multilet-hd test-extpart-hd test-subst test-batch test-disk test-gzip test-utils test-diskcopy test-diskcomp test-ansi test-ems test-stubcfg test-mouse test-install-hd install-roms install-floppy
 
 all: bios os
 
@@ -648,6 +648,7 @@ test: all bios-tests $(COMPAT_IMAGE) $(PING_IMAGE) $(DHCP_IMAGE) $(TELNET_IMAGE)
 	$(PYTHON) -m tests.test_bios_roms
 	$(PYTHON) -m tests.test_bios_services
 	$(PYTHON) -m tests.test_boot_e2e
+	$(PYTHON) -m tests.test_bpb_mount_e2e
 	$(PYTHON) -m tests.test_dos_compat
 	$(PYTHON) -m tests.test_ping_e2e
 	$(PYTHON) -m tests.test_dhcp_e2e
@@ -726,6 +727,9 @@ test-fat16-hd: $(FAT16_HD_IMAGE)
 
 test-lba32-hd: $(FORMAT_HD_IMAGE)
 	$(PYTHON) -m tests.test_lba32_hd_e2e
+
+test-bpb-mount: $(IMAGE)
+	$(PYTHON) -m tests.test_bpb_mount_e2e
 
 test-partedit-hd: $(PARTEDIT_HD_IMAGE)
 	$(PYTHON) -m tests.test_partedit_hd_e2e

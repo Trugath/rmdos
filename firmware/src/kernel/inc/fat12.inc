@@ -118,9 +118,13 @@ fat12_init_bpb:
     mov [bpb_heads], ax
 
     /* Reject malformed BPBs before using their fields in arithmetic/divides. */
+    cmp word ptr [sector_buf + 510], 0xAA55
+    jne .fib_fail
     mov al, [bpb_spc]
     test al, al
     jz .fib_fail
+    cmp al, 128
+    ja .fib_fail
     mov bl, al
     dec bl
     test al, bl
@@ -129,6 +133,8 @@ fat12_init_bpb:
     je .fib_fail
     cmp byte ptr [bpb_fats], 0
     je .fib_fail
+    cmp byte ptr [bpb_fats], 4
+    ja .fib_fail
     cmp word ptr [bpb_root_ents], 0
     je .fib_fail
     cmp word ptr [bpb_spf], 0
@@ -141,32 +147,36 @@ fat12_init_bpb:
     or ax, [bpb_totsec_hi]
     jz .fib_fail
 
-    /* fat1_lba = reserved */
+    /* fat1_lba = reserved (volume-relative; hi cleared until base add). */
     mov ax, [bpb_reserved]
     mov [bpb_fat1_lba], ax
     mov word ptr [bpb_fat1_lba + 2], 0
     /* fat2_lba = reserved + spf */
-    mov bx, [bpb_spf]
-    add ax, bx
+    add ax, [bpb_spf]
+    jc .fib_fail
     mov [bpb_fat2_lba], ax
     mov word ptr [bpb_fat2_lba + 2], 0
-    /* root_lba = reserved + fats*spf */
-    mov ax, [bpb_reserved]
-    mov cl, [bpb_fats]
-    xor ch, ch
-.fib_fats:
-    add ax, bx
-    loop .fib_fats
+    /* root_lba = reserved + fats*spf (16-bit relative must not overflow). */
+    mov al, [bpb_fats]
+    xor ah, ah
+    mul word ptr [bpb_spf]
+    test dx, dx
+    jnz .fib_fail
+    add ax, [bpb_reserved]
+    jc .fib_fail
     mov [bpb_root_lba], ax
     mov word ptr [bpb_root_lba + 2], 0
-    /* root_secs = root_ents / 16 */
+    /* root_secs = root_ents / 16 (need at least one root sector). */
     mov ax, [bpb_root_ents]
     mov cl, 4
     shr ax, cl
+    test ax, ax
+    jz .fib_fail
     mov [bpb_root_secs], ax
     /* data_lba = root_lba + root_secs */
     mov bx, [bpb_root_lba]
     add bx, ax
+    jc .fib_fail
     mov [bpb_data_lba], bx
     mov word ptr [bpb_data_lba + 2], 0
     /* max_clust = 2 + (totsec - data_lba) / spc  (totsec may be 32-bit) */
@@ -174,10 +184,19 @@ fat12_init_bpb:
     mov dx, [bpb_totsec_hi]
     sub ax, bx
     sbb dx, 0
+    jb .fib_fail
+    mov cx, ax
+    or cx, dx
+    jz .fib_fail
     mov bl, [bpb_spc]
     xor bh, bh
-    div bx                       /* assume quot fits in AX for era sizes */
+    cmp dx, bx
+    jae .fib_fail
+    div bx
+    test ax, ax
+    jz .fib_fail
     add ax, 2
+    jc .fib_fail
     mov [bpb_max_clust], ax
 
     /* The BPB addresses are volume-relative; all filesystem I/O is physical. */

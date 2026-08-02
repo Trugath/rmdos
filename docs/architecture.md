@@ -3,7 +3,8 @@
 rmDOS is a clean-room **real-mode** stack for IBM PC/XT-class machines: system
 BIOS chips (U18/U19) plus a DOS-compatible OS. Development and CI run on
 [k8086](https://github.com/Trugath/k8086) (`emulator/k8086/`). The project is
-MIT-licensed; see [LICENSE](../LICENSE) and [NOTICE](../NOTICE).
+MIT-licensed; see [LICENSE](../LICENSE) and [NOTICE](../NOTICE). For a one-page
+in-scope / stub / OOS matrix, see [compatibility.md](compatibility.md).
 
 Cassette BASIC, protected mode, DOS extenders, and XMS/HIMEM (AT extended
 memory / A20) are out of scope. 5155/5160-class machines use conventional RAM,
@@ -53,6 +54,8 @@ flowchart TD
    (absolute LBA; independent of FAT12 vs FAT16).
 5. The kernel installs INT 20h/21h, optionally runs a quiet FAT self-check, then
    starts `COMMAND.COM`. Empty `AUTOEXEC.BAT` drops to an interactive `A:\>` prompt.
+   Mount rejects malformed BPBs (bad SPC/geometry/layout, missing `AA55`, no data
+   region) with a serial `fat fail` instead of dividing by zero.
 
 ## System BIOS (U18 / U19)
 
@@ -89,7 +92,8 @@ Sources live under `firmware/bios/src/` (`post`, `init`, `video`, `keyboard`,
   shim is opt-in (`--floppy-int13-shim` / `K8086_FLOPPY_INT13_SHIM=1`).
   INT 14h (COM1/COM2 via BDA `40:00`/`40:02`, AH=00–03; missing base → timeout;
   POST probes `3F8`/`2F8`; unit `bt_misc`), 15h
-  (AH=86h wait; AH=80h–82h succeed; AH=C0h XT config table; else CF), 16h
+  (AH=86h wait via IRQ0 ticks + PIT ch0 residual; AH=80h–82h succeed; AH=C0h XT
+  config table; else CF), 16h
   (AH=00–02,05 stuff,10–12; Caps/Num/Scroll/Insert flags and Alt-keypad
   decimal ASCII entry; Alt+non-keypad returns AL=0; Ctrl+NumLock pause/hold;
   AH=12 returns FLAG0+FLAG1 held bits), 17h

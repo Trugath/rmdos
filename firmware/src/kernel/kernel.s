@@ -137,10 +137,15 @@ _start:
     mov bx, [self_handle]
     int 0x21
 .fat_fail:
-    mov ah, 0x09
-    lea dx, [msg_fat_bad]
-    int 0x21
-    jmp .echo
+    /*
+     * May run before install_dos_vectors. Print via BIOS + COM1 so headless
+     * gates still see "fat fail" without depending on INT 21h.
+     */
+    push cs
+    pop ds
+    lea si, [msg_fat_bad]
+    call print_early_msg
+    jmp kernel_halt
 
 .rw_fail_close:
     mov ah, 0x3E
@@ -161,6 +166,32 @@ _start:
     mov ah, 0x01
     int 0x21
     jmp .echo
+
+kernel_halt:
+    hlt
+    jmp kernel_halt
+
+/* DS:SI → '$'-terminated string → INT 10h teletype + COM1. */
+print_early_msg:
+    push ax
+    push bx
+    push si
+.pem_lp:
+    lodsb
+    cmp al, '$'
+    je .pem_done
+    push ax
+    mov ah, 0x0E
+    mov bx, 0x0007
+    int 0x10
+    pop ax
+    call com1_out
+    jmp .pem_lp
+.pem_done:
+    pop si
+    pop bx
+    pop ax
+    ret
 
 /* Country-info case-map callback: rmDOS currently uses an identity mapping. */
 country_case_map:
