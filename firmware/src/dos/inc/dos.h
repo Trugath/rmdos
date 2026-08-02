@@ -344,6 +344,8 @@ int dos_rename(char *src, char *dst)
 {
     asm("mov dx, [bp+6]");
     asm("mov di, [bp+4]");
+    asm("push ds");
+    asm("pop es");
     asm("mov ah, 0x56");
     asm("int 0x21");
     asm("mov ax, 0");
@@ -484,4 +486,46 @@ int dos_free(int seg)
     asm("mov ax, 0xFFFF");
     asm("Ldfree_ok:");
     reload_ds();
+}
+
+int dos_get_psp(void)
+{
+    asm("mov ah, 0x51");
+    asm("int 0x21");
+    asm("mov ax, bx");
+}
+
+int far_peek(int seg, int off)
+{
+    asm("push es");
+    asm("mov es, [bp+6]");
+    asm("mov bx, [bp+4]");
+    asm("mov al, es:[bx]");
+    asm("xor ah, ah");
+    asm("pop es");
+}
+
+void far_poke(int seg, int off, int val)
+{
+    asm("push es");
+    asm("mov es, [bp+8]");
+    asm("mov bx, [bp+6]");
+    asm("mov ax, [bp+4]");
+    asm("mov es:[bx], al");
+    asm("pop es");
+}
+
+int env_seg(void)
+{
+    int p;
+    p = dos_get_psp();
+    return far_peek(p, 0x2C) + (far_peek(p, 0x2D) * 256);
+}
+
+void env_set_seg(int seg)
+{
+    int p;
+    p = dos_get_psp();
+    far_poke(p, 0x2C, seg & 255);
+    far_poke(p, 0x2D, (seg >> 8) & 255);
 }

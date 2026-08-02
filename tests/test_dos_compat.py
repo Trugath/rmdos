@@ -23,6 +23,8 @@ PSP_OK = "PSP OK"
 TEMP_OK = "TEMP OK"
 IOCTL_OK = "IOCTL OK"
 XTRA_OK = "XTRA OK"
+FILES_OK = "FILES OK"
+EXEC1_OK = "EXEC1 OK"
 UTILS_OK = "UTILS OK"
 FIND_NEEDLE = "HELLO rmDOS"
 
@@ -83,6 +85,8 @@ def test_compat_e2e() -> None:
                     and TEMP_OK in text
                     and IOCTL_OK in text
                     and XTRA_OK in text
+                    and FILES_OK in text
+                    and EXEC1_OK in text
                     and FIND_NEEDLE in text
                     and UTILS_OK in text
                 ):

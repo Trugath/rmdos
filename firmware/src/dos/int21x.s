@@ -450,6 +450,10 @@ _start:
     mov ah, 0x3E
     int 0x21
 
+    /* ES may still be kernel from AH=34 — restore before stosb */
+    push cs
+    pop es
+
     /* FCB AH=24 set relative record (no disk) */
     lea di, [fcb]
     mov cx, 40
@@ -472,6 +476,8 @@ _start:
     mov ah, 0x1A
     lea dx, [dta]
     int 0x21
+    push cs
+    pop es
     lea di, [fcb]
     mov cx, 40
     xor al, al
@@ -522,37 +528,196 @@ _start:
     int 0x21
     jmp fail_exit
 .x_sz2:
-    /* create-new NEWFCB.DAT once */
-    lea di, [fcb]
-    mov cx, 40
-    xor al, al
-    rep stosb
-    lea di, [fcb + 1]
-    mov cx, 11
-    mov al, ' '
-    rep stosb
-    mov byte ptr [fcb + 1], 'N'
-    mov byte ptr [fcb + 2], 'E'
-    mov byte ptr [fcb + 3], 'W'
-    mov byte ptr [fcb + 4], 'F'
-    mov byte ptr [fcb + 5], 'C'
-    mov byte ptr [fcb + 6], 'B'
-    mov byte ptr [fcb + 9], 'D'
-    mov byte ptr [fcb + 10], 'A'
-    mov byte ptr [fcb + 11], 'T'
-    mov ah, 0x26
-    lea dx, [fcb]
+    /* create-new via AH=5B (was wrongly gated on AH=26) */
+    mov ah, 0x5B
+    xor cx, cx
+    lea dx, [newfcb_name]
     int 0x21
-    cmp al, 0
-    je .x_new
+    jnc .x_new
     mov ah, 0x09
     lea dx, [msg_xf8]
     int 0x21
     jmp fail_exit
 .x_new:
-    mov ah, 0x10
-    lea dx, [fcb]
+    mov bx, ax
+    mov ah, 0x3E
     int 0x21
+
+    /* AH=2F get DTA after AH=1A */
+    mov ah, 0x1A
+    lea dx, [dta]
+    int 0x21
+    mov ah, 0x2F
+    int 0x21
+    mov ax, es
+    mov cx, cs
+    cmp ax, cx
+    jne .x_dtaf
+    lea ax, [dta]
+    cmp bx, ax
+    je .x_dta_ok
+.x_dtaf:
+    mov ah, 0x09
+    lea dx, [msg_xf8]
+    int 0x21
+    jmp fail_exit
+.x_dta_ok:
+
+    /* AH=1B allocation info (sets DS:BX → media; restore DS after) */
+    push ds
+    mov ah, 0x1B
+    int 0x21
+    test al, al
+    jz .x_1bf
+    cmp cx, 512
+    jne .x_1bf
+    test dx, dx
+    jz .x_1bf
+    pop ds
+    jmp .x_1b_ok
+.x_1bf:
+    pop ds
+    mov ah, 0x09
+    lea dx, [msg_xf8]
+    int 0x21
+    jmp fail_exit
+.x_1b_ok:
+
+    /* AH=26 Create New PSP */
+    mov ah, 0x51
+    int 0x21
+    mov word ptr [saved_psp], bx
+    mov bx, 0x10
+    mov ah, 0x48
+    int 0x21
+    jc .x_pspf
+    mov dx, ax
+    mov word ptr [new_psp], ax
+    mov ah, 0x26
+    int 0x21
+    mov ah, 0x51
+    int 0x21
+    cmp bx, word ptr [new_psp]
+    jne .x_pspf
+    mov es, bx
+    cmp byte ptr es:[0], 0xCD
+    jne .x_pspf
+    /* restore current PSP */
+    mov bx, word ptr [saved_psp]
+    mov ah, 0x50
+    int 0x21
+    /* free child arena */
+    mov es, word ptr [new_psp]
+    mov ah, 0x49
+    int 0x21
+    jmp .x_psp_ok
+.x_pspf:
+    mov bx, word ptr [saved_psp]
+    mov ah, 0x50
+    int 0x21
+    mov ah, 0x09
+    lea dx, [msg_xf8]
+    int 0x21
+    jmp fail_exit
+.x_psp_ok:
+
+    /* AH=67 get/set handle count */
+    mov ax, 0x6700
+    int 0x21
+    cmp bx, 20
+    jb .x_67f
+    mov bx, 40
+    mov ax, 0x6701
+    int 0x21
+    jc .x_67f
+    mov ax, 0x6700
+    int 0x21
+    cmp bx, 40
+    jne .x_67f
+    mov bx, 20
+    mov ax, 0x6701
+    int 0x21
+    mov ah, 0x09
+    lea dx, [msg_files]
+    int 0x21
+    jmp .x_exec1
+.x_67f:
+    mov ah, 0x09
+    lea dx, [msg_xf8]
+    int 0x21
+    jmp fail_exit
+.x_exec1:
+    /* AH=4B AL=1 load-only: fill EPB +0E..+14, do not run */
+    lea bx, [exec1_epb]
+    lea ax, [exec1_tail]
+    mov word ptr [bx + 2], ax
+    mov word ptr [bx + 4], cs
+    lea ax, [exec1_fcb]
+    mov word ptr [bx + 6], ax
+    mov word ptr [bx + 8], cs
+    mov word ptr [bx + 0x0A], ax
+    mov word ptr [bx + 0x0C], cs
+    mov word ptr [bx + 0x0E], 0
+    mov word ptr [bx + 0x10], 0
+    mov word ptr [bx + 0x12], 0
+    mov word ptr [bx + 0x14], 0
+    push cs
+    pop es
+    lea dx, [exec1_path]
+    mov ax, 0x4B01
+    int 0x21
+    push cs
+    pop ds
+    jc .x_e1f
+    cmp word ptr [exec1_epb + 0x12], 0x0100
+    jne .x_e1f
+    cmp word ptr [exec1_epb + 0x14], 0
+    je .x_e1f
+    /* free loaded image */
+    mov es, word ptr [exec1_epb + 0x14]
+    mov ah, 0x49
+    int 0x21
+    push cs
+    pop ds
+    mov ah, 0x09
+    lea dx, [msg_exec1]
+    int 0x21
+    jmp .x_55_start
+.x_e1f:
+    push cs
+    pop ds
+    mov ah, 0x09
+    lea dx, [msg_xf8]
+    int 0x21
+    jmp fail_exit
+.x_55_start:
+
+    /* AH=55 Create Child PSP — current unchanged */
+    mov ah, 0x51
+    int 0x21
+    mov word ptr [saved_psp], bx
+    mov bx, 0x10
+    mov ah, 0x48
+    int 0x21
+    jc .x_55f
+    mov dx, ax
+    mov word ptr [new_psp], ax
+    mov ah, 0x55
+    int 0x21
+    mov ah, 0x51
+    int 0x21
+    cmp bx, word ptr [saved_psp]
+    jne .x_55f
+    mov es, word ptr [new_psp]
+    mov ah, 0x49
+    int 0x21
+    jmp .x_done
+.x_55f:
+    mov ah, 0x09
+    lea dx, [msg_xf8]
+    int 0x21
+    jmp fail_exit
+.x_done:
 
     push cs
     pop ds
@@ -604,6 +769,10 @@ msg_ioctl:
     .ascii "IOCTL OK\r\n$"
 msg_xtra:
     .ascii "XTRA OK\r\n$"
+msg_files:
+    .ascii "FILES OK\r\n$"
+msg_exec1:
+    .ascii "EXEC1 OK\r\n$"
 msg_ok:
     .ascii "INT21X OK\r\n$"
 msg_fcb_fail:
@@ -642,8 +811,12 @@ plain_tmp:
     .asciz "PLAIN.TMP"
 saved_psp:
     .word 0
+new_psp:
+    .word 0
 handle:
     .word 0
+newfcb_name:
+    .asciz "NEWFCB.DAT"
 fcb:
     .space 64, 0
 dta:
@@ -654,3 +827,16 @@ truebuf:
     .space 64, 0
 country_buf:
     .space 40, 0
+exec1_path:
+    .asciz "A:\\BIN\\MORE.COM"
+exec1_tail:
+    .byte 0
+    .byte 0x0D
+exec1_fcb:
+    .space 16, 0
+exec1_epb:
+    .word 0                      /* env */
+    .word 0, 0                   /* tail */
+    .word 0, 0                   /* fcb1 */
+    .word 0, 0                   /* fcb2 */
+    .word 0, 0, 0, 0             /* SP SS IP CS */

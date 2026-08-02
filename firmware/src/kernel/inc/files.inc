@@ -11,13 +11,13 @@
  */
 
 .equ HANDLE_SIZE, 16
-.equ MAX_HANDLES, 20
+.equ MAX_HANDLES_CAP, 64
 .equ H_FILE, 1
 .equ H_CON, 2
 .equ H_NUL, 3
 
 handle_index:
-    cmp bx, MAX_HANDLES
+    cmp bx, word ptr cs:[max_handles]
     jae .hi_bad
     mov ax, bx
     /* ×16 without touching CX — AH=46 keeps the dest handle in CX */
@@ -47,7 +47,7 @@ handles_mirror:
     lea di, [handles]
     xor bx, bx
 .hm_loop:
-    cmp bx, MAX_HANDLES
+    cmp bx, word ptr cs:[max_handles]
     jae .hm_done
     cmp di, si
     je .hm_next
@@ -118,7 +118,7 @@ dos_open_slot:
     lea di, [handles]
     xor bx, bx
 .dos_scan:
-    cmp bx, MAX_HANDLES
+    cmp bx, word ptr cs:[max_handles]
     jae .dos_full
     cmp byte ptr es:[di], 0
     je .dos_ok
@@ -542,21 +542,11 @@ dos_ah3f:
 
 .a3f_con:
     mov ds, word ptr cs:[xfer_buf_seg]
-    mov bx, word ptr cs:[xfer_buf_off]
-    mov di, word ptr cs:[xfer_want]
-    xor bp, bp
-.a3f_ck:
-    cmp bp, di
-    jae .a3f_ok
-    call check_break
-    mov ah, 0
-    int 0x16
-    mov [bx], al
-    call putch
-    inc bx
-    inc bp
-    cmp al, 0x0D
-    jne .a3f_ck
+    mov dx, word ptr cs:[xfer_buf_off]
+    mov cx, word ptr cs:[xfer_want]
+    mov bp, cx
+    jcxz .a3f_ok
+    call con_dev_read
 .a3f_ok:
     mov ax, bp
     jmp .a3f_ret
@@ -705,18 +695,14 @@ dos_ah40:
     jmp .a40_ok
 
 .a40_con:
+    /* One OUTPUT with full length so ESC sequences stay contiguous for ANSI. */
     mov ds, word ptr cs:[xfer_buf_seg]
-    mov bx, word ptr cs:[xfer_buf_off]
-    mov di, word ptr cs:[xfer_want]
-    xor bp, bp
-.a40_ck:
-    cmp bp, di
-    jae .a40_ok
-    mov al, [bx]
-    call putch
-    inc bx
-    inc bp
-    jmp .a40_ck
+    mov dx, word ptr cs:[xfer_buf_off]
+    mov cx, word ptr cs:[xfer_want]
+    mov bp, cx
+    jcxz .a40_ok
+    call con_dev_write
+    jmp .a40_ok
 .a40_nul:
     mov bp, word ptr cs:[xfer_want]
     jmp .a40_ok
@@ -1459,8 +1445,9 @@ init_std_handles:
     push cx
     push cs
     pop es
+    mov word ptr cs:[max_handles], 20
     lea di, [handles]
-    mov cx, MAX_HANDLES
+    mov cx, MAX_HANDLES_CAP
 .ish_clr:
     mov byte ptr es:[di], 0
     add di, HANDLE_SIZE
@@ -1472,4 +1459,64 @@ init_std_handles:
     pop cx
     pop di
     pop es
+    ret
+
+/* Apply FILES= / AH=67: BX = desired count, clamp 5..64. CF if shrink orphans. */
+handles_set_max:
+    push ax
+    push cx
+    push si
+    push di
+    push es
+    cmp bx, 5
+    jae .hsm_lo
+    mov bx, 5
+.hsm_lo:
+    cmp bx, MAX_HANDLES_CAP
+    jbe .hsm_hi
+    mov bx, MAX_HANDLES_CAP
+.hsm_hi:
+    cmp bx, word ptr cs:[max_handles]
+    jae .hsm_ok
+    push cs
+    pop es
+    mov cx, word ptr cs:[max_handles]
+    mov di, bx
+.hsm_chk:
+    cmp di, cx
+    jae .hsm_ok
+    mov ax, di
+    shl ax, 1
+    shl ax, 1
+    shl ax, 1
+    shl ax, 1
+    lea si, [handles]
+    add si, ax
+    cmp byte ptr es:[si], 0
+    jne .hsm_fail
+    inc di
+    jmp .hsm_chk
+.hsm_fail:
+    pop es
+    pop di
+    pop si
+    pop cx
+    pop ax
+    stc
+    ret
+.hsm_ok:
+    mov word ptr cs:[max_handles], bx
+    pop es
+    pop di
+    pop si
+    pop cx
+    pop ax
+    clc
+    ret
+
+handles_apply_files:
+    push bx
+    mov bx, word ptr cs:[cfg_files]
+    call handles_set_max
+    pop bx
     ret

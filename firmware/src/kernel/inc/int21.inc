@@ -186,6 +186,10 @@ int21_handler:
     je dos_ah19
     cmp ah, 0x1A
     je dos_ah1a
+    cmp ah, 0x1B
+    je dos_ah1b
+    cmp ah, 0x1C
+    je dos_ah1c
     cmp ah, 0x21
     je dos_ah21
     cmp ah, 0x22
@@ -214,6 +218,8 @@ int21_handler:
     je dos_ah2d
     cmp ah, 0x2E
     je dos_ah2e
+    cmp ah, 0x2F
+    je dos_ah2f
     cmp ah, 0x30
     je dos_ah30
     cmp ah, 0x31
@@ -286,6 +292,8 @@ int21_handler:
     je dos_ah52
     cmp ah, 0x54
     je dos_ah54
+    cmp ah, 0x55
+    je dos_ah55
     cmp ah, 0x56
     je dos_ah56
     cmp ah, 0x57
@@ -304,6 +312,8 @@ int21_handler:
     je dos_ah60
     cmp ah, 0x62
     je dos_ah62
+    cmp ah, 0x67
+    je dos_ah67
     cmp ah, 0x68
     je dos_ah68
     mov ax, 1
@@ -670,6 +680,31 @@ dos_ah58:
     clc
     jmp int21_iret
 
+/* AH=67h — get/set handle count: AL=0 get BX, AL=1 set BX */
+dos_ah67:
+    cmp al, 0
+    je .a67_get
+    cmp al, 1
+    je .a67_set
+    mov ax, 1
+    stc
+    jmp int21_iret_cf
+.a67_get:
+    mov bx, word ptr cs:[max_handles]
+    xor ax, ax
+    clc
+    jmp int21_iret
+.a67_set:
+    call handles_set_max
+    jc .a67_fail
+    xor ax, ax
+    clc
+    jmp int21_iret
+.a67_fail:
+    mov ax, 8
+    stc
+    jmp int21_iret_cf
+
 /* AH=68h — commit file BX (flush no-op success) */
 dos_ah68:
     xor ax, ax
@@ -708,6 +743,40 @@ dos_ah36:
     pop si
     clc
     jmp int21_iret
+
+/* AH=1Bh — allocation info for default drive; AH=1Ch for DL (0=default,1=A) */
+dos_ah1b:
+    xor dl, dl
+    call dos_alloc_info
+    clc
+    jmp int21_iret
+
+dos_ah1c:
+    call dos_alloc_info
+    clc
+    jmp int21_iret
+
+/* DL=0 default / 1=A… → AL=spc, CX=512, DX=total clusters, DS:BX→media */
+dos_alloc_info:
+    push si
+    push di
+    test dl, dl
+    jnz .dai_ok
+    /* default → treat as current; BPB already bound */
+.dai_ok:
+    mov al, byte ptr cs:[bpb_spc]
+    mov cx, 512
+    mov dx, word ptr cs:[bpb_max_clust]
+    cmp dx, 2
+    jb .dai_dx
+    dec dx
+.dai_dx:
+    push cs
+    pop ds
+    lea bx, [bpb_media]
+    pop di
+    pop si
+    ret
 
 /* AH=37h — switchar: AL=0 get DL='/', AL=1 set */
 dos_ah37:

@@ -15,6 +15,13 @@ dos_ah1a:
     clc
     jmp int21_iret
 
+/* AH=2Fh — get DTA address → ES:BX */
+dos_ah2f:
+    mov es, word ptr cs:[dta_seg]
+    mov bx, word ptr cs:[dta_off]
+    clc
+    jmp int21_iret
+
 dos_ah4e:
     push bx
     push cx

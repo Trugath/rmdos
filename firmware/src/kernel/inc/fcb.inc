@@ -404,60 +404,6 @@ dos_ah16:
     clc
     jmp int21_iret
 
-/* AH=26h create new FCB (fail if exists) */
-dos_ah26:
-    push bx
-    push cx
-    push dx
-    push si
-    push di
-    push ds
-    push es
-
-    mov si, dx
-    call fcb_build_path
-    jc .a26_fail
-    call fcb_path_wild
-    jc .a26_fail
-
-    push ds
-    push cs
-    pop ds
-    lea dx, [fcb_path]
-    xor cx, cx
-    mov ah, 0x5B
-    int 0x21
-    pop ds
-    jc .a26_fail
-    mov bx, ax
-    xor ax, ax
-    mov [si + FCB_FSIZE], ax
-    mov [si + FCB_FSIZE + 2], ax
-    mov [si + FCB_DATE], ax
-    mov [si + FCB_TIME], ax
-    call fcb_init_open
-    pop es
-    pop ds
-    pop di
-    pop si
-    pop dx
-    pop cx
-    pop bx
-    xor al, al
-    clc
-    jmp int21_iret
-.a26_fail:
-    pop es
-    pop ds
-    pop di
-    pop si
-    pop dx
-    pop cx
-    pop bx
-    mov al, 0xFF
-    clc
-    jmp int21_iret
-
 /* AH=23h get file size → relative record count; unopened FCB */
 dos_ah23:
     push bx

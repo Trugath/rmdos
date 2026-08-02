@@ -1,7 +1,7 @@
 /*
  * CONFIG.SYS — parse before COMMAND.COM.
- * Supports INSTALL=/DEVICE= (load+run COM), FILES=, BUFFERS=, SHELL=.
- * Missing CONFIG.SYS is success (no-op).
+ * Supports INSTALL= (load+run COM), DEVICE= (.SYS via driver ABI, else COM),
+ * FILES=, BUFFERS=, SHELL=. Missing CONFIG.SYS is success (no-op).
  */
 
 .equ CFG_LINE_MAX, 120
@@ -44,7 +44,7 @@ dos_process_config:
     call cfg_match_install
     jnc .cfg_do_install
     call cfg_match_device
-    jnc .cfg_do_install
+    jnc .cfg_do_device
     call cfg_match_files
     jnc .cfg_line
     call cfg_match_buffers
@@ -52,6 +52,25 @@ dos_process_config:
     call cfg_match_shell
     jnc .cfg_line
     jmp .cfg_line
+
+.cfg_do_device:
+    /* SI → path; .SYS → load_device_sys, else COM load+run */
+    push ds
+    push cs
+    pop ds
+    call cfg_path_is_sys
+    jc .cfg_dev_com
+    mov dx, si
+    call load_device_sys
+    pop ds
+    jnc .cfg_line
+    jmp .cfg_install_fail
+.cfg_dev_com:
+    mov dx, si
+    call load_and_run_com
+    pop ds
+    jnc .cfg_line
+    jmp .cfg_install_fail
 
 .cfg_do_install:
     /* SI → path ASCIZ in cfg_line (already advanced) */
@@ -62,6 +81,7 @@ dos_process_config:
     call load_and_run_com
     pop ds
     jnc .cfg_line
+.cfg_install_fail:
     mov ah, 0x09
     lea dx, [msg_cfg_install]
     int 0x21

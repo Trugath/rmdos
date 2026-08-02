@@ -1,34 +1,34 @@
 /*
  * Console helpers + INT 21h character I/O (AH=01/02/06/07/08/09/0A/0B/0C).
  * Assumes CS=DS for kernel data; INT 21h uses caller DS for string buffers.
+ * putch → current CON device OUTPUT (see device.inc).
  */
 
-/* Teletype AL to CGA (INT 10h) and COM1. Preserves AL. */
+/* Write AL via CON driver (1-byte OUTPUT). Preserves AL. */
 putch:
     push ax
     push bx
+    push cx
     push dx
-    mov ah, 0x0E
-    mov bx, 0x0007
-    int 0x10
+    push ds
+    cmp byte ptr cs:[dev_putch_reent], 0
+    jne .putch_direct
+    mov byte ptr cs:[dev_putch_reent], 1
+    mov byte ptr cs:[putch_byte], al
+    push cs
+    pop ds
+    lea dx, [putch_byte]
+    mov cx, 1
+    call con_dev_write
+    mov byte ptr cs:[dev_putch_reent], 0
+    jmp .putch_done
+.putch_direct:
+    call con_teletype
+.putch_done:
+    pop ds
     pop dx
+    pop cx
     pop bx
-    pop ax
-    /* fall through */
-
-com1_out:
-    push ax
-    push dx
-    mov ah, al
-.wait_tx:
-    mov dx, 0x3FD
-    in al, dx
-    test al, 0x20
-    jz .wait_tx
-    mov al, ah
-    mov dx, 0x3F8
-    out dx, al
-    pop dx
     pop ax
     ret
 
@@ -93,8 +93,14 @@ dos_ah09:
 /* INT 21h AH=01 — read key with echo */
 dos_ah01:
     call check_break
-    mov ah, 0x00
-    int 0x16
+    push ds
+    push cs
+    pop ds
+    lea dx, [putch_byte]
+    mov cx, 1
+    call con_dev_read
+    pop ds
+    mov al, byte ptr cs:[putch_byte]
     cmp al, 0x0D
     jne .ah01_echo
     call putch
@@ -148,8 +154,14 @@ dos_ah07:
 /* INT 21h AH=08 — input no echo, with Ctrl-C check */
 dos_ah08:
     call check_break
-    mov ah, 0x00
-    int 0x16
+    push ds
+    push cs
+    pop ds
+    lea dx, [putch_byte]
+    mov cx, 1
+    call con_dev_read
+    pop ds
+    mov al, byte ptr cs:[putch_byte]
     clc
     jmp int21_iret
 

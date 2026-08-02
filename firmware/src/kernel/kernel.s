@@ -38,6 +38,7 @@ _start:
     call init_std_handles
     call install_dos_vectors
     call mem_init
+    call dev_init_chain
 
     mov ax, 0x0003
     int 0x10
@@ -108,6 +109,7 @@ _start:
     jc .rw_fail
 
     call dos_process_config
+    call handles_apply_files
 
     /* Drop into the shell (path_command may be set by SHELL=) */
     lea dx, [path_command]
@@ -145,6 +147,7 @@ _start:
     int 0x21
     jmp .echo
 
+.include "firmware/src/kernel/inc/device.inc"
 .include "firmware/src/kernel/inc/console.inc"
 .include "firmware/src/kernel/inc/drivemap.inc"
 .include "firmware/src/kernel/inc/int21.inc"
@@ -242,6 +245,8 @@ com_handle:
 psp_run:
     .word 0
 current_psp:
+    .word 0
+saved_psp_tmp:
     .word 0
 dos_last_error:
     .word 0
@@ -466,7 +471,10 @@ default_dta:
     .space 128, 0
 
 handles:
-    .space 320, 0
+    .space 1024, 0               /* 64 × 16 */
+
+max_handles:
+    .word 20
 
 sector_buf:
     .space 512, 0
@@ -492,8 +500,59 @@ cfg_ch:
     .byte 0
 cfg_line:
     .space 120, 0
+
+/* Device ABI state + builtin NUL/CON headers */
+dev_chain_off:
+    .word 0
+dev_chain_seg:
+    .word 0
+con_dev_off:
+    .word 0
+con_dev_seg:
+    .word 0
+dev_call_off:
+    .word 0
+dev_call_seg:
+    .word 0
+dev_far_off:
+    .word 0
+dev_far_seg:
+    .word 0
+dev_con_rh_off:
+    .word 0
+dev_con_rh_seg:
+    .word 0
+dev_nul_rh_off:
+    .word 0
+dev_nul_rh_seg:
+    .word 0
+dev_putch_reent:
+    .byte 0
+putch_byte:
+    .byte 0
+dev_req:
+    .space 32, 0
+
+dev_nul_hdr:
+    .word 0                      /* next off — patched in dev_init_chain */
+    .word 0                      /* next seg */
+    .word (DEV_ATTR_CHAR)        /* char device */
+    .word offset dev_nul_strategy
+    .word offset dev_nul_interrupt
+    .ascii "NUL     "
+dev_nul_hdr_end:
+
+dev_con_hdr:
+    .word 0xFFFF
+    .word 0xFFFF
+    .word (DEV_ATTR_CHAR + DEV_ATTR_STDIN + DEV_ATTR_STDOUT)
+    .word offset dev_con_strategy
+    .word offset dev_con_interrupt
+    .ascii "CON     "
+dev_con_hdr_end:
+
 com_buf:
-    .space 0x6200, 0
+    .space 0x7000, 0
 
 fat_buf:
     .space 1024, 0

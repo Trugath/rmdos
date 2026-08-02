@@ -32,6 +32,7 @@ MARKERS = (
     "IFNOT OK",
     "SHIFT OK",
     "EXIT OK",
+    "ENV OK",
     "BATCH OK",
 )
 

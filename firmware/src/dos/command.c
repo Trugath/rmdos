@@ -29,6 +29,9 @@ static char batch_names[128] = { 0 };
 static char batch_args[160] = { 0 };
 static char goto_name[64] = { 0 };
 static char last_set[80] = { 0 };
+static char env_name[32];
+static char env_pathbuf[128];
+static char env_join[PATH_MAX];
 static char prompt_fmt[80] = { '$', 'p', '$', 'g', 0 };
 static char for_var[4] = { 0 };
 static char for_body[82] = { 0 };
@@ -406,6 +409,8 @@ void show_prompt(void)
                 print_num(g_min);
                 print_char(':');
                 print_num(g_sec);
+            } else if (c == 'e' || c == 'E') {
+                print_char(27);
             }
             if (c != 0) i = i + 1;
         } else {
@@ -608,26 +613,198 @@ int try_exec_name(void)
     return 0;
 }
 
+/* Skip one ASCIZ string at seg:off; return offset after NUL. */
+int env_skip(int seg, int off)
+{
+    while (far_peek(seg, off) != 0) off = off + 1;
+    return off + 1;
+}
+
+int env_name_eq(int seg, int off, char *name)
+{
+    int i;
+    int c;
+    int d;
+    i = 0;
+    while (buf_get(name, i) != 0) {
+        c = far_peek(seg, off + i);
+        d = buf_get(name, i);
+        if (toupper_ch(c) != toupper_ch(d)) return 0;
+        i = i + 1;
+    }
+    if (far_peek(seg, off + i) != '=') return 0;
+    return 1;
+}
+
+int print_env_value(char *name)
+{
+    int seg;
+    int off;
+    int c;
+    seg = env_seg();
+    if (seg == 0) return 0;
+    off = 0;
+    while (1) {
+        c = far_peek(seg, off);
+        if (c == 0) return 0;
+        if (env_name_eq(seg, off, name)) {
+            off = off + str_len(name) + 1;
+            while (1) {
+                c = far_peek(seg, off);
+                if (c == 0) break;
+                print_char(c);
+                off = off + 1;
+            }
+            return 1;
+        }
+        off = env_skip(seg, off);
+    }
+}
+
+/* Copy env value for name into buf; 1 if found. */
+int env_copy_var(char *name, char *buf, int maxlen)
+{
+    int seg;
+    int off;
+    int c;
+    int n;
+    seg = env_seg();
+    if (seg == 0) return 0;
+    off = 0;
+    while (1) {
+        c = far_peek(seg, off);
+        if (c == 0) return 0;
+        if (env_name_eq(seg, off, name)) {
+            off = off + str_len(name) + 1;
+            n = 0;
+            while (n < maxlen - 1) {
+                c = far_peek(seg, off);
+                if (c == 0) break;
+                buf_set(buf, n, c);
+                n = n + 1;
+                off = off + 1;
+            }
+            buf_set(buf, n, 0);
+            return 1;
+        }
+        off = env_skip(seg, off);
+    }
+}
+
+void env_dump(void)
+{
+    int seg;
+    int off;
+    int c;
+    seg = env_seg();
+    if (seg == 0) return;
+    off = 0;
+    while (1) {
+        c = far_peek(seg, off);
+        if (c == 0) break;
+        while (1) {
+            c = far_peek(seg, off);
+            if (c == 0) break;
+            print_char(c);
+            off = off + 1;
+        }
+        print_crlf();
+        off = off + 1;
+    }
+}
+
+void env_put(char *name, char *value)
+{
+    int old;
+    int neu;
+    int oi;
+    int ni;
+    int c;
+    int skip;
+    old = env_seg();
+    if (old == 0) return;
+    neu = dos_alloc(32);
+    if (neu == 0) return;
+    oi = 0;
+    ni = 0;
+    while (1) {
+        c = far_peek(old, oi);
+        if (c == 0) break;
+        skip = env_name_eq(old, oi, name);
+        if (!skip) {
+            while (1) {
+                c = far_peek(old, oi);
+                far_poke(neu, ni, c);
+                oi = oi + 1;
+                ni = ni + 1;
+                if (c == 0) break;
+            }
+        } else {
+            oi = env_skip(old, oi);
+        }
+    }
+    if (value != 0 && buf_get(value, 0) != 0) {
+        c = 0;
+        while (buf_get(name, c) != 0) {
+            far_poke(neu, ni, buf_get(name, c));
+            ni = ni + 1;
+            c = c + 1;
+        }
+        far_poke(neu, ni, '=');
+        ni = ni + 1;
+        c = 0;
+        while (buf_get(value, c) != 0) {
+            far_poke(neu, ni, buf_get(value, c));
+            ni = ni + 1;
+            c = c + 1;
+        }
+        far_poke(neu, ni, 0);
+        ni = ni + 1;
+    }
+    far_poke(neu, ni, 0);
+    ni = ni + 1;
+    oi = oi + 1;
+    while (1) {
+        c = far_peek(old, oi);
+        far_poke(neu, ni, c);
+        if (c == 0) break;
+        oi = oi + 1;
+        ni = ni + 1;
+    }
+    env_set_seg(neu);
+    dos_free(old);
+}
+
 void do_set(void)
 {
     int i;
     int c;
+    int eq;
     skip_spaces();
     if (peek_byte(cursor) == 0) {
-        if (buf_get(last_set, 0) != 0) {
-            print_string(last_set);
-            print_crlf();
-        }
+        env_dump();
         return;
     }
     i = 0;
+    eq = -1;
     while (peek_byte(cursor) != 0 && i < 78) {
         c = peek_byte(cursor);
         buf_set(last_set, i, c);
+        if (c == '=' && eq < 0) eq = i;
         i = i + 1;
         cursor = cursor + 1;
     }
     buf_set(last_set, i, 0);
+    if (eq < 0) {
+        if (print_env_value(last_set)) print_crlf();
+        return;
+    }
+    buf_set(last_set, eq, 0);
+    if (eq + 1 >= i) {
+        env_put(last_set, 0);
+    } else {
+        env_put(last_set, buf_addr(last_set, eq + 1));
+    }
 }
 
 void do_prompt(void)
@@ -1019,24 +1196,10 @@ void do_for(void)
     }
 }
 
-/* Print the value from the most recent NAME=VALUE assignment. */
+/* Print the value from env for batch %VAR%. */
 int print_last_set_value(char *name)
 {
-    int i;
-    int c;
-    i = 0;
-    while (buf_get(name, i) != 0) {
-        c = buf_get(last_set, i);
-        if (toupper_ch(c) != toupper_ch(buf_get(name, i))) {
-            return 0;
-        }
-        i = i + 1;
-    }
-    if (buf_get(last_set, i) != '=') {
-        return 0;
-    }
-    print_string(buf_addr(last_set, i + 1));
-    return 1;
+    return print_env_value(name);
 }
 
 /* ECHO's argument is expanded here so batch SET values affect later lines. */
@@ -1348,6 +1511,7 @@ void dispatch_plain(void)
 {
     int h;
     int i;
+    int c;
     cursor = buf_addr(cmd, 0);
     if (!next_token(prog, PATH_MAX)) return;
     if (str_eq(prog, "DIR")) { do_dir(); return; }
@@ -1385,6 +1549,7 @@ void dispatch_plain(void)
     if (str_eq(prog, "PAUSE")) { print_dollar("Press any key to continue . . .$"); read_key(); print_crlf(); return; }
     if (str_eq(prog, "VER")) { h = dos_version(); print_dollar("rmDOS DOS $"); print_num(h & 255); print_char('.'); print_num(h >> 8); print_crlf(); return; }
     if (str_eq(prog, "SET")) { do_set(); return; }
+    if (str_eq(prog, "REM")) { return; }
     if (str_eq(prog, "PROMPT")) { do_prompt(); return; }
     if (str_eq(prog, "DATE")) { do_date(); return; }
     if (str_eq(prog, "TIME")) { do_time(); return; }
@@ -1416,9 +1581,35 @@ void dispatch_plain(void)
     make_exec_tail();
     if (!try_exec_name()) {
         if (!str_has(prog_base, '\\') && !str_has(prog_base, '/')) {
+            /* Walk PATH= from environment */
+            if (env_copy_var("PATH", env_pathbuf, 128)) {
+                i = 0;
+                while (1) {
+                    c = 0;
+                    while (buf_get(env_pathbuf, i) != 0 && buf_get(env_pathbuf, i) != ';') {
+                        buf_set(env_join, c, buf_get(env_pathbuf, i));
+                        c = c + 1;
+                        i = i + 1;
+                        if (c >= PATH_MAX - 2) break;
+                    }
+                    buf_set(env_join, c, 0);
+                    if (c > 0) {
+                        if (buf_get(env_join, c - 1) != '\\') {
+                            buf_set(env_join, c, '\\');
+                            c = c + 1;
+                            buf_set(env_join, c, 0);
+                        }
+                        str_copy(buf_addr(env_join, c), prog_base, PATH_MAX - c);
+                        str_copy(prog, env_join, PATH_MAX);
+                        if (try_exec_name()) return;
+                    }
+                    if (buf_get(env_pathbuf, i) == 0) break;
+                    i = i + 1;
+                }
+            }
+            /* Fallback if PATH missing/unreadable after a child */
             str_copy(prog, "A:\\BIN\\", PATH_MAX);
-            i = str_len(prog);
-            str_copy(buf_addr(prog, i), prog_base, PATH_MAX - i);
+            str_copy(buf_addr(prog, 7), prog_base, PATH_MAX - 7);
             if (try_exec_name()) return;
         }
         print_dollar("Bad command\r\n$");

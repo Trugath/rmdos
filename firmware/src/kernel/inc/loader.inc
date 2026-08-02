@@ -10,7 +10,7 @@
  */
 
 .equ PSP_SIZE, 0x0100
-.equ COM_MAX, 0x6200
+.equ COM_MAX, 0x7000
 .equ COM_NEST_MAX, 4
 
 /*
@@ -254,6 +254,108 @@ psp_fill_common:
     pop bx
     pop ax
     ret
+
+/*
+ * Create PSP at DX. AL≠0 → also set current_psp = DX (AH=26).
+ * AH=55 leaves current_psp unchanged (AL=0).
+ */
+psp_create_at:
+    push ax
+    push bx
+    push cx
+    push si
+    push di
+    push es
+    push ds
+
+    mov es, dx
+    xor di, di
+    mov cx, 0x80
+    xor ax, ax
+    rep stosw
+
+    mov byte ptr es:[0x00], 0xCD
+    mov byte ptr es:[0x01], 0x20
+
+    mov ax, dx
+    dec ax
+    push es
+    mov es, ax
+    mov al, es:[0]
+    cmp al, 'M'
+    je .pca_mcb
+    cmp al, 'Z'
+    je .pca_mcb
+    pop es
+    push es
+    mov es, word ptr cs:[current_psp]
+    mov ax, word ptr es:[0x02]
+    pop es
+    mov word ptr es:[0x02], ax
+    jmp .pca_parent
+.pca_mcb:
+    mov bx, es:[3]
+    pop es
+    mov ax, dx
+    add ax, bx
+    mov word ptr es:[0x02], ax
+
+.pca_parent:
+    mov ax, word ptr cs:[current_psp]
+    mov word ptr es:[0x16], ax
+
+    push ds
+    xor ax, ax
+    mov ds, ax
+    mov ax, [0x22 * 4]
+    mov word ptr es:[0x0A], ax
+    mov ax, [0x22 * 4 + 2]
+    mov word ptr es:[0x0C], ax
+    mov ax, [0x23 * 4]
+    mov word ptr es:[0x0E], ax
+    mov ax, [0x23 * 4 + 2]
+    mov word ptr es:[0x10], ax
+    mov ax, [0x24 * 4]
+    mov word ptr es:[0x12], ax
+    mov ax, [0x24 * 4 + 2]
+    mov word ptr es:[0x14], ax
+    pop ds
+
+    push es
+    mov es, word ptr cs:[current_psp]
+    mov ax, word ptr es:[0x2C]
+    pop es
+    mov word ptr es:[0x2C], ax
+
+    mov byte ptr es:[0x80], 0
+    mov byte ptr es:[0x81], 0x0D
+
+    pop ds
+    pop es
+    pop di
+    pop si
+    pop cx
+    pop bx
+    pop ax
+    test al, al
+    jz .pca_noset
+    mov word ptr cs:[current_psp], dx
+.pca_noset:
+    ret
+
+/* AH=26h — Create New PSP at DX; becomes current */
+dos_ah26:
+    mov al, 1
+    call psp_create_at
+    clc
+    jmp int21_iret
+
+/* AH=55h — Create Child PSP at DX; current unchanged */
+dos_ah55:
+    xor al, al
+    call psp_create_at
+    clc
+    jmp int21_iret
 
 /*
  * Build minimal environment block.
@@ -827,7 +929,68 @@ dos_ah4b:
     stc
     jmp int21_iret_cf
 .a4b_load_noexec:
-    /* AL=1: treat as load+exec for now (fixtures rarely need load-only) */
+    /* AL=1: load into memory, fill PSP, return CS:IP/SS:SP in EPB; do not run */
+    mov word ptr cs:[exec_pb_seg], es
+    mov word ptr cs:[exec_pb_off], bx
+    mov byte ptr cs:[exec_pb_valid], 1
+    mov word ptr cs:[path_off], dx
+    mov word ptr cs:[path_seg], ds
+    mov ds, word ptr cs:[path_seg]
+    mov dx, word ptr cs:[path_off]
+    mov ah, 0x3D
+    xor al, al
+    int 0x21
+    jc .a4b_fail
+    mov word ptr cs:[com_handle], bx
+    push cs
+    pop ds
+    mov ah, 0x3F
+    mov bx, word ptr [com_handle]
+    mov cx, COM_MAX
+    lea dx, [com_buf]
+    int 0x21
+    jc .a4b_lne_cl
+    mov word ptr [com_size], ax
+    mov ah, 0x3E
+    mov bx, word ptr [com_handle]
+    int 0x21
+    cmp word ptr [com_buf], 0x5A4D
+    je .a4b_lne_exe
+    cmp word ptr [com_buf], 0x4D5A
+    je .a4b_lne_exe
+    call load_setup_com
+    jc .a4b_fail
+    jmp .a4b_lne_fill
+.a4b_lne_exe:
+    call load_setup_exe
+    jc .a4b_fail
+.a4b_lne_fill:
+    /* fill PSP; restore parent current_psp after EPB write */
+    mov ax, word ptr cs:[current_psp]
+    mov word ptr cs:[saved_psp_tmp], ax
+    call psp_fill_common
+    mov es, word ptr cs:[exec_pb_seg]
+    mov bx, word ptr cs:[exec_pb_off]
+    mov ax, word ptr cs:[exe_sp]
+    mov word ptr es:[bx + 0x0E], ax
+    mov ax, word ptr cs:[exe_ss]
+    mov word ptr es:[bx + 0x10], ax
+    mov ax, word ptr cs:[exe_ip]
+    mov word ptr es:[bx + 0x12], ax
+    mov ax, word ptr cs:[exe_cs]
+    mov word ptr es:[bx + 0x14], ax
+    mov ax, word ptr cs:[saved_psp_tmp]
+    mov word ptr cs:[current_psp], ax
+    mov byte ptr cs:[exec_pb_valid], 0
+    xor ax, ax
+    clc
+    jmp int21_iret
+.a4b_lne_cl:
+    mov ah, 0x3E
+    mov bx, word ptr cs:[com_handle]
+    int 0x21
+    jmp .a4b_fail
+
 .a4b_load:
     /* save param block ES:BX */
     mov word ptr cs:[exec_pb_seg], es
