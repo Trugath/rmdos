@@ -54,23 +54,60 @@ dos_ah02:
     clc
     jmp int21_iret
 
-/* AH=03h — AUX input (stub: return AL=0) */
+/* AH=03h — AUX input via INT 14h AH=02 COM1 */
 dos_ah03:
-    xor al, al
+    call aux_read_byte
     clc
     jmp int21_iret
 
-/* AH=04h — AUX output (stub: discard DL) */
+/* AH=04h — AUX output via INT 14h AH=01 COM1 */
 dos_ah04:
+    call aux_write_byte
     mov al, dl
     clc
     jmp int21_iret
 
-/* AH=05h — PRN output (stub: discard DL) */
+/* AH=05h — PRN output via INT 17h AH=00 LPT1 */
 dos_ah05:
+    call prn_write_byte
     mov al, dl
     clc
     jmp int21_iret
+
+/* Read one AUX byte → AL. COM1 (DX=0). Preserves other regs except AX scratch. */
+aux_read_byte:
+    push dx
+    xor dx, dx
+    mov ah, 0x02
+    int 0x14
+    pop dx
+    ret
+
+/* Write DL to AUX (COM1). Preserves DL. */
+aux_write_byte:
+    push ax
+    push dx
+    mov al, dl
+    xor dx, dx
+    mov ah, 0x01
+    int 0x14
+    pop dx
+    pop ax
+    ret
+
+/* Write DL to PRN (LPT1). Preserves DL. */
+prn_write_byte:
+    push ax
+    push dx
+    mov al, dl
+    xor dx, dx
+    mov ah, 0x00
+    int 0x17
+    pop dx
+    pop ax
+    ret
+
+/* INT 21h AH=09 — write DS:DX '$'-terminated */
 
 /* INT 21h AH=09 — write DS:DX '$'-terminated */
 dos_ah09:

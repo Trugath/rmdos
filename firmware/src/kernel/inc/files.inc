@@ -1,8 +1,8 @@
 /*
- * INT 21h file + device handles (FAT12 + CON/NUL).
+ * INT 21h file + device handles (FAT12 + CON/NUL/AUX/PRN).
  *
  * Entry (16 bytes):
- *   +0  used: 0 free, 1 file, 2 CON, 3 NUL
+ *   +0  used: 0 free, 1 file, 2 CON, 3 NUL, 4 AUX, 5 PRN
  *   +1  mode: 0=R 1=W 2=RW
  *   +2  start_cluster
  *   +4  file_size_lo / +6 size_hi
@@ -15,6 +15,8 @@
 .equ H_FILE, 1
 .equ H_CON, 2
 .equ H_NUL, 3
+.equ H_AUX, 4
+.equ H_PRN, 5
 
 handle_index:
     cmp bx, word ptr cs:[max_handles]
@@ -235,7 +237,10 @@ is_device_name:
 .idn_file:
     pop si
     pop ax
-    stc
+    call is_device_name_aux_check
+    jnc .idn_ok_ret
+    call is_device_name_prn_check
+.idn_ok_ret:
     ret
 .idn_c:
     cmp byte ptr [si + 1], 'O'
@@ -283,6 +288,134 @@ is_device_name:
     pop ax
     clc
     ret
+
+/* AUX / COM1 */
+is_device_name_aux_check:
+    push si
+    push ax
+    mov al, [si]
+    cmp al, 'A'
+    je .idn_aux
+    cmp al, 'a'
+    je .idn_aux
+    cmp al, 'C'
+    je .idn_com
+    cmp al, 'c'
+    je .idn_com
+    pop ax
+    pop si
+    stc
+    ret
+.idn_aux:
+    cmp byte ptr [si + 1], 'U'
+    je .idn_au
+    cmp byte ptr [si + 1], 'u'
+    jne .idn_aux_fail
+.idn_au:
+    cmp byte ptr [si + 2], 'X'
+    je .idn_aux_ok
+    cmp byte ptr [si + 2], 'x'
+    jne .idn_aux_fail
+.idn_aux_ok:
+    mov al, [si + 3]
+    test al, al
+    jz .idn_is_aux
+    cmp al, ':'
+    je .idn_is_aux
+.idn_aux_fail:
+    pop ax
+    pop si
+    stc
+    ret
+.idn_is_aux:
+    mov dl, H_AUX
+    pop ax
+    pop si
+    clc
+    ret
+.idn_com:
+    cmp byte ptr [si + 1], 'O'
+    je .idn_co2
+    cmp byte ptr [si + 1], 'o'
+    jne .idn_aux_fail
+.idn_co2:
+    cmp byte ptr [si + 2], 'M'
+    je .idn_com1
+    cmp byte ptr [si + 2], 'm'
+    jne .idn_aux_fail
+.idn_com1:
+    cmp byte ptr [si + 3], '1'
+    jne .idn_aux_fail
+    mov al, [si + 4]
+    test al, al
+    jz .idn_is_aux
+    cmp al, ':'
+    je .idn_is_aux
+    jmp .idn_aux_fail
+
+/* PRN / LPT1 — called after AUX fails */
+is_device_name_prn_check:
+    push si
+    push ax
+    mov al, [si]
+    cmp al, 'P'
+    je .idn_prn
+    cmp al, 'p'
+    je .idn_prn
+    cmp al, 'L'
+    je .idn_lpt
+    cmp al, 'l'
+    je .idn_lpt
+    pop ax
+    pop si
+    stc
+    ret
+.idn_prn:
+    cmp byte ptr [si + 1], 'R'
+    je .idn_pr
+    cmp byte ptr [si + 1], 'r'
+    jne .idn_prn_fail
+.idn_pr:
+    cmp byte ptr [si + 2], 'N'
+    je .idn_prn_ok
+    cmp byte ptr [si + 2], 'n'
+    jne .idn_prn_fail
+.idn_prn_ok:
+    mov al, [si + 3]
+    test al, al
+    jz .idn_is_prn
+    cmp al, ':'
+    je .idn_is_prn
+.idn_prn_fail:
+    pop ax
+    pop si
+    stc
+    ret
+.idn_is_prn:
+    mov dl, H_PRN
+    pop ax
+    pop si
+    clc
+    ret
+.idn_lpt:
+    cmp byte ptr [si + 1], 'P'
+    je .idn_lp
+    cmp byte ptr [si + 1], 'p'
+    jne .idn_prn_fail
+.idn_lp:
+    cmp byte ptr [si + 2], 'T'
+    je .idn_lpt1
+    cmp byte ptr [si + 2], 't'
+    jne .idn_prn_fail
+.idn_lpt1:
+    cmp byte ptr [si + 3], '1'
+    jne .idn_prn_fail
+    mov al, [si + 4]
+    test al, al
+    jz .idn_is_prn
+    cmp al, ':'
+    je .idn_is_prn
+    jmp .idn_prn_fail
 
 /* AH=3Ch create */
 dos_ah3c:
@@ -464,6 +597,10 @@ dos_ah3f:
     je .a3f_empty
     cmp al, H_CON
     je .a3f_con
+    cmp al, H_AUX
+    je .a3f_aux
+    cmp al, H_PRN
+    je .a3f_fail                 /* PRN is write-only */
     cmp al, H_FILE
     jne .a3f_fail
     call handle_mount_drive
@@ -548,6 +685,20 @@ dos_ah3f:
     mov bp, cx
     jcxz .a3f_ok
     call con_dev_read
+    jmp .a3f_ok
+.a3f_aux:
+    mov ds, word ptr cs:[xfer_buf_seg]
+    mov si, word ptr cs:[xfer_buf_off]
+    mov cx, word ptr cs:[xfer_want]
+    xor bp, bp
+    jcxz .a3f_ok
+.a3f_aux_lp:
+    call aux_read_byte
+    mov [si], al
+    inc si
+    inc bp
+    loop .a3f_aux_lp
+    jmp .a3f_ok
 .a3f_ok:
     mov ax, bp
     jmp .a3f_ret
@@ -601,6 +752,10 @@ dos_ah40:
     je .a40_nul
     cmp al, H_CON
     je .a40_con
+    cmp al, H_AUX
+    je .a40_aux
+    cmp al, H_PRN
+    je .a40_prn
     cmp al, H_FILE
     jne .a40_fail
     cmp byte ptr es:[di + 1], 0
@@ -703,6 +858,32 @@ dos_ah40:
     mov bp, cx
     jcxz .a40_ok
     call con_dev_write
+    jmp .a40_ok
+.a40_aux:
+    mov ds, word ptr cs:[xfer_buf_seg]
+    mov si, word ptr cs:[xfer_buf_off]
+    mov cx, word ptr cs:[xfer_want]
+    xor bp, bp
+    jcxz .a40_ok
+.a40_aux_lp:
+    mov dl, [si]
+    call aux_write_byte
+    inc si
+    inc bp
+    loop .a40_aux_lp
+    jmp .a40_ok
+.a40_prn:
+    mov ds, word ptr cs:[xfer_buf_seg]
+    mov si, word ptr cs:[xfer_buf_off]
+    mov cx, word ptr cs:[xfer_want]
+    xor bp, bp
+    jcxz .a40_ok
+.a40_prn_lp:
+    mov dl, [si]
+    call prn_write_byte
+    inc si
+    inc bp
+    loop .a40_prn_lp
     jmp .a40_ok
 .a40_nul:
     mov bp, word ptr cs:[xfer_want]
@@ -1457,6 +1638,8 @@ init_std_handles:
     mov byte ptr es:[di], H_CON
     mov byte ptr es:[di + HANDLE_SIZE], H_CON
     mov byte ptr es:[di + HANDLE_SIZE * 2], H_CON
+    mov byte ptr es:[di + HANDLE_SIZE * 3], H_AUX
+    mov byte ptr es:[di + HANDLE_SIZE * 4], H_PRN
     pop cx
     pop di
     pop es

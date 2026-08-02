@@ -6,6 +6,7 @@ static char msg_u[48] = "MODE COMn: baud,parity,data,stop\r\n$";
 static char msg_ok[12] = "MODE OK\r\n$";
 static char msg_bad[22] = "MODE: bad args\r\n$";
 static char msg_set[28] = "COM1 set: $";
+static char msg_lpt[18] = "LPT1 ready\r\n$";
 static char msg_crlf[3] = "\r\n$";
 static int i14_ax;
 static int i14_dx;
@@ -247,6 +248,12 @@ int main(void)
 
     if (toupper_ch(buf_get(p1, 0)) == 'L' && toupper_ch(buf_get(p1, 1)) == 'P'
         && toupper_ch(buf_get(p1, 2)) == 'T') {
+        c = buf_get(p1, 3);
+        if (c != 0 && c != '1') {
+            print_dollar(msg_bad);
+            return 1;
+        }
+        print_dollar(msg_lpt);
         print_dollar(msg_ok);
         return 0;
     }
