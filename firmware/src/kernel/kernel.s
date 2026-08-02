@@ -16,6 +16,9 @@ _start:
     mov ax, cs
     mov ds, ax
     mov ss, ax
+    lea ax, [country_case_map]
+    mov word ptr [country_case_map_ptr], ax
+    mov word ptr [country_case_map_ptr + 2], cs
     /* Stack must live inside the image, not at 0xFFFE overlapping the MCB arena. */
     lea sp, [kernel_stack_top]
     mov [boot_drive], dl
@@ -150,6 +153,10 @@ _start:
     mov ah, 0x01
     int 0x21
     jmp .echo
+
+/* Country-info case-map callback: rmDOS currently uses an identity mapping. */
+country_case_map:
+    retf
 
 .include "firmware/src/kernel/inc/device.inc"
 .include "firmware/src/kernel/inc/console.inc"
@@ -515,7 +522,8 @@ country_info:
     .byte 0                    /* currency format */
     .byte 2                    /* currency digits */
     .byte 0                    /* time format */
-    .word 0, 0                 /* case map / data */
+country_case_map_ptr:
+    .word 0, 0                 /* far pointer, initialized to country_case_map */
     .byte 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 
 name83:
@@ -587,6 +595,14 @@ cfg_ch:
     .byte 0
 cfg_line:
     .space 120, 0
+cfg_install_tail:
+    .space 129, 0
+cfg_install_fcb1:
+    .space 16, 0
+cfg_install_fcb2:
+    .space 16, 0
+cfg_install_pb:
+    .space 14, 0
 
 /* Device ABI state + builtin NUL/CON headers */
 dev_chain_off:

@@ -5,7 +5,7 @@
 
 /*
  * FORMAT.COM — FAT12/FAT16 format from INT 13h geometry (floppy or HDD ≤128MB).
- * Usage: FORMAT [d:] [/S] [/Y]
+ * Usage: FORMAT [d:] [/S] [/Y] [/V[:label]] [/F:720] [/1] [/4]
  */
 
 .equ ROOT_ENTS, 112
@@ -18,16 +18,27 @@ _start:
     pop es
     mov byte ptr [flag_y], 0
     mov byte ptr [flag_s], 0
+    mov byte ptr [flag_v], 0
+    mov byte ptr [flag_f720], 0
+    mov byte ptr [flag_one], 0
+    mov byte ptr [flag_four], 0
+    mov byte ptr [preset_media], 0
     mov byte ptr [drive_dl], 0
     mov byte ptr [drive_let], 'A'
     mov byte ptr [drive_idx], 0
     mov word ptr [kern_seg], 0
     mov word ptr [cmd_seg], 0
     mov word ptr [fat_seg], 0
+    lea di, [volume_label]
+    mov cx, 11
+    mov al, ' '
+    rep stosb
     mov si, 0x81
     call parse_args
     jc do_usage
     call get_geometry
+    jc do_err_geo
+    call apply_presets
     jc do_err_geo
     call compute_layout
     jc do_err_geo
@@ -48,6 +59,7 @@ ask_yes:
     lea dx, [msg_crlf]
     int 0x21
 after_ask:
+    call prompt_volume_label
     cmp byte ptr [flag_s], 0
     je do_fmt
     mov ah, 0x09
@@ -63,11 +75,17 @@ do_fmt:
     jc do_err
     call update_part_type
     cmp byte ptr [flag_s], 0
-    je done_ok
+    je write_label
     call write_system
     jc do_err
     mov ah, 0x09
     lea dx, [msg_sys]
+    int 0x21
+write_label:
+    call write_volume_label
+    jc do_err
+    /* Flush after all INT 13h layout writes so DOS remounts the new volume. */
+    mov ah, 0x0D
     int 0x21
 done_ok:
     call free_system
@@ -139,6 +157,8 @@ clear_buf:
 parse_args:
     push ax
     push bx
+    push cx
+    push di
 pa_sp:
     mov al, [si]
     cmp al, ' '
@@ -197,14 +217,76 @@ pa_sw:
     jmp pa_sp
 pa_try_s:
     cmp al, 'S'
-    jne pa_skip
+    jne pa_try_v
     mov byte ptr [flag_s], 1
     inc si
     jmp pa_sp
+pa_try_v:
+    cmp al, 'V'
+    jne pa_try_f
+    mov byte ptr [flag_v], 1
+    inc si
+    cmp byte ptr [si], ':'
+    jne pa_sp
+    inc si
+    lea di, [volume_label]
+    mov cx, 11
+pa_v_copy:
+    mov al, [si]
+    test al, al
+    jz pa_sp
+    cmp al, 0x0D
+    je pa_sp
+    cmp al, ' '
+    je pa_sp
+    cmp al, 9
+    je pa_sp
+    test cx, cx
+    jz pa_bad
+    call up_al
+    stosb
+    inc si
+    dec cx
+    jmp pa_v_copy
+pa_try_f:
+    cmp al, 'F'
+    jne pa_try_one
+    cmp byte ptr [si + 1], ':'
+    jne pa_bad
+    cmp byte ptr [si + 2], '7'
+    jne pa_bad
+    cmp byte ptr [si + 3], '2'
+    jne pa_bad
+    cmp byte ptr [si + 4], '0'
+    jne pa_bad
+    mov byte ptr [flag_f720], 1
+    add si, 5
+    jmp pa_sp
+pa_try_one:
+    cmp al, '1'
+    jne pa_try_four
+    mov byte ptr [flag_one], 1
+    inc si
+    jmp pa_sp
+pa_try_four:
+    cmp al, '4'
+    jne pa_skip
+    mov byte ptr [flag_four], 1
+    inc si
+    jmp pa_sp
 pa_ok:
+    pop di
+    pop cx
     pop bx
     pop ax
     clc
+    ret
+pa_bad:
+    pop di
+    pop cx
+    pop bx
+    pop ax
+    stc
     ret
 
 print_warn:
@@ -217,6 +299,111 @@ print_warn:
     mov ah, 0x09
     lea dx, [msg_warn2]
     int 0x21
+    ret
+
+/* /V without an inline label prompts for up to 11 characters. */
+prompt_volume_label:
+    push ax
+    push cx
+    push si
+    push di
+    push es
+    cmp byte ptr [flag_v], 0
+    je pvl_done
+    lea si, [volume_label]
+    mov cx, 11
+pvl_have_label:
+    cmp byte ptr [si], ' '
+    jne pvl_done
+    inc si
+    loop pvl_have_label
+
+    mov ah, 0x09
+    lea dx, [msg_label]
+    int 0x21
+    mov byte ptr [label_input], 11
+    mov byte ptr [label_input + 1], 0
+    mov ah, 0x0A
+    lea dx, [label_input]
+    int 0x21
+
+    push ds
+    pop es
+    lea di, [volume_label]
+    mov cx, 11
+    mov al, ' '
+    rep stosb
+    xor cx, cx
+    mov cl, [label_input + 1]
+    jcxz pvl_done
+    lea si, [label_input + 2]
+    lea di, [volume_label]
+pvl_copy:
+    lodsb
+    call up_al
+    stosb
+    loop pvl_copy
+pvl_done:
+    pop es
+    pop di
+    pop si
+    pop cx
+    pop ax
+    ret
+
+/* Apply classic floppy geometry switches after BIOS probing. */
+apply_presets:
+    push ax
+    push dx
+    mov al, [flag_f720]
+    and al, [flag_four]
+    jnz ap_fail
+    mov al, [flag_f720]
+    or al, [flag_four]
+    or al, [flag_one]
+    jz ap_ok
+    cmp byte ptr [drive_dl], 0x80
+    jae ap_fail
+
+    cmp byte ptr [flag_f720], 0
+    je ap_four
+    mov word ptr [bpb_spt], 9
+    mov word ptr [bpb_heads], 2
+    mov word ptr [bpb_totsec], 1440
+    mov word ptr [bpb_totsec_hi], 0
+    mov byte ptr [preset_media], 0xF9
+    jmp ap_one
+
+ap_four:
+    cmp byte ptr [flag_four], 0
+    je ap_one
+    mov word ptr [bpb_spt], 9
+    mov word ptr [bpb_heads], 2
+    mov word ptr [bpb_totsec], 720
+    mov word ptr [bpb_totsec_hi], 0
+    mov byte ptr [preset_media], 0xFD
+
+ap_one:
+    cmp byte ptr [flag_one], 0
+    je ap_ok
+    cmp word ptr [bpb_heads], 1
+    jbe ap_one_media
+    mov word ptr [bpb_heads], 1
+    shr word ptr [bpb_totsec_hi], 1
+    rcr word ptr [bpb_totsec], 1
+ap_one_media:
+    cmp byte ptr [flag_four], 0
+    je ap_ok
+    mov byte ptr [preset_media], 0xFC
+ap_ok:
+    pop dx
+    pop ax
+    clc
+    ret
+ap_fail:
+    pop dx
+    pop ax
+    stc
     ret
 
 get_geometry:
@@ -518,6 +705,12 @@ compute_layout:
     cmp word ptr [bpb_totsec], 2880
     ja cl_hd
     mov word ptr [bpb_root_ents], 112
+    cmp word ptr [bpb_totsec_hi], 0
+    jne cl_floppy_root
+    cmp word ptr [bpb_totsec], 360
+    ja cl_floppy_root
+    mov word ptr [bpb_root_ents], 64
+cl_floppy_root:
     mov word ptr [bpb_reserved], 2
     mov bl, 0xF9
     cmp word ptr [bpb_totsec], 2400
@@ -526,13 +719,13 @@ compute_layout:
     jmp cl_med
 cl_hd:
     mov word ptr [bpb_root_ents], 512
-    mov word ptr [bpb_reserved], 1
-    cmp byte ptr [flag_s], 0
-    je cl_hd_res
     mov word ptr [bpb_reserved], 2
-cl_hd_res:
     mov bl, 0xF8
 cl_med:
+    cmp byte ptr [preset_media], 0
+    je cl_med_store
+    mov bl, [preset_media]
+cl_med_store:
     mov [bpb_media], bl
 cl_spc:
     mov ax, [bpb_root_ents]
@@ -733,6 +926,7 @@ wl_hd:
     ret
 
 apply_bpb:
+    push si
     push di
     mov word ptr [secbuf + 11], 512
     mov al, [bpb_spc]
@@ -779,16 +973,16 @@ ab_ts_done:
     mov word ptr [secbuf + 5], 0x4F44        /* "DO" */
     mov word ptr [secbuf + 7], 0x2053        /* "S " */
     mov word ptr [secbuf + 9], 0x2020        /* "  " */
-    /* Volume label (spaces) at +43; FS type at +54 */
+    /* Volume label at +43; FS type at +54 */
     push es
     push cx
     push ax
     push ds
     pop es
     lea di, [secbuf + 43]
+    lea si, [volume_label]
     mov cx, 11
-    mov al, ' '
-    rep stosb
+    rep movsb
     pop ax
     pop cx
     pop es
@@ -806,6 +1000,7 @@ ab_fat16:
     mov word ptr [secbuf + 60], 0x2020       /* "  " */
 ab_fs_done:
     pop di
+    pop si
     ret
 
 /*
@@ -991,6 +1186,76 @@ fmt_done:
     pop cx
     pop bx
     pop ax
+    ret
+
+/* Add /V label as a root-directory volume entry after optional /S files. */
+write_volume_label:
+    push ax
+    push bx
+    push cx
+    push si
+    push di
+    push es
+    cmp byte ptr [flag_v], 0
+    je wvl_ok
+
+    lea si, [volume_label]
+    mov cx, 11
+wvl_nonempty:
+    cmp byte ptr [si], ' '
+    jne wvl_read
+    inc si
+    loop wvl_nonempty
+    jmp wvl_ok
+
+wvl_read:
+    push ds
+    pop es
+    mov ax, [bpb_root_lba]
+    lea bx, [secbuf]
+    call read_lba
+    jc wvl_fail
+    lea di, [secbuf]
+    mov cx, 16
+wvl_find:
+    cmp byte ptr [di], 0
+    je wvl_slot
+    cmp byte ptr [di], 0xE5
+    je wvl_slot
+    add di, 32
+    loop wvl_find
+    jmp wvl_fail
+
+wvl_slot:
+    lea si, [volume_label]
+    mov cx, 11
+    rep movsb
+    mov al, 0x08
+    stosb
+    xor ax, ax
+    mov cx, 10
+    rep stosw
+    mov ax, [bpb_root_lba]
+    lea bx, [secbuf]
+    call write_lba
+    jc wvl_fail
+wvl_ok:
+    pop es
+    pop di
+    pop si
+    pop cx
+    pop bx
+    pop ax
+    clc
+    ret
+wvl_fail:
+    pop es
+    pop di
+    pop si
+    pop cx
+    pop bx
+    pop ax
+    stc
     ret
 
 write_empty_fats:
@@ -1547,6 +1812,16 @@ flag_y:
     .byte 0
 flag_s:
     .byte 0
+flag_v:
+    .byte 0
+flag_f720:
+    .byte 0
+flag_one:
+    .byte 0
+flag_four:
+    .byte 0
+preset_media:
+    .byte 0
 drive_dl:
     .byte 0
 drive_let:
@@ -1639,6 +1914,11 @@ name_kern:
     .asciz "KERNEL.SYS"
 name_cmd:
     .asciz "COMMAND.COM"
+volume_label:
+    .space 11, ' '
+label_input:
+    .byte 11, 0
+    .space 11, 0
 msg_warn1:
     .ascii "WARNING: ALL data on $"
 msg_warn2:
@@ -1658,7 +1938,9 @@ msg_err:
 msg_geo:
     .ascii "Bad geometry\r\n$"
 msg_u:
-    .ascii "FORMAT [d:] [/S] [/Y]\r\n$"
+    .ascii "FORMAT [d:] [/S] [/Y] [/V[:label]] [/F:720] [/1] [/4]\r\n$"
+msg_label:
+    .ascii "Volume label (11 characters, ENTER for none)? $"
 msg_crlf:
     .ascii "\r\n$"
 boot_tmpl:

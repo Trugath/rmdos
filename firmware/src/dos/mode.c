@@ -7,7 +7,7 @@ static char msg_ok[12] = "MODE OK\r\n$";
 static char msg_bad[22] = "MODE: bad args\r\n$";
 static char msg_set[28] = "COM1 set: $";
 static char msg_lpt[18] = "LPT1 ready\r\n$";
-static char msg_lpt_r[22] = "LPT1:=COM1 ok\r\n$";
+static char msg_lpt_r[25] = "Redirect not supported\r\n$";
 static char msg_con[20] = "CON cols=$";
 static char msg_crlf[3] = "\r\n$";
 static int i14_ax;
@@ -256,28 +256,25 @@ int main(void)
             print_dollar(msg_bad);
             return 1;
         }
-        /* MODE LPT1:=COM1 — acknowledge redirect without engine */
+        /* MODE LPT1:=COM1 — redirection has no backing engine. */
         i = 0;
         while (buf_get(p1, i) != 0) {
             if (buf_get(p1, i) == '=') {
                 print_dollar(msg_lpt_r);
-                print_dollar(msg_ok);
-                return 0;
+                return 1;
             }
             i = i + 1;
         }
         if (args_token(p2, 32)) {
             if (buf_get(p2, 0) == '=' || (buf_get(p2, 0) == ':' && buf_get(p2, 1) == '=')) {
                 print_dollar(msg_lpt_r);
-                print_dollar(msg_ok);
-                return 0;
+                return 1;
             }
             i = 0;
             while (buf_get(p2, i) != 0) {
                 if (buf_get(p2, i) == '=') {
                     print_dollar(msg_lpt_r);
-                    print_dollar(msg_ok);
-                    return 0;
+                    return 1;
                 }
                 i = i + 1;
             }

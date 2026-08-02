@@ -74,17 +74,19 @@ Sources live under `firmware/bios/src/` (`post`, `init`, `video`, `keyboard`,
 - INT 10h (text + CGA modes 0–6): AH=00–0F including light-pen stub (`04h` →
   AH=0), pixel read/write (`0Ch`/`0Dh`), write string (`13h` AL=0/1 chars+BL
   attr; AL=2/3 char+attr pairs), CRTC cursor programming on set cursor/type,
-  BEL beep, and graphics teletype scroll
+  BEL beep, graphics teletype scroll, and AH=05 active-page select clamped to
+  CGA regen (unit `bt_page`)
 - INT 13h floppy via onboard FDC (DMA ch2 / IRQ6): AH=00–05, 08, 15–18 with
   360K/720K/1.2M/1.44M media via BDA `40:8B` hint + INT 1Eh tables (FDC follows
   the live DPT; AH=17 stores DASD type at `40:8C`+DL, AH=18 selects media table).
   HD uses guest C800 Fixed Disk option ROM by default; host Fixed
   Disk BIOS is opt-in (`--hd-int13-bios` / `K8086_HD_INT13_BIOS=1`). Floppy host
   shim is opt-in (`--floppy-int13-shim` / `K8086_FLOPPY_INT13_SHIM=1`).
-  INT 14h (COM1 8250 AH=00–03), 15h (AH=86h wait; AH=80h–82h succeed; AH=C0h XT
-  config table; else CF), 16h
+  INT 14h (COM1 8250 AH=00–03; DX≠0 → timeout bit, unit `bt_misc`), 15h
+  (AH=86h wait; AH=80h–82h succeed; AH=C0h XT config table; else CF), 16h
   (AH=00–02,05 stuff,10–12→00–02; Caps/Num/Scroll/Insert flags), 17h
-  (LPT1 at BDA `40:08` / `0x378`: AH=00–02; DX≠0 timeout), 18h, 19h, 1Ah
+  (LPT1 at BDA `40:08` / `0x378`: AH=00–02; DX≠0 timeout, unit `bt_misc`),
+  18h, 19h, 1Ah
 - INT 05h Print Screen (status at `0000:0500`; Shift+PrtSc from INT 09h)
 - IRQ0 timer (INT 08h → INT 1Ch; floppy motor timeout) and IRQ1 keyboard (INT 09h);
   Ctrl-Break (Ctrl+scancode 46h) latches BDA `40:18` bit7 and invokes INT 1Bh
@@ -157,7 +159,8 @@ flush+dispatch), InDOS nest flag (AH=34h), FCB open/close/create/delete/rename/
 seq+random I/O/find/parse (AH=0Fh–17h/21h–22h/27h–29h; extended FCB `FFh` prefix
 honors find attribute on AH=11h/12h), handle create/open/read/write/seek/delete,
 temp create (AH=5Ah/5Bh), file lock stub (AH=5Ch), truename (AH=60h),
-find-first/next, MCB alloc/free/resize (including grow; AH=48h honors AH=58h
+find-first/next (AH=4Eh/4Fh: classic H|S|D subset of search attr; volume-only
+path unchanged), MCB alloc/free/resize (including grow; AH=48h honors AH=58h
 first/best/last-fit strategy), EXEC (AH=4Bh AL=0
 load+run, AL=1 load-only, AL=3 overlay — streams from disk into the AH=48
 block with a small MZ header scratch, so EXEs larger than the old ~28 KiB
@@ -167,19 +170,21 @@ allocation info (AH=1Bh/1Ch; AH=1Ch honors DL), DPB get (AH=1Fh/32h from live
 BPB for any mapped drive; device-header pointer at DPB +13/+15 → NUL),
 SysVars (AH=52h LoL slice: first MCB, SFT header, CON, CDS, boot drive),
 extended error (AH=59h), AUX/PRN (handles 3/4; AH=03/04/05 via INT 14h/17h),
-IOCTL get/set info + char R/W + status (AH=44h AL=00–08/0Dh; AL=02/03 CON/AUX/
-PRN/NUL byte I/O; AL=04/05 success stub), handle count get/set (AH=67h),
+IOCTL get/set info + char R/W + status (AH=44h AL=00–03/06–08; AL=02/03 CON/AUX/
+PRN/NUL byte I/O; AL=04/05/0Dh fail honestly), handle count get/set (AH=67h),
 INT 25h/26h absolute disk, INT 2Fh install-check stubs (DOS AH=12, SHARE, PRINT,
 APPEND, XMS; Windows AX=1600 absent), vectors (AH=25h/35h), Ctrl-C / Ctrl-Break
 (BIOS INT 1Bh → INT 23h when BREAK ON; abort) / critical error (INT 24h
 Abort/Retry/Ignore), VERIFY flag get/set (AH=2Eh/54h; flag only — no media
 re-read) and commit (AH=68h → `handle_flush_file`), date/time, drive/cwd,
-mkdir/rmdir/chdir, attrs, rename, country get/set (AH=38h) and extended country
-get (AH=65h AL=01), **AH=31h TSR**. AH=30h reports DOS 3.31. Gate:
+mkdir/rmdir/chdir, attrs, rename, country get/set (AH=38h; identity case-map
+words) and extended country get (AH=65h AL=01; other AL → CF), **AH=31h TSR**.
+AH=30h reports DOS 3.31. Gate:
 `DEMO\COMPAT.COM` + `DEMO\INT21X.COM` (markers include `FILES OK`, `EXEC1 OK`,
-`AUXPRN OK`, `BREAK23 OK`, `STUB OK`; INT21X also probes IOCTL AL=02–05, DPB device ptr,
-last-fit AH=58, AH=46/57, INT 25h boot signature, honest AH=5Ch, VERIFY flag get/set,
-unsupported AH=66, and LoL LASTDRIVE).
+`AUXPRN OK`, `BREAK23 OK`, `STUB OK`; INT21X also probes IOCTL AL=02–05/0Dh,
+DPB device ptr, last-fit AH=58, AH=46/57, INT 25h boot signature, honest AH=5Ch,
+unsupported AH=5Dh/5Eh/5Fh/65h subfunctions/66h, VERIFY flag get/set, null
+BUFFERS pointer, and LoL LASTDRIVE).
 
 ### Stub vs real (INT 21h / CONFIG)
 
@@ -187,22 +192,28 @@ unsupported AH=66, and LoL LASTDRIVE).
 |---------|----------|
 | VERIFY (`AH=2Eh`/`54h`) | Flag only — no media re-read on write |
 | File lock (`AH=5Ch`) | CF + AX=1 (SHARE not installed) |
-| IOCTL AL=04/05/0Dh | Success stubs (no control work) |
-| `BUFFERS=` | Parsed into SysVars; FAT uses windowed cache, not DOS buffer chain |
-| `DEVICE=` | Character `.SYS` only (≤8 KiB); block drivers unsupported |
+| IOCTL AL=04/05/0Dh | CF + AX=1 (control channels unsupported) |
+| Network/server `AH=5Dh`/`5Eh`/`5Fh` | CF + AX=1 (redirector not installed) |
+| `BUFFERS=` | Parsed; LoL buffer pointer stays `0000:0000`; FAT uses a windowed cache |
+| `DEVICE=` | Character `.SYS` only (≤8 KiB); **block drivers intentional OOS** (reject + clear CONFIG text; follow-on) |
 | `LASTDRIVE=` | Raises CDS count (compile max 16; default 8) |
 | Unknown `CONFIG.SYS` lines | Printed as `CONFIG: ignored …` |
+| FAT16 volume size | Hard ceiling **128 MiB** (raising needs 32-bit LBA throughout drivemap) |
+| `MODE LPT1:=COM1` | Honest fail (`Redirect not supported`, ERRORLEVEL 1) |
 | INT 60h `AH=B8h` | rmDOS-only net mux (not packet-driver / redirector) |
 
 **Out of scope for INT 21h/2Fh fidelity:** AH=53h BPB translate; real
 SHARE/PRINT/APPEND/XMS TSR bodies; JOIN and full SHARE/network SFT graphs;
-network redirector multiplex beyond “not installed.” Live CDS paths and
+network redirector multiplex beyond “not installed”; block `DEVICE=` drivers;
+COM2–4 / LPT2–3; MDA/EGA; FAT16 above 128 MiB. Live CDS paths and
 `SUBST.COM` (via INT 2Fh `AX=12E0h`/`12E1h`) are in scope.
 
 After the FAT self-test, the kernel opens **`CONFIG.SYS`** if present (missing file
-is ignored). Supported lines: `INSTALL=` (load+run a COM), `DEVICE=` (`.SYS`
-character drivers via the SYS ABI — INIT + INPUT + OUTPUT; failures print and
-continue), `FILES=` / `BUFFERS=` (`FILES=` clamps 5..64 into the handle table
+is ignored). Supported lines: `INSTALL=` (load+run a COM with its trailing
+arguments in the child PSP command tail), `DEVICE=` (character `.SYS` only via
+the SYS ABI — INIT + INPUT + OUTPUT; block drivers print
+`CONFIG: DEVICE is not a character driver` and continue — intentional OOS),
+`FILES=` / `BUFFERS=` (`FILES=` clamps 5..64 into the handle table
 after CONFIG; default 20), `LASTDRIVE=` (letter or count, max 16), `BREAK=`,
 `SHELL=` (overrides the command processor path). Unknown directives print
 `CONFIG: ignored …`. Comments (`;`) and blank lines are skipped. Builtin
@@ -218,20 +229,22 @@ when the driver is loaded.
 
 `COMMAND.COM` supports internal CD/MD/RD/CLS/REN/VER/SET/PAUSE/REM/`PATH`/`ERASE`,
 external program exec with `PATH` walk and `%var%` from the PSP environment (env
-expansion on the full command line), `ECHO` / `ECHO ON`/`OFF`, `IF ERRORLEVEL` /
-`IF EXIST`, `GOTO`/`CALL` (GOTO seeks the batch file so labels work backward),
-batch `%0`–`%9` with one-level CALL arg frame save/restore, redirection and pipes,
-and `AUTOEXEC.BAT`. Pipes use a sequential temp file on the **current drive**
-(`X:\PIPE.$$$`) and support chained `|` (still not concurrent DOS pipe
+expansion on the full command line), bare `COPY` via `BIN\COPY.COM` (`/V`/`/A`/`/B`),
+`ECHO` / `ECHO ON`/`OFF`, `IF` / `IF … ELSE` (same line), `GOTO`/`CALL` (GOTO seeks
+so labels work backward; CALL arg frames stack to batch depth), redirection and
+pipes, and `AUTOEXEC.BAT`. Pipes use sequential unique temps on the current drive
+(`X:\PIPEn.$$`) and support chained `|` (still not concurrent DOS pipe
 semantics). `ERRORLEVEL` is updated for external EXEC and for CD/MD/RD/DEL/REN/
-CTTY failures. `CTTY CON`/`NUL` with one-level restore of handles 0/1/2.
+TYPE/DIR/CTTY failures. `DIR` supports classic `/W` and `/P`. `FOR` nests to batch
+depth. `CTTY CON`/`NUL` with one-level restore of handles 0/1/2.
 `PATH=A:\BIN` is set in the kernel environment. Internals present:
-`FOR`, `PROMPT` (including `$e` → ESC), `DATE`/`TIME`, `VOL`, `VERIFY`,
+`FOR`, `PROMPT` (including `$e` → ESC), `DATE`/`TIME` (interactive prompt outside
+batch), `VOL [d:]`, `VERIFY`,
 `BREAK`, `SHIFT`, `EXIT`, string `IF`, `CTTY` (CON/NUL). DIR headers use the current
 drive/cwd. Wave-1 utilities present:
 `MEM`, `FC`, `TREE`, `SORT`. Wave-2: `EDIT` (16 KiB heap buffer, find, `/Q` smoke),
 `DEBUG` (debuggee arena, R/G/T/P), `DISKCOPY` / `DISKCOMP`, `MODE` (COM1 baud;
-CON columns via INT 10h AH=0Fh; LPT1 status / `LPT1:=COM1` ack), `COPY` (`/V`
+CON columns via INT 10h AH=0Fh; `LPT1:=COM1` reports unsupported), `COPY` (`/V`
 VERIFY during copy; `/A`/`/B` ASCII/binary), `SUBST` (drive→path via INT 2Fh
 `12E0h`/`12E1h`). `BIN\ANSI.SYS` is packed for optional
 `DEVICE=` load (off by default).
@@ -293,9 +306,14 @@ NAT is outbound-only, so connect to a reachable non-gateway address such as
 
 The kernel reads the boot-sector BPB at init (geometry, FAT/root placement,
 sectors per cluster) so volumes are not limited to a hardcoded 720 KB map.
-`FORMAT [d:] [/S] [/Y]` builds FAT12 or FAT16 from INT 13h AH=08 geometry
-(auto-selected by cluster count; `CountOfClusters < 4085` → FAT12) and can
-install `KERNEL.SYS` + `COMMAND.COM` (`/S`). Drive letters: `A:`/`B:` are
+`FORMAT [d:] [/S] [/Y] [/V[:label]] [/F:720] [/1] [/4]` builds FAT12 or FAT16
+from INT 13h AH=08 geometry (auto-selected by cluster count;
+`CountOfClusters < 4085` → FAT12), supports classic floppy presets and volume
+labels, and can install `KERNEL.SYS` + `COMMAND.COM` (`/S`). `SYS [d:]` copies
+those two files, preserves the target FAT/BPB and unrelated root entries, then
+installs boot code plus regenerated RFAT1 metadata. The target must have rmDOS'
+second reserved sector (FORMAT now reserves it even without `/S`). Drive
+letters: `A:`/`B:` are
 floppies; hard-disk DOS primaries (`01h`/`04h`/`06h`) and logicals inside
 extended containers (`05h`/`0Fh`) are assigned `C:` onward in slot order per
 BIOS unit (`80h`, `81h`, …). A whole-disk FAT VBR (no DOS partition) still gets
@@ -303,9 +321,9 @@ one letter at LBA 0. `PARTEDIT` lists HD addresses and volumes (with letters),
 and supports scriptable `/CREATE` `/CREATEEXT` `/CREATELOG` `/LIST` (optional
 `/SIZE`). `PARTEDIT /CREATE` creates an active primary (leaving track zero for
 an MBR) and picks type by size (`01`/`04`/`06`); `FORMAT` rewrites that type to
-match the filesystem it built. Hard disks are limited to **128 MB**; larger
-geometries are rejected. The kernel uses a windowed FAT cache and remounts when
-the current drive changes.
+match the filesystem it built. Hard disks are limited to **128 MB** by design (32-bit LBA / larger drivemap
+is follow-on); larger geometries are rejected. The kernel uses a windowed FAT
+cache and remounts when the current drive changes.
 
 ### Floppy image layout
 
@@ -350,17 +368,18 @@ BIOS service units are boot-sector images under `firmware/bios/tests/boot/`; the
 print `PASS`/`FAIL` on COM1 and shut down via port `0x8900`. Coverage includes
 equipment/BDA, INT 10h text/graphics (modes, scroll, pixels, CRTC cursor/type,
 AH=08/0A read/write char, graphics teletype scroll, active page, palette, BEL,
-AH=13 AL=0–3), INT 13h floppy via FDC with shim off (reset/read/write/format/
-DASD/status, unsupported-AH CF, 360K/720K/1.2M/1.44M AH=08, 360→720 upgrade,
-change-line, motor timeout), C800 Fixed Disk AH=08/R/W/verify (blank HD),
-timer/INT 1Ch/INT 1Ah set + midnight overflow, INT 14h COM1 loopback, INT 15h
-wait/no-ops/AH=C0, INT 16h flags/AH=00 read/extended APIs plus IRQ1 Caps and
-Shift+PrtSc via scancode inject port `0x8901`, INT 17h LPT1 success + DX≠0
-timeout, INT 05h/INT 18h no-BASIC, ROM identity/checksum, IBM entry trampolines,
+AH=13 AL=0–3; AH=05 page clamp `bt_page`), INT 13h floppy via FDC with shim off
+(reset/read/write/format/DASD/status, unsupported-AH CF, 360K/720K/1.2M/1.44M
+AH=08, 360→720 upgrade, change-line, motor timeout), C800 Fixed Disk
+AH=08/R/W/verify (blank HD), timer/INT 1Ch/INT 1Ah set + midnight overflow,
+INT 14h COM1 loopback + DX≠0 timeout (`bt_misc`), INT 15h wait/no-ops/AH=C0,
+INT 16h flags/AH=00 read/extended APIs plus IRQ1 Caps and Shift+PrtSc via
+scancode inject port `0x8901`, INT 17h LPT1 success + DX≠0 timeout (`bt_misc`),
+INT 05h/INT 18h no-BASIC, ROM identity/checksum, IBM entry trampolines,
 Ctrl-Break→INT 1Bh (`bt_brk`), INT 13h AH=17/18 (`bt_fdc_type`), plus
 `bt_readchar`/`bt_writech`/`bt_kbd_read`/`bt_int13_err`/`bt_hd_verify`/
 `bt_motor`/`bt_timer_of`. Host-only inject assists: `0x8901` scancode,
-`0x8902` FDC disk-change. Not covered: COM2–4.
+`0x8902` FDC disk-change. Not covered: COM2–4 / LPT2–3 (intentional OOS).
 
 ## References
 

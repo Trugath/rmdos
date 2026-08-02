@@ -81,10 +81,11 @@ dos_process_config:
     jmp .cfg_line
 
 .cfg_do_install:
-    /* SI → path ASCIZ in cfg_line (already advanced) */
+    /* Split INSTALL=path args and expose args through an EXEC parameter block. */
     push ds
     push cs
     pop ds
+    call cfg_prepare_install
     mov dx, si
     call load_and_run_com
     pop ds
@@ -205,9 +206,8 @@ cfg_match_install:
     push di
     lea si, [cfg_line]
     call cfg_skip_ws
-    call cfg_upcase_line
     lea di, [cfg_kw_install]
-    call cfg_strcmp_prefix
+    call cfg_stricmp_prefix
     jc .cfg_mi_no
     cmp byte ptr [si], '='
     jne .cfg_mi_no
@@ -220,6 +220,92 @@ cfg_match_install:
     stc
 .cfg_mi_done:
     pop di
+    pop ax
+    ret
+
+/*
+ * SI = INSTALL value. Terminate the executable path at the first whitespace,
+ * then build a conventional EXEC tail (leading space, args, CR) and parameter
+ * block for load_and_run_com.
+ */
+cfg_prepare_install:
+    push ax
+    push bx
+    push cx
+    push di
+
+    mov di, si
+.cfg_pi_path:
+    mov al, [di]
+    test al, al
+    jz .cfg_pi_no_args
+    cmp al, ' '
+    je .cfg_pi_split
+    cmp al, 9
+    je .cfg_pi_split
+    inc di
+    jmp .cfg_pi_path
+
+.cfg_pi_split:
+    mov byte ptr [di], 0
+    inc di
+.cfg_pi_skip:
+    cmp byte ptr [di], ' '
+    je .cfg_pi_skip_one
+    cmp byte ptr [di], 9
+    jne .cfg_pi_args
+.cfg_pi_skip_one:
+    inc di
+    jmp .cfg_pi_skip
+
+.cfg_pi_args:
+    cmp byte ptr [di], 0
+    je .cfg_pi_no_args
+    lea bx, [cfg_install_tail]
+    mov byte ptr [bx + 1], ' '
+    add bx, 2
+    mov cx, 1
+.cfg_pi_copy:
+    mov al, [di]
+    test al, al
+    jz .cfg_pi_tail_done
+    cmp cx, 127
+    jae .cfg_pi_tail_done
+    mov [bx], al
+    inc bx
+    inc di
+    inc cx
+    jmp .cfg_pi_copy
+
+.cfg_pi_no_args:
+    lea bx, [cfg_install_tail]
+    xor cx, cx
+
+.cfg_pi_tail_done:
+    lea bx, [cfg_install_tail]
+    mov byte ptr [bx], cl
+    add bx, cx
+    mov byte ptr [bx + 1], 0x0D
+
+    mov word ptr [cfg_install_pb], 0
+    lea ax, [cfg_install_tail]
+    mov word ptr [cfg_install_pb + 2], ax
+    mov word ptr [cfg_install_pb + 4], cs
+    lea ax, [cfg_install_fcb1]
+    mov word ptr [cfg_install_pb + 6], ax
+    mov word ptr [cfg_install_pb + 8], cs
+    lea ax, [cfg_install_fcb2]
+    mov word ptr [cfg_install_pb + 0x0A], ax
+    mov word ptr [cfg_install_pb + 0x0C], cs
+
+    mov word ptr [exec_pb_seg], cs
+    lea ax, [cfg_install_pb]
+    mov word ptr [exec_pb_off], ax
+    mov byte ptr [exec_pb_valid], 1
+
+    pop di
+    pop cx
+    pop bx
     pop ax
     ret
 
@@ -435,6 +521,38 @@ cfg_strcmp_prefix:
 .cfg_sp_fail:
     stc
 .cfg_sp_done:
+    pop di
+    pop bx
+    pop ax
+    ret
+
+/* DI=uppercase keyword, SI=line. Case-insensitive prefix compare; CF=no match. */
+cfg_stricmp_prefix:
+    push ax
+    push bx
+    push di
+.cfg_sip:
+    mov al, [di]
+    test al, al
+    jz .cfg_sip_ok
+    mov bl, [si]
+    cmp bl, 'a'
+    jb .cfg_sip_cmp
+    cmp bl, 'z'
+    ja .cfg_sip_cmp
+    sub bl, 32
+.cfg_sip_cmp:
+    cmp al, bl
+    jne .cfg_sip_fail
+    inc si
+    inc di
+    jmp .cfg_sip
+.cfg_sip_ok:
+    clc
+    jmp .cfg_sip_done
+.cfg_sip_fail:
+    stc
+.cfg_sip_done:
     pop di
     pop bx
     pop ax

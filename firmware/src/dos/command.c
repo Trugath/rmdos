@@ -37,6 +37,11 @@ static char prompt_fmt[80] = { '$', 'p', '$', 'g', 0 };
 static char for_var[4] = { 0 };
 static char for_body[82] = { 0 };
 static char for_item[64] = { 0 };
+static char for_var_frames[16] = { 0 };
+static char for_body_frames[328] = { 0 };
+static char for_item_frames[256] = { 0 };
+static char if_then[82] = { 0 };
+static char if_else[82] = { 0 };
 static int cursor;
 static int last_errorlevel;
 static int batch_depth;
@@ -58,8 +63,12 @@ static int ctty_saved1;
 static int ctty_saved2;
 static int ctty_active;
 static char pipe_tmp[16];
-static char saved_batch_args[160] = { 0 };
-static int saved_batch_argc = 0;
+static char pipe_input[16];
+static int pipe_seq;
+static char batch_arg_frames[640] = { 0 };
+static int batch_argc_frames[4] = { 0 };
+static int batch_arg_depth;
+static int for_depth;
 
 
 void dos_set_verify(int on)
@@ -142,6 +151,17 @@ int dos_force_dup(int old_handle, int new_handle)
     asm("jnc Lcmd_fdup_ok");
     asm("mov ax, 0xFFFF");
     asm("Lcmd_fdup_ok:");
+}
+
+int dos_create_new(char *path, int attr)
+{
+    asm("mov dx, [bp+6]");
+    asm("mov cx, [bp+4]");
+    asm("mov ah, 0x5B");
+    asm("int 0x21");
+    asm("jnc Lcmd_cnew_ok");
+    asm("mov ax, 0xFFFF");
+    asm("Lcmd_cnew_ok:");
 }
 
 int dos_seek_end(int handle)
@@ -457,11 +477,13 @@ void do_type(void)
     int n;
     if (!next_token(arg1, PATH_MAX)) {
         print_dollar("TYPE file\r\n$");
+        last_errorlevel = 1;
         return;
     }
     h = dos_open(arg1, 0);
     if (h == -1) {
         print_dollar("file not found\r\n$");
+        last_errorlevel = 1;
         return;
     }
     n = dos_read(h, copybuf, 128);
@@ -470,56 +492,68 @@ void do_type(void)
         n = dos_read(h, copybuf, 128);
     }
     dos_close(h);
+    last_errorlevel = 0;
 }
 
-void do_copy(void)
-{
-    int in;
-    int out;
-    int n;
-    if (!next_token(arg1, PATH_MAX) || !next_token(arg2, PATH_MAX)) {
-        print_dollar("COPY src dst\r\n$");
-        return;
-    }
-    in = dos_open(arg1, 0);
-    if (in == -1) {
-        print_dollar("COPY src dst\r\n$");
-        return;
-    }
-    out = dos_create(arg2, 0);
-    if (out == -1) {
-        dos_close(in);
-        print_dollar("COPY src dst\r\n$");
-        return;
-    }
-    n = dos_read(in, copybuf, 128);
-    while (n > 0) {
-        dos_write(out, copybuf, n);
-        n = dos_read(in, copybuf, 128);
-    }
-    dos_close(out);
-    dos_close(in);
-    print_dollar("copied\r\n$");
-}
+/* Internal COPY removed — bare COPY PATH-execs BIN\COPY.COM (/V /A /B). */
 
 void do_dir(void)
 {
     int i;
     int attr;
     int size;
+    int opt_w;
+    int opt_p;
+    int wide_col;
+    int page_lines;
+    int namelen;
+    int have_pat;
+
+    opt_w = 0;
+    opt_p = 0;
+    have_pat = 0;
+    buf_set(pattern, 0, 0);
     skip_spaces();
-    if (peek_byte(cursor) == 0) {
-        str_copy(pattern, "*.*", PATH_MAX);
-    } else {
-        next_token(pattern, PATH_MAX);
-        if (!str_has(pattern, '*') && !str_has(pattern, '?') && !str_has(pattern, '.')) {
-            i = str_len(pattern);
-            buf_set(pattern, i, '\\');
-            buf_set(pattern, i + 1, '*');
-            buf_set(pattern, i + 2, '.');
-            buf_set(pattern, i + 3, '*');
-            buf_set(pattern, i + 4, 0);
+    while (peek_byte(cursor) != 0) {
+        if (peek_byte(cursor) == '/') {
+            cursor = cursor + 1;
+            attr = peek_byte(cursor);
+            if (attr >= 'a' && attr <= 'z') {
+                attr = attr - 32;
+            }
+            if (attr == 0) {
+                last_errorlevel = 1;
+                print_dollar("Invalid switch\r\n$");
+                return;
+            }
+            cursor = cursor + 1;
+            if (attr == 'W') {
+                opt_w = 1;
+            } else if (attr == 'P') {
+                opt_p = 1;
+            } else {
+                last_errorlevel = 1;
+                print_dollar("Invalid switch\r\n$");
+                return;
+            }
+            skip_spaces();
+        } else {
+            if (!next_token(pattern, PATH_MAX)) {
+                break;
+            }
+            have_pat = 1;
+            skip_spaces();
         }
+    }
+    if (!have_pat) {
+        str_copy(pattern, "*.*", PATH_MAX);
+    } else if (!str_has(pattern, '*') && !str_has(pattern, '?') && !str_has(pattern, '.')) {
+        i = str_len(pattern);
+        buf_set(pattern, i, '\\');
+        buf_set(pattern, i + 1, '*');
+        buf_set(pattern, i + 2, '.');
+        buf_set(pattern, i + 3, '*');
+        buf_set(pattern, i + 4, 0);
     }
     dos_set_dta(dta);
     print_dollar(" Directory of $");
@@ -534,32 +568,63 @@ void do_dir(void)
     print_crlf();
     dir_count = 0;
     dir_bytes = 0;
+    wide_col = 0;
+    page_lines = 1;
     if (dos_find_first(pattern, 0x10) == -1) {
         print_dollar("File not found\r\n$");
+        last_errorlevel = 1;
         return;
     }
     while (1) {
-        print_string(buf_addr(dta, 0x1e));
-        i = str_len(buf_addr(dta, 0x1e));
-        while (i < 13) {
-            print_char(' ');
-            i = i + 1;
-        }
         attr = buf_get(dta, 0x15);
-        if (attr & 0x10) {
-            print_dollar("<DIR>$");
+        if (opt_w) {
+            print_string(buf_addr(dta, 0x1e));
+            namelen = str_len(buf_addr(dta, 0x1e));
+            while (namelen < 13) {
+                print_char(' ');
+                namelen = namelen + 1;
+            }
+            wide_col = wide_col + 1;
+            if (wide_col >= 5) {
+                print_crlf();
+                wide_col = 0;
+                page_lines = page_lines + 1;
+            }
         } else {
-            size = buf_get(dta, 0x1a) + (buf_get(dta, 0x1b) * 256);
-            print_num(size);
-            dir_bytes = dir_bytes + size;
+            print_string(buf_addr(dta, 0x1e));
+            i = str_len(buf_addr(dta, 0x1e));
+            while (i < 13) {
+                print_char(' ');
+                i = i + 1;
+            }
+            if (attr & 0x10) {
+                print_dollar("<DIR>$");
+            } else {
+                size = buf_get(dta, 0x1a) + (buf_get(dta, 0x1b) * 256);
+                print_num(size);
+            }
+            print_crlf();
+            page_lines = page_lines + 1;
         }
-        print_crlf();
         if (!(buf_get(dta, 0x1e) == '.' && (buf_get(dta, 0x1f) == 0 || (buf_get(dta, 0x1f) == '.' && buf_get(dta, 0x20) == 0)))) {
             dir_count = dir_count + 1;
+            if (!(attr & 0x10)) {
+                size = buf_get(dta, 0x1a) + (buf_get(dta, 0x1b) * 256);
+                dir_bytes = dir_bytes + size;
+            }
+        }
+        if (opt_p && page_lines >= 23) {
+            print_dollar("Press any key to continue . . .$");
+            read_key();
+            print_crlf();
+            page_lines = 0;
         }
         if (dos_find_next() == -1) {
             break;
         }
+    }
+    if (opt_w && wide_col != 0) {
+        print_crlf();
     }
     print_dollar("        $");
     print_num(dir_count);
@@ -577,6 +642,7 @@ void do_dir(void)
         print_char('0');
     }
     print_dollar(" bytes free\r\n$");
+    last_errorlevel = 0;
 }
 
 void make_exec_tail(void)
@@ -658,7 +724,7 @@ void do_if(void);
 void dispatch(void);
 void do_batch(char *name);
 void collect_batch_args(void);
-void push_batch_args(void);
+int push_batch_args(void);
 void pop_batch_args(void);
 void expand_env_percent(void);
 
@@ -682,7 +748,7 @@ int try_batch_name(void)
         return 0;
     }
     dos_close(h);
-    push_batch_args();
+    if (!push_batch_args()) return 1;
     collect_batch_args();
     do_batch(prog);
     pop_batch_args();
@@ -952,6 +1018,7 @@ void do_date(void)
     int day;
     int year;
     int rc;
+    int n;
     skip_spaces();
     if (peek_byte(cursor) == 0) {
         dos_get_date();
@@ -962,6 +1029,27 @@ void do_date(void)
         print_char('-');
         print_num(g_year);
         print_crlf();
+        if (batch_depth != 0) {
+            return;
+        }
+        print_dollar("Enter new date: $");
+        buf_set(line, 0, LINE_MAX);
+        buf_set(line, 1, 0);
+        dos_line_input(line);
+        n = buf_get(line, 1);
+        if (n <= 0) {
+            return;
+        }
+        buf_set(line, n + 2, 0);
+        str_copy(arg1, buf_addr(line, 2), PATH_MAX);
+        parse_pos = 0;
+        month = parse_uint(arg1);
+        if (buf_get(arg1, parse_pos) == '-' || buf_get(arg1, parse_pos) == '/') parse_pos = parse_pos + 1;
+        day = parse_uint(arg1);
+        if (buf_get(arg1, parse_pos) == '-' || buf_get(arg1, parse_pos) == '/') parse_pos = parse_pos + 1;
+        year = parse_uint(arg1);
+        rc = dos_set_date(year, month, day);
+        if (rc == 255) print_dollar("Invalid date\r\n$");
         return;
     }
     if (!next_token(arg1, PATH_MAX)) return;
@@ -980,6 +1068,7 @@ void do_time(void)
     int hour;
     int min;
     int sec;
+    int n;
     skip_spaces();
     if (peek_byte(cursor) == 0) {
         dos_get_time();
@@ -990,6 +1079,26 @@ void do_time(void)
         print_char(':');
         print_num(g_sec);
         print_crlf();
+        if (batch_depth != 0) {
+            return;
+        }
+        print_dollar("Enter new time: $");
+        buf_set(line, 0, LINE_MAX);
+        buf_set(line, 1, 0);
+        dos_line_input(line);
+        n = buf_get(line, 1);
+        if (n <= 0) {
+            return;
+        }
+        buf_set(line, n + 2, 0);
+        str_copy(arg1, buf_addr(line, 2), PATH_MAX);
+        parse_pos = 0;
+        hour = parse_uint(arg1);
+        if (buf_get(arg1, parse_pos) == ':') parse_pos = parse_pos + 1;
+        min = parse_uint(arg1);
+        if (buf_get(arg1, parse_pos) == ':') parse_pos = parse_pos + 1;
+        sec = parse_uint(arg1);
+        dos_set_time(hour, min, sec);
         return;
     }
     if (!next_token(arg1, PATH_MAX)) return;
@@ -1004,14 +1113,37 @@ void do_time(void)
 
 void do_vol(void)
 {
+    int drive;
+    drive = dos_current_drive();
+    skip_spaces();
+    if (next_token(arg1, PATH_MAX)) {
+        if (str_len(arg1) != 2 || buf_get(arg1, 1) != ':' ||
+            buf_get(arg1, 0) < 'A' || buf_get(arg1, 0) > 'Z') {
+            print_dollar("VOL [drive:]\r\n$");
+            last_errorlevel = 1;
+            return;
+        }
+        drive = buf_get(arg1, 0) - 'A';
+    }
+    buf_set(pattern, 0, drive + 'A');
+    buf_set(pattern, 1, ':');
+    buf_set(pattern, 2, '\\');
+    buf_set(pattern, 3, '*');
+    buf_set(pattern, 4, '.');
+    buf_set(pattern, 5, '*');
+    buf_set(pattern, 6, 0);
     dos_set_dta(dta);
-    if (dos_find_first("*.*", 8) == -1) {
-        print_dollar("Volume in drive A has no label\r\n$");
+    print_dollar("Volume in drive $");
+    print_char(drive + 'A');
+    if (dos_find_first(pattern, 8) == -1) {
+        print_dollar(" has no label\r\n$");
+        last_errorlevel = 0;
         return;
     }
-    print_dollar("Volume in drive A is $");
+    print_dollar(" is $");
     print_string(buf_addr(dta, 0x1E));
     print_crlf();
+    last_errorlevel = 0;
 }
 
 void do_verify(void)
@@ -1066,30 +1198,43 @@ void clear_batch_args(void)
     batch_argc = 0;
 }
 
-void push_batch_args(void)
+int push_batch_args(void)
 {
     int i;
     int c;
+    int base;
+    if (batch_arg_depth >= BATCH_MAX) {
+        return 0;
+    }
+    base = batch_arg_depth * 160;
     i = 0;
     while (i < 160) {
         c = buf_get(batch_args, i);
-        buf_set(saved_batch_args, i, c);
+        buf_set(batch_arg_frames, base + i, c);
         i = i + 1;
     }
-    saved_batch_argc = batch_argc;
+    batch_argc_frames[batch_arg_depth] = batch_argc;
+    batch_arg_depth = batch_arg_depth + 1;
+    return 1;
 }
 
 void pop_batch_args(void)
 {
     int i;
     int c;
+    int base;
+    if (batch_arg_depth <= 0) {
+        return;
+    }
+    batch_arg_depth = batch_arg_depth - 1;
+    base = batch_arg_depth * 160;
     i = 0;
     while (i < 160) {
-        c = buf_get(saved_batch_args, i);
+        c = buf_get(batch_arg_frames, base + i);
         buf_set(batch_args, i, c);
         i = i + 1;
     }
-    batch_argc = saved_batch_argc;
+    batch_argc = batch_argc_frames[batch_arg_depth];
 }
 
 void collect_batch_args(void)
@@ -1395,79 +1540,128 @@ void do_for(void)
     int i;
     int c;
     int wild;
+    int base;
+    if (for_depth >= BATCH_MAX) {
+        last_errorlevel = 1;
+        print_dollar("FOR nested too deep\r\n$");
+        return;
+    }
+    base = for_depth * 4;
+    i = 0;
+    while (i < 4) {
+        buf_set(for_var_frames, base + i, buf_get(for_var, i));
+        i = i + 1;
+    }
+    base = for_depth * 82;
+    i = 0;
+    while (i < 82) {
+        buf_set(for_body_frames, base + i, buf_get(for_body, i));
+        i = i + 1;
+    }
+    base = for_depth * 64;
+    i = 0;
+    while (i < 64) {
+        buf_set(for_item_frames, base + i, buf_get(for_item, i));
+        i = i + 1;
+    }
+    for_depth = for_depth + 1;
     skip_spaces();
     if (!next_token(arg1, PATH_MAX)) {
+        last_errorlevel = 1;
         print_dollar("FOR %v IN (set) DO cmd\r\n$");
-        return;
-    }
-    i = 0;
-    if (buf_get(arg1, 0) == '%') i = 1;
-    if (buf_get(arg1, i) == '%') i = i + 1;
-    buf_set(for_var, 0, buf_get(arg1, i));
-    buf_set(for_var, 1, 0);
-    if (!next_token(arg1, PATH_MAX) || !str_eq(arg1, "IN")) {
-        print_dollar("FOR %v IN (set) DO cmd\r\n$");
-        return;
-    }
-    skip_spaces();
-    if (peek_byte(cursor) != '(') {
-        print_dollar("FOR %v IN (set) DO cmd\r\n$");
-        return;
-    }
-    cursor = cursor + 1;
-    i = 0;
-    while (peek_byte(cursor) != 0 && peek_byte(cursor) != ')' && i < 62) {
-        c = peek_byte(cursor);
-        buf_set(for_item, i, c);
-        i = i + 1;
-        cursor = cursor + 1;
-    }
-    buf_set(for_item, i, 0);
-    if (peek_byte(cursor) == ')') cursor = cursor + 1;
-    skip_spaces();
-    if (!next_token(arg1, PATH_MAX) || !str_eq(arg1, "DO")) {
-        print_dollar("FOR %v IN (set) DO cmd\r\n$");
-        return;
-    }
-    skip_spaces();
-    i = 0;
-    while (peek_byte(cursor) != 0 && i < 80) {
-        buf_set(for_body, i, peek_byte(cursor));
-        i = i + 1;
-        cursor = cursor + 1;
-    }
-    buf_set(for_body, i, 0);
-    wild = 0;
-    i = 0;
-    while (buf_get(for_item, i) != 0) {
-        c = buf_get(for_item, i);
-        if (c == '*' || c == '?') wild = 1;
-        i = i + 1;
-    }
-    if (wild) {
-        dos_set_dta(dta);
-        if (dos_find_first(for_item, 0x10) == -1) return;
-        while (1) {
-            for_run_body(buf_addr(dta, 0x1E));
-            if (dos_find_next() == -1) break;
+    } else {
+        i = 0;
+        if (buf_get(arg1, 0) == '%') i = 1;
+        if (buf_get(arg1, i) == '%') i = i + 1;
+        buf_set(for_var, 0, buf_get(arg1, i));
+        buf_set(for_var, 1, 0);
+        if (!next_token(arg1, PATH_MAX) || !str_eq(arg1, "IN")) {
+            last_errorlevel = 1;
+            print_dollar("FOR %v IN (set) DO cmd\r\n$");
+        } else {
+            skip_spaces();
+            if (peek_byte(cursor) != '(') {
+                last_errorlevel = 1;
+                print_dollar("FOR %v IN (set) DO cmd\r\n$");
+            } else {
+                cursor = cursor + 1;
+                i = 0;
+                while (peek_byte(cursor) != 0 && peek_byte(cursor) != ')' && i < 62) {
+                    c = peek_byte(cursor);
+                    buf_set(for_item, i, c);
+                    i = i + 1;
+                    cursor = cursor + 1;
+                }
+                buf_set(for_item, i, 0);
+                if (peek_byte(cursor) == ')') cursor = cursor + 1;
+                skip_spaces();
+                if (!next_token(arg1, PATH_MAX) || !str_eq(arg1, "DO")) {
+                    last_errorlevel = 1;
+                    print_dollar("FOR %v IN (set) DO cmd\r\n$");
+                } else {
+                    skip_spaces();
+                    i = 0;
+                    while (peek_byte(cursor) != 0 && i < 80) {
+                        buf_set(for_body, i, peek_byte(cursor));
+                        i = i + 1;
+                        cursor = cursor + 1;
+                    }
+                    buf_set(for_body, i, 0);
+                    wild = 0;
+                    i = 0;
+                    while (buf_get(for_item, i) != 0) {
+                        c = buf_get(for_item, i);
+                        if (c == '*' || c == '?') wild = 1;
+                        i = i + 1;
+                    }
+                    if (wild) {
+                        dos_set_dta(dta);
+                        if (dos_find_first(for_item, 0x10) != -1) {
+                            while (1) {
+                                for_run_body(buf_addr(dta, 0x1E));
+                                if (dos_find_next() == -1) break;
+                            }
+                        }
+                    } else {
+                        i = 0;
+                        while (buf_get(for_item, i) != 0) {
+                            while (buf_get(for_item, i) == ' ' || buf_get(for_item, i) == ',') i = i + 1;
+                            if (buf_get(for_item, i) == 0) break;
+                            c = 0;
+                            while (buf_get(for_item, i) != 0 && buf_get(for_item, i) != ' ' && buf_get(for_item, i) != ',') {
+                                buf_set(arg2, c, buf_get(for_item, i));
+                                c = c + 1;
+                                i = i + 1;
+                            }
+                            buf_set(arg2, c, 0);
+                            for_run_body(arg2);
+                        }
+                    }
+                }
+            }
         }
-        return;
     }
-    /* Space/comma-separated literal set. */
+    for_depth = for_depth - 1;
+    base = for_depth * 4;
     i = 0;
-    while (buf_get(for_item, i) != 0) {
-        while (buf_get(for_item, i) == ' ' || buf_get(for_item, i) == ',') i = i + 1;
-        if (buf_get(for_item, i) == 0) break;
-        c = 0;
-        while (buf_get(for_item, i) != 0 && buf_get(for_item, i) != ' ' && buf_get(for_item, i) != ',') {
-            buf_set(arg2, c, buf_get(for_item, i));
-            c = c + 1;
-            i = i + 1;
-        }
-        buf_set(arg2, c, 0);
-        for_run_body(arg2);
+    while (i < 4) {
+        buf_set(for_var, i, buf_get(for_var_frames, base + i));
+        i = i + 1;
+    }
+    base = for_depth * 82;
+    i = 0;
+    while (i < 82) {
+        buf_set(for_body, i, buf_get(for_body_frames, base + i));
+        i = i + 1;
+    }
+    base = for_depth * 64;
+    i = 0;
+    while (i < 64) {
+        buf_set(for_item, i, buf_get(for_item_frames, base + i));
+        i = i + 1;
     }
 }
+
 
 /* Print the value from env for batch %VAR%. */
 int print_last_set_value(char *name)
@@ -1567,6 +1761,69 @@ void do_batch(char *name)
     }
 }
 
+
+/* Split remainder at ELSE and run then or else branch. */
+void if_run_tail(int take_then)
+{
+    int i;
+    int o;
+    int c;
+    int has_else;
+    int else_at;
+    skip_spaces();
+    i = 0;
+    o = 0;
+    has_else = 0;
+    else_at = 0;
+    while (peek_byte(cursor) != 0 && o < 80) {
+        c = peek_byte(cursor);
+        if ((c == 'E' || c == 'e') && (o == 0 || buf_get(if_then, o - 1) == ' ')) {
+            if ((peek_byte(cursor + 1) == 'L' || peek_byte(cursor + 1) == 'l')
+                && (peek_byte(cursor + 2) == 'S' || peek_byte(cursor + 2) == 's')
+                && (peek_byte(cursor + 3) == 'E' || peek_byte(cursor + 3) == 'e')) {
+                c = peek_byte(cursor + 4);
+                if (c == 0 || c == ' ' || c == 9) {
+                    has_else = 1;
+                    else_at = o;
+                    cursor = cursor + 4;
+                    break;
+                }
+            }
+        }
+        buf_set(if_then, o, peek_byte(cursor));
+        o = o + 1;
+        cursor = cursor + 1;
+    }
+    buf_set(if_then, o, 0);
+    if (has_else) {
+        while (else_at > 0 && buf_get(if_then, else_at - 1) == ' ') {
+            else_at = else_at - 1;
+        }
+        buf_set(if_then, else_at, 0);
+        skip_spaces();
+        o = 0;
+        while (peek_byte(cursor) != 0 && o < 80) {
+            buf_set(if_else, o, peek_byte(cursor));
+            o = o + 1;
+            cursor = cursor + 1;
+        }
+        buf_set(if_else, o, 0);
+    } else {
+        buf_set(if_else, 0, 0);
+    }
+    if (take_then) {
+        if (buf_get(if_then, 0) != 0) {
+            str_copy(cmd, if_then, LINE_MAX);
+            dispatch();
+        }
+    } else {
+        if (buf_get(if_else, 0) != 0) {
+            str_copy(cmd, if_else, LINE_MAX);
+            dispatch();
+        }
+    }
+}
+
 void do_if(void)
 {
     int target;
@@ -1587,11 +1844,7 @@ void do_if(void)
             target = target * 10 + buf_get(arg1, i) - '0';
             i = i + 1;
         }
-        if (last_errorlevel >= target) {
-            skip_spaces();
-            str_copy(cmd, buf_addr(cmd, cursor - buf_addr(cmd, 0)), LINE_MAX);
-            dispatch();
-        }
+        if_run_tail(last_errorlevel >= target);
         return;
     }
     negate = 0;
@@ -1606,17 +1859,9 @@ void do_if(void)
         h = dos_open(arg1, 0);
         if (h != -1) {
             dos_close(h);
-            if (!exists) {
-                skip_spaces();
-                str_copy(cmd, buf_addr(cmd, cursor - buf_addr(cmd, 0)), LINE_MAX);
-                dispatch();
-            }
+            if_run_tail(!exists);
         } else {
-            if (exists) {
-                skip_spaces();
-                str_copy(cmd, buf_addr(cmd, cursor - buf_addr(cmd, 0)), LINE_MAX);
-                dispatch();
-            }
+            if_run_tail(exists);
         }
         return;
     }
@@ -1674,17 +1919,9 @@ void do_if(void)
     }
     eq = str_eq(left, right);
     if (negate) {
-        if (!eq) {
-            skip_spaces();
-            str_copy(cmd, buf_addr(cmd, cursor - buf_addr(cmd, 0)), LINE_MAX);
-            dispatch();
-        }
+        if_run_tail(!eq);
     } else {
-        if (eq) {
-            skip_spaces();
-            str_copy(cmd, buf_addr(cmd, cursor - buf_addr(cmd, 0)), LINE_MAX);
-            dispatch();
-        }
+        if_run_tail(eq);
     }
 }
 
@@ -1777,7 +2014,7 @@ void dispatch_plain(void)
     }
     if (str_eq(prog, "DIR")) { do_dir(); return; }
     if (str_eq(prog, "TYPE")) { do_type(); return; }
-    if (str_eq(prog, "COPY")) { do_copy(); return; }
+    /* COPY falls through to PATH exec of BIN\COPY.COM */
     if (str_eq(prog, "DEL") || str_eq(prog, "ERASE")) {
         if (next_token(arg1, PATH_MAX) && dos_delete(arg1) == 0) {
             print_dollar("deleted\r\n$");
@@ -1874,10 +2111,11 @@ void dispatch_plain(void)
     if (str_eq(prog, "IF")) { do_if(); return; }
     if (str_eq(prog, "CALL")) {
         if (next_token(arg1, PATH_MAX)) {
-            push_batch_args();
-            collect_batch_args();
-            do_batch(arg1);
-            pop_batch_args();
+            if (push_batch_args()) {
+                collect_batch_args();
+                do_batch(arg1);
+                pop_batch_args();
+            }
         }
         return;
     }
@@ -1889,10 +2127,11 @@ void dispatch_plain(void)
         return;
     }
     if (str_has(prog, '.') && str_eq(buf_addr(prog, str_len(prog) - 4), ".BAT")) {
-        push_batch_args();
-        collect_batch_args();
-        do_batch(prog);
-        pop_batch_args();
+        if (push_batch_args()) {
+            collect_batch_args();
+            do_batch(prog);
+            pop_batch_args();
+        }
         return;
     }
     str_copy(prog_base, prog, PATH_MAX);
@@ -1938,81 +2177,119 @@ void dispatch_plain(void)
     }
 }
 
+int make_pipe_temp(void)
+{
+    int tries;
+    int n;
+    int h;
+    tries = 0;
+    while (tries < 10000) {
+        n = pipe_seq;
+        pipe_seq = pipe_seq + 1;
+        if (pipe_seq >= 10000) pipe_seq = 0;
+        buf_set(pipe_tmp, 0, dos_current_drive() + 'A');
+        buf_set(pipe_tmp, 1, ':');
+        buf_set(pipe_tmp, 2, '\\');
+        buf_set(pipe_tmp, 3, 'P');
+        buf_set(pipe_tmp, 4, 'I');
+        buf_set(pipe_tmp, 5, 'P');
+        buf_set(pipe_tmp, 6, 'E');
+        buf_set(pipe_tmp, 7, ((n / 1000) % 10) + '0');
+        buf_set(pipe_tmp, 8, ((n / 100) % 10) + '0');
+        buf_set(pipe_tmp, 9, ((n / 10) % 10) + '0');
+        buf_set(pipe_tmp, 10, (n % 10) + '0');
+        buf_set(pipe_tmp, 11, '.');
+        buf_set(pipe_tmp, 12, '$');
+        buf_set(pipe_tmp, 13, '$');
+        buf_set(pipe_tmp, 14, 0);
+        h = dos_create_new(pipe_tmp, 0);
+        if (h != -1) return h;
+        tries = tries + 1;
+    }
+    return -1;
+}
+
 int run_pipe(void)
 {
     int i;
     int h;
-    int drive;
-    int first;
-    first = 1;
+    int input_active;
+    int pipe_saved_in;
+    int pipe_saved_out;
     i = 0;
     while (buf_get(cmd, i) != 0 && buf_get(cmd, i) != '|') i = i + 1;
     if (buf_get(cmd, i) == 0) return 0;
-
-    drive = dos_current_drive();
-    buf_set(pipe_tmp, 0, drive + 'A');
-    buf_set(pipe_tmp, 1, ':');
-    buf_set(pipe_tmp, 2, '\\');
-    buf_set(pipe_tmp, 3, 'P');
-    buf_set(pipe_tmp, 4, 'I');
-    buf_set(pipe_tmp, 5, 'P');
-    buf_set(pipe_tmp, 6, 'E');
-    buf_set(pipe_tmp, 7, '.');
-    buf_set(pipe_tmp, 8, '$');
-    buf_set(pipe_tmp, 9, '$');
-    buf_set(pipe_tmp, 10, '$');
-    buf_set(pipe_tmp, 11, 0);
-
+    input_active = 0;
+    pipe_saved_in = -1;
     while (1) {
         i = 0;
         while (buf_get(cmd, i) != 0 && buf_get(cmd, i) != '|') i = i + 1;
-        if (buf_get(cmd, i) == '|') {
-            buf_set(cmd, i, 0);
-            str_copy(pipe_rhs, buf_addr(cmd, i + 1), LINE_MAX);
-        } else {
-            /* Final segment: already have stdin from prior temp if !first */
+        if (buf_get(cmd, i) == 0) {
             parse_redirection();
             if (setup_redirection()) {
                 dispatch_plain();
                 restore_redirection();
             }
-            if (!first) {
-                dos_force_dup(saved_stdin, 0);
-                dos_close(saved_stdin);
-                dos_delete(pipe_tmp);
+            if (input_active) {
+                dos_force_dup(pipe_saved_in, 0);
+                dos_close(pipe_saved_in);
+                dos_delete(pipe_input);
             }
             return 1;
         }
-        h = dos_create(pipe_tmp, 0);
-        if (h == -1) return 1;
-        saved_stdout = dos_dup(1);
-        if (saved_stdout != -1) {
-            dos_force_dup(h, 1);
-            parse_redirection();
-            if (setup_redirection()) {
-                dispatch_plain();
-                restore_redirection();
+        buf_set(cmd, i, 0);
+        str_copy(pipe_rhs, buf_addr(cmd, i + 1), LINE_MAX);
+        h = make_pipe_temp();
+        if (h == -1) {
+            if (input_active) {
+                dos_force_dup(pipe_saved_in, 0);
+                dos_close(pipe_saved_in);
+                dos_delete(pipe_input);
             }
-            dos_force_dup(saved_stdout, 1);
-            dos_close(saved_stdout);
+            return 1;
         }
+        pipe_saved_out = dos_dup(1);
+        if (pipe_saved_out == -1) {
+            dos_close(h);
+            dos_delete(pipe_tmp);
+            if (input_active) {
+                dos_force_dup(pipe_saved_in, 0);
+                dos_close(pipe_saved_in);
+                dos_delete(pipe_input);
+            }
+            return 1;
+        }
+        dos_force_dup(h, 1);
+        parse_redirection();
+        if (setup_redirection()) {
+            dispatch_plain();
+            restore_redirection();
+        }
+        dos_force_dup(pipe_saved_out, 1);
+        dos_close(pipe_saved_out);
         dos_close(h);
-        if (!first) {
-            dos_force_dup(saved_stdin, 0);
-            dos_close(saved_stdin);
+        if (input_active) {
+            dos_force_dup(pipe_saved_in, 0);
+            dos_close(pipe_saved_in);
+            dos_delete(pipe_input);
+            input_active = 0;
         }
         h = dos_open(pipe_tmp, 0);
         if (h == -1) {
             dos_delete(pipe_tmp);
             return 1;
         }
-        saved_stdin = dos_dup(0);
-        if (saved_stdin != -1) {
-            dos_force_dup(h, 0);
+        pipe_saved_in = dos_dup(0);
+        if (pipe_saved_in == -1) {
+            dos_close(h);
+            dos_delete(pipe_tmp);
+            return 1;
         }
+        dos_force_dup(h, 0);
         dos_close(h);
+        str_copy(pipe_input, pipe_tmp, 16);
+        input_active = 1;
         str_copy(cmd, pipe_rhs, LINE_MAX);
-        first = 0;
     }
 }
 

@@ -177,6 +177,14 @@ _start:
     int 0x21
     pop es
     jc fail_fcb
+    cmp word ptr [country_buf + 21], 0
+    je fail_fcb
+    cmp word ptr [country_buf + 23], 0
+    je fail_fcb
+    mov al, 'q'
+    call dword ptr [country_buf + 21]
+    cmp al, 'q'
+    jne fail_fcb
 
     mov ah, 0x09
     lea dx, [msg_fcb]
@@ -418,27 +426,39 @@ _start:
     jmp fail_ioctl
 .t_ioctl03b:
 
-    /* AL=04/05 char IOCTL stub success on CON */
+    /* AL=04/05 control channels are unsupported: CF + AX=1. */
     mov ax, 0x4404
     mov bx, 1
     int 0x21
-    jnc .t_ioctl04
+    jc .t_ioctl04
     jmp fail_ioctl
 .t_ioctl04:
-    test ax, ax
-    jz .t_ioctl04z
+    cmp ax, 1
+    je .t_ioctl04z
     jmp fail_ioctl
 .t_ioctl04z:
     mov ax, 0x4405
     mov bx, 1
     int 0x21
-    jnc .t_ioctl05
+    jc .t_ioctl05
     jmp fail_ioctl
 .t_ioctl05:
-    test ax, ax
-    jz .t_ioctl05z
+    cmp ax, 1
+    je .t_ioctl05z
     jmp fail_ioctl
 .t_ioctl05z:
+
+    /* AL=0Dh generic block IOCTL is also unsupported. */
+    mov ax, 0x440D
+    xor bx, bx
+    int 0x21
+    jc .t_ioctl0d
+    jmp fail_ioctl
+.t_ioctl0d:
+    cmp ax, 1
+    je .t_ioctl0dz
+    jmp fail_ioctl
+.t_ioctl0dz:
 
     /* AL=02 char read from NUL */
     mov ax, 0x3D00
@@ -1158,6 +1178,30 @@ _start:
     cmp ax, 1
     jne .x_stub_fail
 
+    /* AH=5Dh/5Eh/5Fh networking/server surfaces are not installed. */
+    mov ax, 0x5D00
+    int 0x21
+    jnc .x_stub_fail
+    cmp ax, 1
+    jne .x_stub_fail
+    mov ax, 0x5E00
+    int 0x21
+    jnc .x_stub_fail
+    cmp ax, 1
+    jne .x_stub_fail
+    mov ax, 0x5F00
+    int 0x21
+    jnc .x_stub_fail
+    cmp ax, 1
+    jne .x_stub_fail
+
+    /* AH=65h only supports AL=01 extended country information. */
+    mov ax, 0x6502
+    int 0x21
+    jnc .x_stub_fail
+    cmp ax, 1
+    jne .x_stub_fail
+
     /* VERIFY flag-only: set ON then get */
     mov ax, 0x2E01
     int 0x21
@@ -1173,9 +1217,14 @@ _start:
     int 0x21
     jnc .x_stub_fail
 
-    /* LoL LASTDRIVE byte (default images keep 8) */
+    /* BUFFERS= is parsed, but rmDOS exposes no DOS buffer-chain pointer. */
     mov ah, 0x52
     int 0x21
+    cmp word ptr es:[bx + 0x12], 0
+    jne .x_stub_fail
+    cmp word ptr es:[bx + 0x14], 0
+    jne .x_stub_fail
+    /* LoL LASTDRIVE byte (default images keep 8) */
     mov al, es:[bx + 0x21]
     cmp al, 8
     jb .x_stub_fail

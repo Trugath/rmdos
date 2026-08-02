@@ -1055,9 +1055,9 @@ dos_ah62:
 dos_ah65:
     cmp al, 1
     je .a65_get
-    mov al, 0xFF
-    clc
-    jmp int21_iret
+    mov ax, 1
+    stc
+    jmp int21_iret_cf
 .a65_get:
     push cx
     push si

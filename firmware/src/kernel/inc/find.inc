@@ -354,12 +354,15 @@ find_search:
     jz .fs_skip
     jmp .fs_cmp
 .fs_after_vol:
-
+    /*
+     * Classic DOS: H(02)+S(04)+D(10) bits on the file must be a subset
+     * of the search attribute. R/O and Archive are ignored.
+     */
     mov al, cs:[si + 11]
+    and al, 0x16
     mov ah, es:[di + 5]
-    test ah, 0x10
-    jnz .fs_cmp
-    test al, 0x10
+    not ah
+    and al, ah
     jnz .fs_skip
 
 .fs_cmp:

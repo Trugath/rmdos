@@ -1124,9 +1124,9 @@ dos_ah44:
     cmp al, 3
     je .a44_char_wr
     cmp al, 4
-    je .a44_ctl_ok
+    je .a44_bad
     cmp al, 5
-    je .a44_ctl_ok
+    je .a44_bad
     cmp al, 6
     je .a44_instat
     cmp al, 7
@@ -1134,7 +1134,7 @@ dos_ah44:
     cmp al, 8
     je .a44_remov
     cmp al, 0x0D
-    je .a44_block
+    je .a44_bad
     jmp .a44_bad
 
 .a44_getinfo:
@@ -1319,12 +1319,6 @@ dos_ah44:
     stc
     jmp int21_iret_cf
 
-/* AL=04/05 — control channel block/char stub: success AX=0 */
-.a44_ctl_ok:
-    xor ax, ax
-    clc
-    jmp int21_iret
-
 /* AL=06 — get input status: AL=FF ready / 00 not */
 .a44_instat:
     mov al, 0xFF
@@ -1355,12 +1349,6 @@ dos_ah44:
     mov al, 1
 .a44_rm_ok:
     pop bx
-    clc
-    jmp int21_iret
-
-/* AL=0D — block generic IOCTL stub: succeed with no-op */
-.a44_block:
-    xor ax, ax
     clc
     jmp int21_iret
 

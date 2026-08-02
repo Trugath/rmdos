@@ -3,7 +3,7 @@
 
 static char src[64];
 static char dst[64];
-static char one[2];
+static char buf[512];
 static char msg_ok[12] = "COPYV OK\r\n$";
 static char msg_copied[10] = "copied\r\n$";
 static char msg_err[15] = "COPY failed\r\n$";
@@ -41,7 +41,9 @@ int main(void)
     int hin;
     int hout;
     int n;
+    int i;
     int c;
+    int done;
 
     opt_v = 0;
     opt_a = 0;
@@ -93,15 +95,24 @@ int main(void)
         print_dollar(msg_err);
         return 1;
     }
-    while (1) {
-        n = dos_read(hin, one, 1);
+    done = 0;
+    while (!done) {
+        n = dos_read(hin, buf, 512);
         if (n == 0 || n == -1) {
             break;
         }
-        if (opt_a && buf_get(one, 0) == 26) {
-            break;
+        if (opt_a) {
+            i = 0;
+            while (i < n) {
+                if (buf_get(buf, i) == 26) {
+                    n = i;
+                    done = 1;
+                    break;
+                }
+                i = i + 1;
+            }
         }
-        if (dos_write(hout, one, 1) == -1) {
+        if (n > 0 && dos_write(hout, buf, n) == -1) {
             break;
         }
     }

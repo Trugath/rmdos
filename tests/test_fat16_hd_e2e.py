@@ -139,6 +139,8 @@ def test_fat16_partition_io_and_boot() -> None:
             _wait_serial(proc, ("FAT16IO OK", "Format complete"), timeout=300.0)
         finally:
             terminate_emulator(proc)
+        # Allow host disk image flush after forced emulator teardown.
+        time.sleep(0.5)
 
         image = hd.read_bytes()
         assert image[510:512] == b"\x55\xaa"

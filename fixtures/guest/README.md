@@ -21,6 +21,7 @@
 | `AUTOEXEC.DIR.BAT` | `DIR` / `DIR BIN` for `os-dir.img` |
 | `AUTOEXEC.FORMAT.BAT` | `BIN\FORMAT A: /S /Y` for `os-format.img` |
 | `AUTOEXEC.FORMAT.HD.BAT` | `BIN\FORMAT C: /Y` then `DIR C:` for `os-format-hd.img` |
+| `AUTOEXEC.SYS.BAT` | Partition + format + `SYS C:` transfer for the SYS boot e2e |
 | `AUTOEXEC.FAT16.HD.BAT` | PARTEDIT + `FORMAT C: /S` + multi-cluster/subdir I/O for `os-fat16-hd.img` |
 | `AUTOEXEC.PARTEDIT.BAT` | `PARTEDIT /CREATE` + `/LIST` then `FORMAT C: /S /Y` for partitioned-HD e2e |
 | `AUTOEXEC.MULTILET.BAT` | Two primaries → `FORMAT C:`/`D:` lettering gate |
@@ -56,9 +57,12 @@ A:\
 Optional `CONFIG.SYS` (not on default images) can `INSTALL=` `BIN\NET.COM` for a
 resident NE2000 stack, or `DEVICE=` `BIN\ANSI.SYS` for ANSI CON filtering.
 
-`FORMAT [d:] [/S] [/Y]` builds a FAT12 or FAT16 filesystem from INT 13h geometry
-(floppy or HDD up to 128 MB), optionally installing a bootable rmDOS system
-(`/S`). Drive letters follow A:/B: floppies then DOS primaries and extended
+`FORMAT [d:] [/S] [/Y] [/V[:label]] [/F:720] [/1] [/4]` builds a FAT12 or FAT16
+filesystem from INT 13h geometry (floppy or HDD up to 128 MB), optionally
+installing a bootable rmDOS system (`/S`). `SYS [d:]` copies `KERNEL.SYS` and
+`COMMAND.COM` and installs boot metadata on an rmDOS-formatted filesystem
+(FORMAT reserves the RFAT sector even without `/S`). Drive letters follow A:/B:
+floppies then DOS primaries and extended
 logicals on each HD (`80h`…). `PARTEDIT` (`/CREATE` `/CREATEEXT` `/CREATELOG`
 `/LIST`) edits primary and extended/logical partitions; FORMAT targets the
 letter’s volume. Without a DOS partition table, FORMAT retains its whole-disk

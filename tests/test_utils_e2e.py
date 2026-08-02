@@ -27,8 +27,10 @@ MARKERS = (
     "DEBUG OK",
     "MODE OK",
     "CON cols=",
-    "LPT1:=COM1 ok",
+    "Redirect not supported",
+    "REDIRECT FAIL OK",
     "COPYV OK",
+    "ERLVL OK",
     "UTILS2 OK",
 )
 

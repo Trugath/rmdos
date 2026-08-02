@@ -84,6 +84,7 @@ DBG_SCR := fixtures/guest/DBG.SCR
 BIG_TXT := fixtures/guest/BIG.TXT
 SHIFT_BAT := fixtures/guest/SHIFT.BAT
 CALLTST_BAT := fixtures/guest/CALLTST.BAT
+CALLTST2_BAT := fixtures/guest/CALLTST2.BAT
 EMPTY_AUTOEXEC := fixtures/guest/AUTOEXEC.BAT
 
 HELLO_EXE := $(BUILD_DIR)/hello.exe
@@ -172,7 +173,7 @@ FD_IMG := emulator/k8086/disks/fd.img
 
 K8086_ROMS_DIR := emulator/k8086/roms
 
-.PHONY: all bios os os-disk.img bios-tests clean run run-fd run-elite setup test test-fd-img test-dos-compat test-ping test-dhcp test-telnet test-net test-star test-bigexe test-elite test-dir test-format test-format-hd test-fat16-hd test-partedit-hd test-multilet-hd test-extpart-hd test-subst test-batch test-disk test-gzip test-utils test-diskcopy test-diskcomp test-ansi test-stubcfg test-install-hd install-roms install-floppy
+.PHONY: all bios os os-disk.img bios-tests clean run run-fd run-elite setup test test-fd-img test-dos-compat test-ping test-dhcp test-telnet test-net test-star test-bigexe test-elite test-dir test-format test-format-options test-sys test-format-hd test-fat16-hd test-partedit-hd test-multilet-hd test-extpart-hd test-subst test-batch test-disk test-gzip test-utils test-diskcopy test-diskcomp test-ansi test-stubcfg test-install-hd install-roms install-floppy
 
 all: bios os
 
@@ -479,7 +480,7 @@ $(EXTPART_HD_IMAGE): $(OS_IMAGE_COMMON_DEPS) $(EXTPART_HD_AUTOEXEC)
 $(SUBST_IMAGE): $(OS_IMAGE_COMMON_DEPS) $(SUBST_AUTOEXEC)
 	$(call PACK_OS_IMAGE,$@,$(SUBST_AUTOEXEC))
 
-$(BATCH_IMAGE): $(OS_IMAGE_COMMON_DEPS) $(BATCH_AUTOEXEC) $(CALLTST_BAT)
+$(BATCH_IMAGE): $(OS_IMAGE_COMMON_DEPS) $(BATCH_AUTOEXEC) $(CALLTST_BAT) $(CALLTST2_BAT)
 	$(PYTHON) -m scripts.mkfs_fat12 --output $@ --boot $(BOOT_BIN) --kernel $(KERNEL_BIN) \
 		--file COMMAND.COM=$(COMMAND_COM) \
 		--file INSTALL.BAT=$(INSTALL_BAT) \
@@ -526,6 +527,7 @@ $(BATCH_IMAGE): $(OS_IMAGE_COMMON_DEPS) $(BATCH_AUTOEXEC) $(CALLTST_BAT)
 		--file TEST/BIG.TXT=$(BIG_TXT) \
 		--file SHIFT.BAT=$(SHIFT_BAT) \
 		--file CALLTST.BAT=$(CALLTST_BAT) \
+		--file CALLTST2.BAT=$(CALLTST2_BAT) \
 		--file AUTOEXEC.BAT=$(BATCH_AUTOEXEC)
 
 $(DISK_IMAGE): $(OS_IMAGE_COMMON_DEPS) $(DISK_AUTOEXEC)
@@ -604,6 +606,8 @@ test: all bios-tests $(COMPAT_IMAGE) $(PING_IMAGE) $(DHCP_IMAGE) $(TELNET_IMAGE)
 	$(PYTHON) -m tests.test_bigexe_e2e
 	$(PYTHON) -m tests.test_dir_e2e
 	$(PYTHON) -m tests.test_format_e2e
+	$(PYTHON) -m tests.test_format_options_e2e
+	$(PYTHON) -m tests.test_sys_e2e
 	$(PYTHON) -m tests.test_format_hd_e2e
 	$(PYTHON) -m tests.test_fat16_hd_e2e
 	$(PYTHON) -m tests.test_partedit_hd_e2e
@@ -653,6 +657,12 @@ test-dir: $(DIR_IMAGE)
 
 test-format: $(FORMAT_IMAGE)
 	$(PYTHON) -m tests.test_format_e2e
+
+test-format-options: all
+	$(PYTHON) -m tests.test_format_options_e2e
+
+test-sys: all
+	$(PYTHON) -m tests.test_sys_e2e
 
 test-format-hd: $(FORMAT_HD_IMAGE)
 	$(PYTHON) -m tests.test_format_hd_e2e

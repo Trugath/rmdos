@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "firmware" / "build"
 SERIAL = BUILD / "serial.log"
 IMAGE = BUILD / "os-stubcfg.img"
-MARKERS = ("CONFIG: ignored", "STUBCFG OK")
+MARKERS = ("COM1 set: 9600,N,8,1", "CONFIG: ignored", "STUBCFG OK")
 
 
 def test_stubcfg_e2e() -> None:

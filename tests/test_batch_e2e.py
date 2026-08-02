@@ -23,6 +23,7 @@ MARKERS = (
     "rmDOS DOS 3.31",
     "PROMPT OK",
     "Current date is",
+    "Current time is",
     "VERIFY is ON",
     "ONE",
     "TWO",
@@ -43,6 +44,13 @@ MARKERS = (
     "ENVEXP OK",
     "ECHOCTL OK",
     "CALLARG OK",
+    "IFELSE OK",
+    "CALL2 OK",
+    "PIPEUNIQ OK",
+    "Volume in drive C",
+    "VOLC OK",
+    "1A",
+    "FORNEST OK",
     "BATCH OK",
 )
 
@@ -51,6 +59,7 @@ def test_batch_on_image() -> None:
     raw = IMAGE.read_bytes()
     entry = fat12.find_directory_entry(raw, "AUTOEXEC.BAT")
     assert entry.size_bytes >= 20
+    assert fat12.find_directory_entry(raw, "CALLTST2.BAT").size_bytes > 0
 
 
 def test_batch_e2e() -> None:
