@@ -325,43 +325,42 @@ load_device_sys:
     jc .lds_fail
     mov word ptr cs:[com_handle], bx
 
-    push cs
-    pop ds
-    mov ah, 0x3F
-    mov bx, word ptr [com_handle]
-    mov cx, SYS_MAX
-    lea dx, [com_buf]
-    int 0x21
+    call exec_file_size
     jc .lds_fail_close
-    mov word ptr [com_size], ax
+    test dx, dx
+    jnz .lds_fail_close
     test ax, ax
     jz .lds_fail_close
-
-    mov ah, 0x3E
-    mov bx, word ptr [com_handle]
-    int 0x21
+    cmp ax, SYS_MAX
+    ja .lds_fail_close
+    mov word ptr cs:[com_size], ax
+    mov word ptr cs:[img_bytes_lo], ax
+    mov word ptr cs:[img_bytes_hi], 0
 
     /* paragraphs = ceil(size/16) */
-    mov ax, word ptr [com_size]
     add ax, 15
     mov cl, 4
     shr ax, cl
     mov bx, ax
     mov ah, 0x48
     int 0x21
-    jc .lds_fail
+    jc .lds_fail_close
     mov word ptr [psp_run], ax
 
-    /* copy image to alloc:0000 */
-    mov es, ax
+    mov bx, word ptr cs:[com_handle]
+    mov ax, 0x4200
+    xor cx, cx
+    xor dx, dx
+    int 0x21
+    jc .lds_stream_fail
+    mov es, word ptr [psp_run]
     xor di, di
-    lea si, [com_buf]
-    mov cx, word ptr [com_size]
-    push ds
-    push cs
-    pop ds
-    rep movsb
-    pop ds
+    call stream_file_to_esdi
+    jc .lds_stream_fail
+
+    mov ah, 0x3E
+    mov bx, word ptr [com_handle]
+    int 0x21
 
     /* link at chain head: driver.next = old chain; chain = driver */
     mov es, word ptr [psp_run]
@@ -429,6 +428,14 @@ load_device_sys:
     clc
     jmp .lds_done
 
+.lds_stream_fail:
+    mov ah, 0x3E
+    mov bx, word ptr cs:[com_handle]
+    int 0x21
+    mov es, word ptr cs:[psp_run]
+    mov ah, 0x49
+    int 0x21
+    jmp .lds_fail
 .lds_fail_close:
     mov ah, 0x3E
     mov bx, word ptr cs:[com_handle]

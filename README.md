@@ -67,7 +67,18 @@ make test-dos-compat
 make test-fd-img    # k8086 disks/fd.img → A:> on rmDOS U18/U19
 make test-ping      # PING.COM → virtual gateway (DE-220 NIC)
 make test-dhcp      # DHCP.COM → virtual DHCP lease (DE-220 NIC)
+make test-bigexe    # ~75 KiB MZ streaming EXEC gate
 make run-fd         # interactive disks/fd.img on our ROMs
+```
+
+### Elite (optional)
+
+Drop 1987 CGA `ELITE.EXE` into [`fixtures/guest/elite/`](fixtures/guest/elite/)
+(see that README; binaries are gitignored), then:
+
+```bash
+make run-elite      # lean floppy, CGA window, nonturbo realtime
+make test-elite     # headless load smoke (skips if no binary)
 ```
 
 Built `u18.bin` / `u19.bin` install into `emulator/k8086/roms/` as the emulator

@@ -532,8 +532,9 @@ dos_ah3f:
 
     mov ax, word ptr cs:[xfer_cnt]
     add bp, ax
-    add word ptr es:[si + 8], ax
-    adc word ptr es:[si + 10], 0
+    /* Handle table lives in CS; do not use caller's ES (may be load seg). */
+    add word ptr cs:[si + 8], ax
+    adc word ptr cs:[si + 10], 0
     jmp .a3f_loop
 
 .a3f_file_done:

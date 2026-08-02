@@ -10,7 +10,8 @@
  */
 
 .equ PSP_SIZE, 0x0100
-.equ COM_MAX, 0x7000
+.equ EXE_HDR_MAX, 0x800
+.equ COM_LOAD_MAX, 0xFE00
 .equ COM_NEST_MAX, 4
 
 /*
@@ -38,54 +39,11 @@ load_and_run_com:
     jmp .lrc_fail
 .lrc_depth_ok:
 
-    mov ds, word ptr cs:[path_seg]
-    mov dx, word ptr cs:[path_off]
-    mov ah, 0x3D
-    xor al, al
-    int 0x21
-    jnc .lrc_opened
-    mov byte ptr cs:[com_err], 1
-    jmp .lrc_fail
-.lrc_opened:
+    call exec_load_image
+    jc .lrc_fail
+
     push cs
     pop ds
-    mov word ptr [com_handle], bx
-
-    mov ah, 0x3F
-    mov bx, word ptr [com_handle]
-    mov cx, COM_MAX
-    lea dx, [com_buf]
-    int 0x21
-    jnc .lrc_read_ok
-    mov byte ptr [com_err], 2
-    jmp .lrc_fail_close
-.lrc_read_ok:
-    mov word ptr [com_size], ax
-    test ax, ax
-    jnz .lrc_got_bytes
-    mov byte ptr [com_err], 3
-    jmp .lrc_fail_close
-.lrc_got_bytes:
-
-    mov ah, 0x3E
-    mov bx, word ptr [com_handle]
-    int 0x21
-
-    /* Detect MZ */
-    cmp word ptr [com_buf], 0x5A4D
-    je .lrc_exe
-    cmp word ptr [com_buf], 0x4D5A
-    je .lrc_exe
-    jmp .lrc_com
-
-.lrc_exe:
-    call load_setup_exe
-    jc .lrc_fail
-    jmp .lrc_go
-
-.lrc_com:
-    call load_setup_com
-    jc .lrc_fail
 
 .lrc_go:
     call psp_fill_common
@@ -126,14 +84,466 @@ load_and_run_com:
     push word ptr cs:[exe_ip]
     retf
 
-.lrc_fail_close:
-    mov ah, 0x3E
-    mov bx, word ptr cs:[com_handle]
-    int 0x21
 .lrc_fail:
     mov byte ptr cs:[exec_pb_valid], 0
     stc
     pop ds
+    pop es
+    pop di
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+/*
+ * Open path_seg:path_off, stream COM/MZ into an AH=48 block, close handle.
+ * OUT: CF set on failure (com_err set). psp_run / exe_* filled on success.
+ */
+exec_load_image:
+    push ax
+    push bx
+    push cx
+    push dx
+    push si
+    push di
+    push es
+    push ds
+
+    mov ds, word ptr cs:[path_seg]
+    mov dx, word ptr cs:[path_off]
+    mov ah, 0x3D
+    xor al, al
+    int 0x21
+    jnc .eli_opened
+    mov byte ptr cs:[com_err], 1
+    jmp .eli_fail
+.eli_opened:
+    push cs
+    pop ds
+    mov word ptr [com_handle], bx
+
+    mov ah, 0x3F
+    mov bx, word ptr [com_handle]
+    mov cx, EXE_HDR_MAX
+    lea dx, [exe_hdr]
+    int 0x21
+    jnc .eli_hdr_ok
+    mov byte ptr [com_err], 2
+    jmp .eli_fail_close
+.eli_hdr_ok:
+    mov word ptr [exe_hdr_len], ax
+    test ax, ax
+    jnz .eli_got_hdr
+    mov byte ptr [com_err], 3
+    jmp .eli_fail_close
+.eli_got_hdr:
+
+    cmp word ptr [exe_hdr], 0x5A4D
+    je .eli_exe
+    cmp word ptr [exe_hdr], 0x4D5A
+    je .eli_exe
+    call load_setup_com
+    jmp .eli_after_setup
+.eli_exe:
+    call load_setup_exe
+.eli_after_setup:
+    pushf
+    mov ah, 0x3E
+    mov bx, word ptr cs:[com_handle]
+    int 0x21
+    popf
+    jc .eli_fail
+    clc
+    jmp .eli_done
+.eli_fail_close:
+    mov ah, 0x3E
+    mov bx, word ptr cs:[com_handle]
+    int 0x21
+.eli_fail:
+    stc
+.eli_done:
+    pop ds
+    pop es
+    pop di
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+/*
+ * Stream CS:img_bytes_lo/hi bytes from com_handle into ES:DI.
+ * Advances ES when a segment fills. CF set on short read / I/O error.
+ */
+stream_file_to_esdi:
+    push ax
+    push bx
+    push cx
+    push dx
+    push si
+    push ds
+.sfe_loop:
+    mov ax, word ptr cs:[img_bytes_lo]
+    mov dx, word ptr cs:[img_bytes_hi]
+    mov bx, ax
+    or bx, dx
+    jz .sfe_ok
+
+    /* chunk = min(0x8000, bytes left in ES segment from DI, remaining) */
+    mov cx, 0x8000
+    mov bx, di
+    neg bx                       /* 10000h - DI when DI≠0; 0 when DI=0 */
+    jz .sfe_full_seg
+    cmp bx, cx
+    jae .sfe_have_chunk
+    mov cx, bx
+    jmp .sfe_have_chunk
+.sfe_full_seg:
+    /* DI=0 → full 64K window; still cap at 32K per AH=3F */
+    mov cx, 0x8000
+.sfe_have_chunk:
+    test dx, dx
+    jnz .sfe_do_read
+    cmp cx, ax
+    jbe .sfe_do_read
+    mov cx, ax
+.sfe_do_read:
+    push es
+    pop ds
+    mov dx, di
+    mov bx, word ptr cs:[com_handle]
+    mov ah, 0x3F
+    int 0x21
+    jc .sfe_fail
+    cmp ax, cx
+    jne .sfe_fail
+    add di, ax
+    pushf
+    sub word ptr cs:[img_bytes_lo], ax
+    sbb word ptr cs:[img_bytes_hi], 0
+    popf
+    jnc .sfe_loop                /* DI did not wrap */
+    mov ax, es
+    add ax, 0x1000               /* +64K */
+    mov es, ax
+    xor di, di
+    jmp .sfe_loop
+.sfe_ok:
+    clc
+    jmp .sfe_done
+.sfe_fail:
+    stc
+.sfe_done:
+    pop ds
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+/*
+ * File size via AH=42 mode 2 into DX:AX; restores position to 0.
+ * CF set on seek error.
+ */
+exec_file_size:
+    push bx
+    push cx
+    mov bx, word ptr cs:[com_handle]
+    mov ax, 0x4202
+    xor cx, cx
+    xor dx, dx
+    int 0x21
+    jc .efs_fail
+    push ax
+    push dx
+    mov bx, word ptr cs:[com_handle]
+    mov ax, 0x4200
+    xor cx, cx
+    xor dx, dx
+    int 0x21
+    pop dx
+    pop ax
+.efs_fail:
+    pop cx
+    pop bx
+    ret
+
+/*
+ * Setup COM: allocate PSP + image + 8KiB stack; stream from open handle.
+ */
+load_setup_com:
+    push ax
+    push bx
+    push cx
+    push dx
+    push si
+    push di
+    push es
+
+    call exec_file_size
+    jc .lsc_fail
+    test dx, dx
+    jnz .lsc_fail                /* >64K */
+    cmp ax, COM_LOAD_MAX
+    ja .lsc_fail
+    test ax, ax
+    jz .lsc_fail
+    mov word ptr cs:[com_size], ax
+    mov word ptr cs:[img_bytes_lo], ax
+    mov word ptr cs:[img_bytes_hi], 0
+
+    /* paragraphs = 0x10 (PSP) + ceil(com_size/16) + 0x200 (8K stack) */
+    add ax, 15
+    mov cl, 4
+    shr ax, cl
+    add ax, 0x10
+    add ax, 0x200
+    mov bx, ax
+    mov ah, 0x48
+    int 0x21
+    jnc .lsc_got
+    mov bx, 0xFFFF
+    mov ah, 0x48
+    int 0x21
+    mov ah, 0x48
+    int 0x21
+    jc .lsc_fail
+.lsc_got:
+    mov word ptr [psp_run], ax
+    mov word ptr [exe_cs], ax
+    mov word ptr [exe_ip], 0x0100
+
+    push ax
+    dec ax
+    mov es, ax
+    mov bx, es:[3]
+    pop ax
+    mov cx, bx
+    add bx, ax
+    mov es, ax
+
+    xor di, di
+    push cx
+    mov cx, PSP_SIZE
+    xor al, al
+    rep stosb
+    pop cx
+    mov byte ptr es:[0x00], 0xCD
+    mov byte ptr es:[0x01], 0x20
+    mov word ptr es:[0x02], bx
+
+    mov bx, cx
+    mov cl, 4
+    shl bx, cl
+    sub bx, 2
+    mov word ptr [exe_sp], bx
+    mov ax, word ptr [psp_run]
+    mov word ptr [exe_ss], ax
+
+    /* Seek to SOF and stream into PSP:0100 */
+    mov bx, word ptr cs:[com_handle]
+    mov ax, 0x4200
+    xor cx, cx
+    xor dx, dx
+    int 0x21
+    jc .lsc_fail_free
+    mov es, word ptr [psp_run]
+    mov di, 0x0100
+    call stream_file_to_esdi
+    jc .lsc_fail_free
+    clc
+    jmp .lsc_done
+.lsc_fail_free:
+    mov es, word ptr cs:[psp_run]
+    mov ah, 0x49
+    int 0x21
+.lsc_fail:
+    stc
+.lsc_done:
+    pop es
+    pop di
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+/*
+ * Setup MZ EXE: parse exe_hdr, alloc, seek past header, stream image, relocate.
+ */
+load_setup_exe:
+    push ax
+    push bx
+    push cx
+    push dx
+    push si
+    push di
+    push es
+    push bp
+
+    lea si, [exe_hdr]
+    /* header bytes = header_paras << 4 */
+    mov ax, cs:[si + 8]
+    mov cl, 4
+    shl ax, cl
+    mov bp, ax                   /* BP = header bytes */
+    cmp ax, EXE_HDR_MAX
+    ja .lse_fail                 /* header (w/ relocs) must fit scratch */
+    cmp ax, word ptr cs:[exe_hdr_len]
+    ja .lse_fail                 /* short header read */
+
+    /* file image bytes = pages*512 - (last? 512-last : 0)  — use DX:AX */
+    mov ax, cs:[si + 4]          /* pages */
+    mov bx, 512
+    mul bx                       /* DX:AX = pages*512 */
+    mov bx, cs:[si + 2]          /* bytes in last page */
+    test bx, bx
+    jz .lse_full
+    sub ax, 512
+    sbb dx, 0
+    add ax, bx
+    adc dx, 0
+.lse_full:
+    /* image bytes = file_image - header */
+    sub ax, bp
+    sbb dx, 0
+    jc .lse_fail
+    mov word ptr cs:[img_bytes_lo], ax
+    mov word ptr cs:[img_bytes_hi], dx
+    mov word ptr cs:[com_size], ax   /* low word for legacy readers */
+
+    /* base_paras = ceil(image_bytes/16) + 16 */
+    push ax
+    push dx
+    add ax, 15
+    adc dx, 0
+    /* DX:AX >> 4 → image paragraphs in AX (Elite ~4629 paras; fits 16-bit) */
+    mov cx, 4
+.lse_shr4:
+    shr dx, 1
+    rcr ax, 1
+    loop .lse_shr4
+    test dx, dx
+    jnz .lse_fail_pop            /* image paras > 64K (impossible for real-mode EXE) */
+    add ax, 16
+    jc .lse_fail_pop
+    mov bx, ax                   /* BX = base paras */
+    mov word ptr cs:[saved_psp_tmp], ax  /* reuse as base scratch */
+    pop dx
+    pop ax
+    mov dx, bx                   /* DX = base paras */
+
+    mov ax, cs:[si + 0x0C]       /* maxalloc */
+    cmp ax, 0xFFFF
+    je .lse_want_all
+    add bx, ax
+    jc .lse_want_all
+    jmp .lse_try_alloc
+.lse_want_all:
+    mov bx, 0xFFFF
+.lse_try_alloc:
+    mov ah, 0x48
+    int 0x21
+    jnc .lse_got_mem
+    mov ax, cs:[si + 0x0A]       /* minalloc */
+    add ax, dx
+    jc .lse_fail
+    cmp bx, ax
+    jb .lse_fail
+    mov ah, 0x48
+    int 0x21
+    jc .lse_fail
+.lse_got_mem:
+    mov word ptr [psp_run], ax
+
+    push ax
+    dec ax
+    mov es, ax
+    mov bx, es:[3]
+    pop ax
+    add bx, ax
+
+    mov es, ax
+    xor di, di
+    mov cx, PSP_SIZE
+    xor al, al
+    rep stosb
+    mov byte ptr es:[0], 0xCD
+    mov byte ptr es:[1], 0x20
+    mov word ptr es:[2], bx
+
+    /* Seek to load image and stream to PSP+10:0000 */
+    mov bx, word ptr cs:[com_handle]
+    mov ax, 0x4200
+    xor cx, cx
+    mov dx, bp                   /* header bytes — fits in 16-bit for our cap */
+    int 0x21
+    jc .lse_fail_free
+
+    mov ax, word ptr [psp_run]
+    add ax, 0x10
+    mov es, ax
+    xor di, di
+    call stream_file_to_esdi
+    jc .lse_fail_free
+
+    /* Relocations from exe_hdr */
+    push cs
+    pop ds
+    lea si, [exe_hdr]
+    mov cx, cs:[si + 6]
+    mov bx, cs:[si + 0x18]
+    lea si, [exe_hdr]
+    add si, bx
+    mov dx, es                   /* load segment = PSP+10 — but ES may have advanced!
+                                  * Reload load seg from psp_run+10. */
+    mov ax, word ptr cs:[psp_run]
+    add ax, 0x10
+    mov dx, ax
+.lse_rel:
+    jcxz .lse_rel_done
+    mov di, cs:[si]
+    mov ax, cs:[si + 2]
+    add ax, dx
+    push es
+    mov es, ax
+    add word ptr es:[di], dx
+    pop es
+    add si, 4
+    dec cx
+    jmp .lse_rel
+.lse_rel_done:
+
+    lea si, [exe_hdr]
+    mov ax, cs:[si + 0x16]
+    add ax, dx
+    mov word ptr [exe_cs], ax
+    mov ax, cs:[si + 0x14]
+    mov word ptr [exe_ip], ax
+    mov ax, cs:[si + 0x0E]
+    add ax, dx
+    mov word ptr [exe_ss], ax
+    mov ax, cs:[si + 0x10]
+    mov word ptr [exe_sp], ax
+    clc
+    jmp .lse_done
+.lse_fail_pop:
+    pop dx
+    pop ax
+    jmp .lse_fail
+.lse_fail_free:
+    mov es, word ptr cs:[psp_run]
+    mov ah, 0x49
+    int 0x21
+.lse_fail:
+    stc
+.lse_done:
+    pop bp
     pop es
     pop di
     pop si
@@ -415,231 +825,6 @@ build_env_block:
     pop bx
     ret
 
-/*
- * Setup COM: allocate PSP + image + 8KiB stack (not a full 64KiB arena) so
- * nested tools like FORMAT /S can still AH=48 system files. SP is set to the
- * top of the actual block.
- */
-load_setup_com:
-    push ax
-    push bx
-    push cx
-    push dx
-    push si
-    push di
-    push es
-
-    /* paragraphs = 0x10 (PSP) + ceil(com_size/16) + 0x200 (8K stack) */
-    mov ax, word ptr [com_size]
-    add ax, 15
-    mov cl, 4
-    shr ax, cl
-    add ax, 0x10
-    add ax, 0x200
-    mov bx, ax
-    mov ah, 0x48
-    int 0x21
-    jnc .lsc_got
-    /* Fall back to largest free block. */
-    mov bx, 0xFFFF
-    mov ah, 0x48
-    int 0x21
-    mov ah, 0x48
-    int 0x21
-    jc .lsc_fail
-.lsc_got:
-    mov word ptr [psp_run], ax
-    mov word ptr [exe_cs], ax
-    mov word ptr [exe_ip], 0x0100
-
-    /* Read MCB size → mem top + SP */
-    push ax
-    dec ax
-    mov es, ax
-    mov bx, es:[3]
-    pop ax
-    mov cx, bx                   /* save paragraphs in CX */
-    add bx, ax                   /* mem top paragraph */
-    mov es, ax
-
-    xor di, di
-    push cx
-    mov cx, PSP_SIZE
-    xor al, al
-    rep stosb
-    pop cx
-    mov byte ptr es:[0x00], 0xCD
-    mov byte ptr es:[0x01], 0x20
-    mov word ptr es:[0x02], bx
-
-    /* SP = paragraphs*16 - 2 (always inside block; <= FFFE for <=64K) */
-    mov bx, cx
-    mov cl, 4
-    shl bx, cl
-    sub bx, 2
-    mov word ptr [exe_sp], bx
-    mov ax, word ptr [psp_run]
-    mov word ptr [exe_ss], ax
-
-    mov es, ax
-    mov cx, word ptr [com_size]
-    lea si, [com_buf]
-    mov di, 0x0100
-    push ds
-    push cs
-    pop ds
-    rep movsb
-    pop ds
-    clc
-    jmp .lsc_done
-.lsc_fail:
-    stc
-.lsc_done:
-    pop es
-    pop di
-    pop si
-    pop dx
-    pop cx
-    pop bx
-    pop ax
-    ret
-
-/*
- * Setup MZ EXE from com_buf / com_size.
- */
-load_setup_exe:
-    push ax
-    push bx
-    push cx
-    push dx
-    push si
-    push di
-    push es
-    push bp
-
-    lea si, [com_buf]
-    mov ax, cs:[si + 8]
-    mov cl, 4
-    shl ax, cl
-    mov bp, ax
-    mov ax, cs:[si + 4]
-    mov bx, 512
-    mul bx
-    mov bx, cs:[si + 2]
-    test bx, bx
-    jz .lse_full
-    sub ax, 512
-    add ax, bx
-.lse_full:
-    sub ax, bp
-    mov word ptr [com_size], ax
-
-    /* Base = image paragraphs + PSP (16). */
-    mov bx, ax
-    add bx, 15
-    mov cl, 4
-    shr bx, cl
-    add bx, 16
-    mov dx, bx                   /* DX = base paras */
-    mov ax, cs:[si + 0x0C]       /* maxalloc */
-    cmp ax, 0xFFFF
-    je .lse_want_all
-    add bx, ax                   /* base + maxalloc */
-    jmp .lse_try_alloc
-.lse_want_all:
-    mov bx, 0xFFFF
-.lse_try_alloc:
-    mov ah, 0x48
-    int 0x21
-    jnc .lse_got_mem
-    /* Largest free in BX; require base + minalloc. */
-    mov ax, cs:[si + 0x0A]
-    add ax, dx
-    cmp bx, ax
-    jb .lse_fail
-    mov ah, 0x48
-    int 0x21
-    jc .lse_fail
-.lse_got_mem:
-    mov word ptr [psp_run], ax
-
-    /* PSP mem top from actual MCB size */
-    push ax
-    dec ax
-    mov es, ax
-    mov bx, es:[3]
-    pop ax
-    add bx, ax
-
-    mov es, ax
-    xor di, di
-    mov cx, PSP_SIZE
-    xor al, al
-    rep stosb
-    mov byte ptr es:[0], 0xCD
-    mov byte ptr es:[1], 0x20
-    mov word ptr es:[2], bx
-
-    mov ax, word ptr [psp_run]
-    add ax, 0x10
-    mov es, ax
-    lea si, [com_buf]
-    add si, bp
-    xor di, di
-    mov cx, word ptr [com_size]
-    push ds
-    push cs
-    pop ds
-    rep movsb
-    pop ds
-
-    push cs
-    pop ds
-    lea si, [com_buf]
-    mov cx, cs:[si + 6]
-    mov bx, cs:[si + 0x18]
-    lea si, [com_buf]
-    add si, bx
-    mov dx, es
-.lse_rel:
-    jcxz .lse_rel_done
-    mov di, cs:[si]
-    mov ax, cs:[si + 2]
-    add ax, dx
-    push es
-    mov es, ax
-    add word ptr es:[di], dx
-    pop es
-    add si, 4
-    dec cx
-    jmp .lse_rel
-.lse_rel_done:
-
-    lea si, [com_buf]
-    mov ax, cs:[si + 0x16]
-    add ax, dx
-    mov word ptr [exe_cs], ax
-    mov ax, cs:[si + 0x14]
-    mov word ptr [exe_ip], ax
-    mov ax, cs:[si + 0x0E]
-    add ax, dx
-    mov word ptr [exe_ss], ax
-    mov ax, cs:[si + 0x10]
-    mov word ptr [exe_sp], ax
-    clc
-    jmp .lse_done
-.lse_fail:
-    stc
-.lse_done:
-    pop bp
-    pop es
-    pop di
-    pop si
-    pop dx
-    pop cx
-    pop bx
-    pop ax
-    ret
 
 com_resume_kernel:
     cli
@@ -861,6 +1046,7 @@ dos_ah4b:
     push dx
     push si
     push di
+    push bp
     push es
     push ds
     mov word ptr cs:[path_off], dx
@@ -876,33 +1062,82 @@ dos_ah4b:
     int 0x21
     jc .a4b_ovl_fail
     mov word ptr cs:[com_handle], bx
-    mov ah, 0x3F
-    mov cx, COM_MAX
     push cs
     pop ds
-    lea dx, [com_buf]
+    mov ah, 0x3F
+    mov bx, word ptr [com_handle]
+    mov cx, EXE_HDR_MAX
+    lea dx, [exe_hdr]
     int 0x21
     jc .a4b_ovl_fail_cl
-    mov word ptr cs:[com_size], ax
+    mov word ptr [exe_hdr_len], ax
+    test ax, ax
+    jz .a4b_ovl_fail_cl
+
+    cmp word ptr [exe_hdr], 0x5A4D
+    je .a4b_ovl_mz
+    cmp word ptr [exe_hdr], 0x4D5A
+    je .a4b_ovl_mz
+
+    /* COM/raw overlay: stream entire file to load seg */
+    call exec_file_size
+    jc .a4b_ovl_fail_cl
+    mov word ptr cs:[img_bytes_lo], ax
+    mov word ptr cs:[img_bytes_hi], dx
+    mov bx, word ptr cs:[com_handle]
+    mov ax, 0x4200
+    xor cx, cx
+    xor dx, dx
+    int 0x21
+    jc .a4b_ovl_fail_cl
+    mov es, word ptr cs:[ovl_load_seg]
+    xor di, di
+    call stream_file_to_esdi
+    jc .a4b_ovl_fail_cl
+    jmp .a4b_ovl_close_ok
+
+.a4b_ovl_mz:
+    lea si, [exe_hdr]
+    mov ax, cs:[si + 8]
+    mov cl, 4
+    shl ax, cl
+    mov bp, ax
+    cmp ax, EXE_HDR_MAX
+    ja .a4b_ovl_fail_cl
+    mov ax, cs:[si + 4]
+    mov bx, 512
+    mul bx
+    mov bx, cs:[si + 2]
+    test bx, bx
+    jz .a4b_ovl_full
+    sub ax, 512
+    sbb dx, 0
+    add ax, bx
+    adc dx, 0
+.a4b_ovl_full:
+    sub ax, bp
+    sbb dx, 0
+    jc .a4b_ovl_fail_cl
+    mov word ptr cs:[img_bytes_lo], ax
+    mov word ptr cs:[img_bytes_hi], dx
+    mov bx, word ptr cs:[com_handle]
+    mov ax, 0x4200
+    xor cx, cx
+    mov dx, bp
+    int 0x21
+    jc .a4b_ovl_fail_cl
+    mov es, word ptr cs:[ovl_load_seg]
+    xor di, di
+    call stream_file_to_esdi
+    jc .a4b_ovl_fail_cl
+    call overlay_apply_relocs
+.a4b_ovl_close_ok:
     mov ah, 0x3E
     mov bx, word ptr cs:[com_handle]
     int 0x21
-    mov es, word ptr cs:[ovl_load_seg]
-    xor di, di
-    push cs
-    pop ds
-    lea si, [com_buf]
-    mov cx, word ptr [com_size]
-    rep movsb
-    cmp word ptr cs:[com_buf], 0x5A4D
-    je .a4b_ovl_mz
-    cmp word ptr cs:[com_buf], 0x4D5A
-    jne .a4b_ovl_ok
-.a4b_ovl_mz:
-    call overlay_apply_relocs
-.a4b_ovl_ok:
     pop ds
     pop es
+    pop bp
     pop di
     pop si
     pop dx
@@ -919,6 +1154,7 @@ dos_ah4b:
 .a4b_ovl_fail:
     pop ds
     pop es
+    pop bp
     pop di
     pop si
     pop dx
@@ -935,34 +1171,7 @@ dos_ah4b:
     mov byte ptr cs:[exec_pb_valid], 1
     mov word ptr cs:[path_off], dx
     mov word ptr cs:[path_seg], ds
-    mov ds, word ptr cs:[path_seg]
-    mov dx, word ptr cs:[path_off]
-    mov ah, 0x3D
-    xor al, al
-    int 0x21
-    jc .a4b_fail
-    mov word ptr cs:[com_handle], bx
-    push cs
-    pop ds
-    mov ah, 0x3F
-    mov bx, word ptr [com_handle]
-    mov cx, COM_MAX
-    lea dx, [com_buf]
-    int 0x21
-    jc .a4b_lne_cl
-    mov word ptr [com_size], ax
-    mov ah, 0x3E
-    mov bx, word ptr [com_handle]
-    int 0x21
-    cmp word ptr [com_buf], 0x5A4D
-    je .a4b_lne_exe
-    cmp word ptr [com_buf], 0x4D5A
-    je .a4b_lne_exe
-    call load_setup_com
-    jc .a4b_fail
-    jmp .a4b_lne_fill
-.a4b_lne_exe:
-    call load_setup_exe
+    call exec_load_image
     jc .a4b_fail
 .a4b_lne_fill:
     /* fill PSP; restore parent current_psp after EPB write */
@@ -985,11 +1194,6 @@ dos_ah4b:
     xor ax, ax
     clc
     jmp int21_iret
-.a4b_lne_cl:
-    mov ah, 0x3E
-    mov bx, word ptr cs:[com_handle]
-    int 0x21
-    jmp .a4b_fail
 
 .a4b_load:
     /* save param block ES:BX */
@@ -1034,10 +1238,10 @@ overlay_apply_relocs:
     push es
     push cs
     pop ds
-    mov bx, word ptr [com_buf + 0x18]   /* reloc table offset */
-    mov cx, word ptr [com_buf + 0x06]   /* reloc count */
+    mov bx, word ptr [exe_hdr + 0x18]   /* reloc table offset */
+    mov cx, word ptr [exe_hdr + 0x06]   /* reloc count */
     jcxz .oar_done
-    lea si, [com_buf]
+    lea si, [exe_hdr]
     add si, bx
     mov dx, word ptr [ovl_reloc]
 .oar_loop:

@@ -256,7 +256,7 @@ dos_indos:
     .byte 0
 dos_alloc_strategy:
     .word 0
-/* Minimal DPB for AH=32 probes (drive letter filled at call). */
+/* Minimal DPB for AH=1F/32 (filled live from BPB; +00 drive 0=A). */
 dos_dpb:
     .byte 1                      /* +00 drive number */
     .byte 0                      /* +01 unit */
@@ -488,6 +488,12 @@ kernel_stack_top:
 
 com_size:
     .word 0
+img_bytes_lo:
+    .word 0
+img_bytes_hi:
+    .word 0
+exe_hdr_len:
+    .word 0
 exe_cs:
     .word 0
 exe_ip:
@@ -551,8 +557,10 @@ dev_con_hdr:
     .ascii "CON     "
 dev_con_hdr_end:
 
+/* MZ/COM header scratch for streaming EXEC (not a full-file buffer). */
+exe_hdr:
 com_buf:
-    .space 0x7000, 0
+    .space 0x800, 0
 
 fat_buf:
     .space 1024, 0

@@ -131,7 +131,7 @@ DOS 3.3-ish real-mode kernel and shell, aimed at programs that run on an
 | Layer | Location | Role |
 |-------|----------|------|
 | Boot | `firmware/src/boot/` | Sector 0 + RFAT1 chain to `KERNEL.SYS` |
-| Kernel | `firmware/src/kernel/` | INT 20h/21h, FAT12/FAT16 (≤40 MB), MCB memory, `.COM` / MZ `.EXE` loader |
+| Kernel | `firmware/src/kernel/` | INT 20h/21h, FAT12/FAT16 (≤40 MB), MCB memory, streaming `.COM` / MZ `.EXE` loader |
 | Shell / tools | `firmware/src/dos/` | `COMMAND.COM` and userland tools (see C vs asm below) |
 
 ### C vs assembly in userland
@@ -154,9 +154,13 @@ flush+dispatch), FCB open/close/create/delete/rename/seq+random I/O/find/parse
 (AH=0Fh–17h/21h–22h/27h–29h), handle create/open/read/write/seek/delete,
 temp create (AH=5Ah/5Bh), file lock stub (AH=5Ch), truename (AH=60h),
 find-first/next, MCB alloc/free/resize (including grow), EXEC (AH=4Bh AL=0
-load+run, AL=1 load-only, AL=3 overlay), handle dup (AH=45h/46h), file datetime
+load+run, AL=1 load-only, AL=3 overlay — streams from disk into the AH=48
+block with a small MZ header scratch, so EXEs larger than the old ~28 KiB
+`com_buf` work), handle dup (AH=45h/46h), file datetime
 (AH=57h), PSP create/get/set (AH=26h/50h/51h/55h/62h), get DTA (AH=2Fh),
-allocation info (AH=1Bh/1Ch), SysVars (AH=52h), extended error (AH=59h),
+allocation info (AH=1Bh/1Ch; AH=1Ch honors DL), DPB get (AH=1Fh/32h from live
+BPB for any mapped drive), SysVars (AH=52h), extended error (AH=59h),
+AUX/PRN (handles 3/4; AH=03/04/05 via INT 14h/17h),
 IOCTL get/set info + input/output status (AH=44h AL=00/01/06/07/08/0Dh),
 handle count get/set (AH=67h), INT 25h/26h absolute disk, INT 2Fh install-check
 stubs (DOS AH=12, SHARE, PRINT, APPEND, XMS; Windows AX=1600 absent), vectors

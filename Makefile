@@ -85,6 +85,17 @@ SHIFT_BAT := fixtures/guest/SHIFT.BAT
 EMPTY_AUTOEXEC := fixtures/guest/AUTOEXEC.BAT
 
 HELLO_EXE := $(BUILD_DIR)/hello.exe
+BIGEXE_SRC := $(SRC_DIR)/dos/bigexe.s
+BIGEXE_OBJ := $(BUILD_DIR)/bigexe.o
+BIGEXE_ELF := $(BUILD_DIR)/bigexe.elf
+BIGEXE_COM := $(BUILD_DIR)/bigexe.com
+BIGEXE_EXE := $(BUILD_DIR)/bigexe.exe
+BIGEXE_IMAGE := $(BUILD_DIR)/os-bigexe.img
+BIGEXE_AUTOEXEC := fixtures/guest/AUTOEXEC.BIGEXE.BAT
+ELITE_DIR := fixtures/guest/elite
+ELITE_EXE := $(ELITE_DIR)/ELITE.EXE
+ELITE_AUTOEXEC := fixtures/guest/AUTOEXEC.ELITE.BAT
+ELITE_IMAGE := $(BUILD_DIR)/os-elite.img
 
 IMAGE := $(BUILD_DIR)/os.img
 COMPAT_IMAGE := $(BUILD_DIR)/os-compat.img
@@ -152,7 +163,7 @@ FD_IMG := emulator/k8086/disks/fd.img
 
 K8086_ROMS_DIR := emulator/k8086/roms
 
-.PHONY: all bios os os-disk.img bios-tests clean run run-fd setup test test-fd-img test-dos-compat test-ping test-dhcp test-telnet test-net test-star test-dir test-format test-format-hd test-fat16-hd test-partedit-hd test-multilet-hd test-batch test-disk test-gzip test-utils test-diskcopy test-diskcomp test-ansi test-install-hd install-roms install-floppy
+.PHONY: all bios os os-disk.img bios-tests clean run run-fd run-elite setup test test-fd-img test-dos-compat test-ping test-dhcp test-telnet test-net test-star test-bigexe test-elite test-dir test-format test-format-hd test-fat16-hd test-partedit-hd test-multilet-hd test-batch test-disk test-gzip test-utils test-diskcopy test-diskcomp test-ansi test-install-hd install-roms install-floppy
 
 all: bios os
 
@@ -271,6 +282,31 @@ $(STAR_COM): $(STAR_ELF)
 
 $(HELLO_EXE): $(HELLO_COM) scripts/pack_mz.py
 	$(PYTHON) scripts/pack_mz.py --com $(HELLO_COM) --out $@
+
+$(BIGEXE_OBJ): $(BIGEXE_SRC) | $(BUILD_DIR)
+	$(AS8086) --32 -o $@ $(BIGEXE_SRC)
+
+$(BIGEXE_ELF): $(BIGEXE_OBJ) $(LINK_DIR)/com.ld
+	$(LD) -m elf_i386 -T $(LINK_DIR)/com.ld -o $@ $<
+
+$(BIGEXE_COM): $(BIGEXE_ELF)
+	$(OBJCOPY) -O binary $< $@
+
+$(BIGEXE_EXE): $(BIGEXE_COM) scripts/pack_mz.py
+	$(PYTHON) scripts/pack_mz.py --com $(BIGEXE_COM) --out $@ --min-size 75000
+
+$(BIGEXE_IMAGE): $(BOOT_BIN) $(KERNEL_BIN) $(COMMAND_COM) $(BIGEXE_EXE) $(BIGEXE_AUTOEXEC) scripts/mkfs_fat12.py
+	$(PYTHON) -m scripts.mkfs_fat12 --output $@ --boot $(BOOT_BIN) --kernel $(KERNEL_BIN) \
+		--file COMMAND.COM=$(COMMAND_COM) \
+		--file DEMO/BIGEXE.EXE=$(BIGEXE_EXE) \
+		--file AUTOEXEC.BAT=$(BIGEXE_AUTOEXEC)
+
+# Lean Elite image — only built when fixtures/guest/elite/ELITE.EXE is present.
+$(ELITE_IMAGE): $(BOOT_BIN) $(KERNEL_BIN) $(COMMAND_COM) $(ELITE_AUTOEXEC) $(ELITE_EXE) scripts/mkfs_fat12.py
+	$(PYTHON) -m scripts.mkfs_fat12 --output $@ --boot $(BOOT_BIN) --kernel $(KERNEL_BIN) \
+		--file COMMAND.COM=$(COMMAND_COM) \
+		--file ELITE.EXE=$(ELITE_EXE) \
+		--file AUTOEXEC.BAT=$(ELITE_AUTOEXEC)
 
 $(BOOT_OBJ): $(BOOT_SRC) | $(BUILD_DIR)
 	$(AS8086) --32 -o $@ $(BOOT_SRC)
@@ -481,10 +517,14 @@ run: all
 run-fd: bios $(FD_IMG)
 	./scripts/run-k8086.sh --display cga --turbo --image $(CURDIR)/$(FD_IMG)
 
+# Nonturbo CGA boot of lean Elite floppy (requires fixtures/guest/elite/ELITE.EXE).
+run-elite: bios $(ELITE_IMAGE)
+	./scripts/run-k8086.sh --display cga --image $(CURDIR)/$(ELITE_IMAGE)
+
 setup:
 	./setup.sh
 
-test: all bios-tests $(COMPAT_IMAGE) $(PING_IMAGE) $(DHCP_IMAGE) $(TELNET_IMAGE) $(NET_IMAGE) $(STAR_IMAGE) $(DIR_IMAGE) $(FORMAT_IMAGE) $(FORMAT_HD_IMAGE) $(FAT16_HD_IMAGE) $(PARTEDIT_HD_IMAGE) $(MULTILET_HD_IMAGE) $(BATCH_IMAGE) $(DISK_IMAGE) $(GZIP_IMAGE) $(UTILS_IMAGE) $(DISKCOPY_IMAGE) $(DISKCOMP_IMAGE) $(ANSI_IMAGE) $(INSTALL_IMAGE)
+test: all bios-tests $(COMPAT_IMAGE) $(PING_IMAGE) $(DHCP_IMAGE) $(TELNET_IMAGE) $(NET_IMAGE) $(STAR_IMAGE) $(BIGEXE_IMAGE) $(DIR_IMAGE) $(FORMAT_IMAGE) $(FORMAT_HD_IMAGE) $(FAT16_HD_IMAGE) $(PARTEDIT_HD_IMAGE) $(MULTILET_HD_IMAGE) $(BATCH_IMAGE) $(DISK_IMAGE) $(GZIP_IMAGE) $(UTILS_IMAGE) $(DISKCOPY_IMAGE) $(DISKCOMP_IMAGE) $(ANSI_IMAGE) $(INSTALL_IMAGE)
 	$(PYTHON) -m tests.test_wcc
 	$(PYTHON) -m tests.test_bios_roms
 	$(PYTHON) -m tests.test_bios_services
@@ -495,6 +535,7 @@ test: all bios-tests $(COMPAT_IMAGE) $(PING_IMAGE) $(DHCP_IMAGE) $(TELNET_IMAGE)
 	$(PYTHON) -m tests.test_telnet_e2e
 	$(PYTHON) -m tests.test_net_resident_e2e
 	$(PYTHON) -m tests.test_star_e2e
+	$(PYTHON) -m tests.test_bigexe_e2e
 	$(PYTHON) -m tests.test_dir_e2e
 	$(PYTHON) -m tests.test_format_e2e
 	$(PYTHON) -m tests.test_format_hd_e2e
@@ -528,6 +569,15 @@ test-net: $(NET_IMAGE)
 
 test-star: $(STAR_IMAGE)
 	$(PYTHON) -m tests.test_star_e2e
+
+test-bigexe: $(BIGEXE_IMAGE)
+	$(PYTHON) -m tests.test_bigexe_e2e
+
+# Optional: requires fixtures/guest/elite/ELITE.EXE (gitignored).
+test-elite: bios
+	@if [ ! -f "$(ELITE_EXE)" ]; then echo "test-elite: SKIP (no $(ELITE_EXE))"; exit 0; fi
+	$(MAKE) $(ELITE_IMAGE)
+	$(PYTHON) -m tests.test_elite_e2e
 
 test-dir: $(DIR_IMAGE)
 	$(PYTHON) -m tests.test_dir_e2e

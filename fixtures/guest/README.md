@@ -16,6 +16,8 @@
 | `CONFIG.ANSI.SYS` | `DEVICE=A:\BIN\ANSI.SYS` for CON CSI filter (`os-ansi.img`) |
 | `AUTOEXEC.ANSI.BAT` | `DEMO\ANSITST` + `PROMPT $e…` gate for `os-ansi.img` |
 | `AUTOEXEC.STAR.BAT` | `DEMO\STAR` for `os-star.img` |
+| `AUTOEXEC.BIGEXE.BAT` | `DEMO\BIGEXE.EXE` streaming MZ gate (`os-bigexe.img`) |
+| `AUTOEXEC.ELITE.BAT` | `ELITE` for lean `os-elite.img` (see `fixtures/guest/elite/`) |
 | `AUTOEXEC.DIR.BAT` | `DIR` / `DIR BIN` for `os-dir.img` |
 | `AUTOEXEC.FORMAT.BAT` | `BIN\FORMAT A: /S /Y` for `os-format.img` |
 | `AUTOEXEC.FORMAT.HD.BAT` | `BIN\FORMAT C: /Y` then `DIR C:` for `os-format-hd.img` |
