@@ -1671,98 +1671,161 @@ speaker_beep:
     ret
 
 /*
- * Scroll helpers.
+ * Scroll helpers (bulk regen moves).
  * IN: AL=lines (0=clear window), BH=fill attr,
  *     CH/CL = upper-left row/col, DH/DL = lower-right row/col
  * Clobbers AX,BX,CX,DX,SI,DI,ES.
+ *
+ * Locals: [bp-2]=AX, [bp-4]=BX, [bp-6]=CX, [bp-8]=DX,
+ *         [bp-10]=height, [bp-12]=cols, [bp-14]=bytes/row,
+ *         [bp-16]=width words, [bp-18]=page base, [bp-20]=lines.
  */
 video_scroll_up:
     push bp
     mov bp, sp
-    sub sp, 10
-    mov [bp - 2], ax            /* AL = lines */
-    mov [bp - 4], bx            /* BH = attr */
-    mov [bp - 6], cx            /* CH/CL UL */
-    mov [bp - 8], dx            /* DH/DL LR */
-
-    mov ax, CGA_SEG
-    mov es, ax
-
-    /* height = DH - CH + 1 → [bp-10] */
-    mov al, [bp - 7]            /* DH */
-    sub al, [bp - 5]            /* CH */
-    inc al
-    xor ah, ah
-    mov [bp - 10], ax
+    sub sp, 20
+    push ds
+    mov [bp - 2], ax
+    mov [bp - 4], bx
+    mov [bp - 6], cx
+    mov [bp - 8], dx
+    call video_scroll_setup
+    jc .vsu_done
 
     mov al, [bp - 2]            /* lines */
     test al, al
     jz .vsu_fill
-    cmp al, [bp - 10]
+    cmp al, [bp - 10]           /* vs height */
     jae .vsu_fill
+    xor ah, ah
+    mov [bp - 20], ax           /* lines as word */
 
-    /* copy upward: dest_row from CH to DH-lines */
-    mov dh, [bp - 5]            /* dest row = CH */
-.vsu_copy:
+    /* Full-width? CL==0 && DL==cols-1 */
+    cmp byte ptr [bp - 6], 0    /* CL */
+    jne .vsu_rows
+    mov al, [bp - 12]           /* cols */
+    dec al
+    cmp al, [bp - 8]            /* DL */
+    jne .vsu_rows
+
+    /* Block move: dest=CH, src=CH+lines, count=(height-lines)*cols words */
+    mov ax, CGA_SEG
+    mov ds, ax
+    mov es, ax
+    cld
+    mov al, [bp - 5]            /* CH */
+    xor ah, ah
+    mul word ptr [bp - 14]      /* * bytes/row */
+    add ax, [bp - 18]           /* + page base */
+    mov di, ax
+    mov ax, [bp - 20]           /* lines */
+    mul word ptr [bp - 14]
+    mov si, di
+    add si, ax                  /* src = dest + lines*bpr */
+    mov ax, [bp - 10]           /* height */
+    sub ax, [bp - 20]           /* - lines */
+    mul word ptr [bp - 12]      /* * cols → words */
+    mov cx, ax
+    test cx, cx
+    jz .vsu_fw_fill
+    rep movsw
+.vsu_fw_fill:
+    /* Blank bottom `lines` rows as one stosw band */
     mov al, [bp - 7]            /* DH */
-    sub al, [bp - 2]            /* lines */
+    xor ah, ah
+    inc ax
+    sub ax, [bp - 20]           /* first blank row = DH-lines+1 */
+    mul word ptr [bp - 14]
+    add ax, [bp - 18]
+    mov di, ax
+    mov ah, [bp - 3]            /* BH attr */
+    mov al, ' '
+    mov cx, [bp - 20]
+    push ax
+    mov ax, cx
+    mul word ptr [bp - 12]
+    mov cx, ax
+    pop ax
+    test cx, cx
+    jz .vsu_done
+    rep stosw
+    jmp .vsu_done
+
+.vsu_rows:
+    /* Per-row movsw: dest_row CH .. DH-lines */
+    mov ax, CGA_SEG
+    mov ds, ax
+    mov es, ax
+    cld
+    mov dh, [bp - 5]            /* dest row */
+.vsu_row:
+    mov al, [bp - 7]            /* DH */
+    sub al, [bp - 20]           /* lines */
     cmp dh, al
     ja .vsu_fill_bot
-    mov ah, dh
-    add ah, [bp - 2]            /* src row */
-    mov dl, [bp - 6]            /* col = CL */
-.vsu_copy_col:
-    cmp dl, [bp - 8]
-    ja .vsu_copy_next
+    /* MUL clobbers DX — keep dest row across offset math */
     push dx
-    mov dh, ah                  /* read from src row */
-    call cursor_to_offset
-    mov bx, es:[di]
-    pop dx
-    push ax
+    mov al, dh
+    xor ah, ah
+    mul word ptr [bp - 14]
+    add ax, [bp - 18]
+    mov bl, [bp - 6]            /* CL */
+    xor bh, bh
+    shl bx, 1
+    add ax, bx
+    mov di, ax
+    pop dx                      /* DH = dest row */
     push dx
-    call cursor_to_offset
+    mov al, dh
+    xor ah, ah
+    add ax, [bp - 20]
+    mul word ptr [bp - 14]
+    add ax, [bp - 18]
+    add ax, bx
+    mov si, ax
     pop dx
-    pop ax
-    mov es:[di], bx
-    inc dl
-    jmp .vsu_copy_col
-.vsu_copy_next:
+    mov cx, [bp - 16]
+    rep movsw
     inc dh
-    jmp .vsu_copy
+    jmp .vsu_row
 
 .vsu_fill_bot:
-    /* fill bottom `lines` rows: rows (DH-lines+1) .. DH */
     mov dh, [bp - 7]
-    sub dh, [bp - 2]
-    inc dh
+    sub dh, [bp - 20]
+    inc dh                      /* DH-lines+1 */
     jmp .vsu_fill_from
 
 .vsu_fill:
     mov dh, [bp - 5]            /* from CH */
 .vsu_fill_from:
-    mov bh, [bp - 3]            /* attr */
-    mov ah, bh
+    mov ax, CGA_SEG
+    mov es, ax
+    cld
+    mov ah, [bp - 3]            /* BH attr */
     mov al, ' '
 .vsu_fill_row:
     cmp dh, [bp - 7]
     ja .vsu_done
-    mov dl, [bp - 6]
-.vsu_fill_col:
-    cmp dl, [bp - 8]
-    ja .vsu_fill_next
     push ax
-    push dx
-    call cursor_to_offset
+    push dx                     /* preserve row in DH across MUL */
+    mov al, dh
+    xor ah, ah
+    mul word ptr [bp - 14]
+    add ax, [bp - 18]
+    mov bl, [bp - 6]
+    xor bh, bh
+    shl bx, 1
+    add ax, bx
+    mov di, ax
     pop dx
     pop ax
-    mov es:[di], ax
-    inc dl
-    jmp .vsu_fill_col
-.vsu_fill_next:
+    mov cx, [bp - 16]
+    rep stosw
     inc dh
     jmp .vsu_fill_row
+
 .vsu_done:
+    pop ds
     mov sp, bp
     pop bp
     ret
@@ -1770,91 +1833,192 @@ video_scroll_up:
 video_scroll_dn:
     push bp
     mov bp, sp
-    sub sp, 10
+    sub sp, 20
+    push ds
     mov [bp - 2], ax
     mov [bp - 4], bx
     mov [bp - 6], cx
     mov [bp - 8], dx
-    mov ax, CGA_SEG
-    mov es, ax
-
-    mov al, [bp - 7]
-    sub al, [bp - 5]
-    inc al
-    xor ah, ah
-    mov [bp - 10], ax
+    call video_scroll_setup
+    jc .vsd_done
 
     mov al, [bp - 2]
     test al, al
     jz .vsd_fill
     cmp al, [bp - 10]
     jae .vsd_fill
+    xor ah, ah
+    mov [bp - 20], ax
 
-    /* copy downward: dest_row from DH down to CH+lines */
-    mov dh, [bp - 7]
-.vsd_copy:
-    mov al, [bp - 5]
-    add al, [bp - 2]
+    cmp byte ptr [bp - 6], 0
+    jne .vsd_rows
+    mov al, [bp - 12]
+    dec al
+    cmp al, [bp - 8]
+    jne .vsd_rows
+
+    /* Full-width down: src below dest in address? Content moves down —
+     * dest = CH+lines, src = CH. Overlap → copy high-to-low with STD. */
+    mov ax, CGA_SEG
+    mov ds, ax
+    mov es, ax
+    mov al, [bp - 5]            /* CH */
+    xor ah, ah
+    mul word ptr [bp - 14]
+    add ax, [bp - 18]
+    mov si, ax                  /* src start */
+    mov ax, [bp - 20]
+    mul word ptr [bp - 14]
+    mov di, si
+    add di, ax                  /* dest = src + lines*bpr */
+    mov ax, [bp - 10]
+    sub ax, [bp - 20]
+    mul word ptr [bp - 12]      /* words to move */
+    mov cx, ax
+    test cx, cx
+    jz .vsd_fw_fill
+    dec ax
+    shl ax, 1                   /* last word offset */
+    add si, ax
+    add di, ax
+    std
+    rep movsw
+    cld
+.vsd_fw_fill:
+    /* Blank top `lines` rows */
+    mov al, [bp - 5]            /* CH */
+    xor ah, ah
+    mul word ptr [bp - 14]
+    add ax, [bp - 18]
+    mov di, ax
+    mov ah, [bp - 3]
+    mov al, ' '
+    mov cx, [bp - 20]
+    push ax
+    mov ax, cx
+    mul word ptr [bp - 12]
+    mov cx, ax
+    pop ax
+    test cx, cx
+    jz .vsd_done
+    rep stosw
+    jmp .vsd_done
+
+.vsd_rows:
+    mov ax, CGA_SEG
+    mov ds, ax
+    mov es, ax
+    cld
+    mov dh, [bp - 7]            /* dest row = DH */
+.vsd_row:
+    mov al, [bp - 5]            /* CH */
+    add al, [bp - 20]           /* + lines */
     cmp dh, al
     jb .vsd_fill_top
-    mov ah, dh
-    sub ah, [bp - 2]            /* src row */
-    mov dl, [bp - 6]
-.vsd_copy_col:
-    cmp dl, [bp - 8]
-    ja .vsd_copy_next
-    push dx
-    mov dh, ah
-    call cursor_to_offset
-    mov bx, es:[di]
+    push dx                     /* MUL clobbers DX */
+    mov al, dh
+    xor ah, ah
+    mul word ptr [bp - 14]
+    add ax, [bp - 18]
+    mov bl, [bp - 6]
+    xor bh, bh
+    shl bx, 1
+    add ax, bx
+    mov di, ax
     pop dx
-    push ax
     push dx
-    call cursor_to_offset
+    mov al, dh
+    xor ah, ah
+    sub ax, [bp - 20]           /* src row */
+    mul word ptr [bp - 14]
+    add ax, [bp - 18]
+    add ax, bx
+    mov si, ax
     pop dx
-    pop ax
-    mov es:[di], bx
-    inc dl
-    jmp .vsd_copy_col
-.vsd_copy_next:
+    mov cx, [bp - 16]
+    rep movsw
     dec dh
-    jmp .vsd_copy
+    jmp .vsd_row
 
 .vsd_fill_top:
     mov dh, [bp - 5]
     mov al, [bp - 5]
-    add al, [bp - 2]
+    add al, [bp - 20]
     dec al
-    mov [bp - 7], al            /* temporarily LR row = CH+lines-1 */
+    mov [bp - 7], al            /* fill through CH+lines-1 */
     jmp .vsd_fill_from
 
 .vsd_fill:
     mov dh, [bp - 5]
 .vsd_fill_from:
-    mov bh, [bp - 3]
-    mov ah, bh
+    mov ax, CGA_SEG
+    mov es, ax
+    cld
+    mov ah, [bp - 3]
     mov al, ' '
 .vsd_fill_row:
     cmp dh, [bp - 7]
     ja .vsd_done
-    mov dl, [bp - 6]
-.vsd_fill_col:
-    cmp dl, [bp - 8]
-    ja .vsd_fill_next
     push ax
     push dx
-    call cursor_to_offset
+    mov al, dh
+    xor ah, ah
+    mul word ptr [bp - 14]
+    add ax, [bp - 18]
+    mov bl, [bp - 6]
+    xor bh, bh
+    shl bx, 1
+    add ax, bx
+    mov di, ax
     pop dx
     pop ax
-    mov es:[di], ax
-    inc dl
-    jmp .vsd_fill_col
-.vsd_fill_next:
+    mov cx, [bp - 16]
+    rep stosw
     inc dh
     jmp .vsd_fill_row
+
 .vsd_done:
+    pop ds
     mov sp, bp
     pop bp
+    ret
+
+/*
+ * Shared setup for video_scroll_*. Expects [bp-2..8] filled with AX/BX/CX/DX.
+ * Fills height/cols/bpr/width/page_base. CF=1 if window empty (caller done).
+ * Clobbers AX,BX,CX,DX; uses DS briefly then leaves DS=BDA.
+ */
+video_scroll_setup:
+    mov ax, BDA_SEG
+    mov ds, ax
+    mov ax, [BDA_CRT_COLS]
+    xor ah, ah
+    mov [bp - 12], ax           /* cols */
+    shl ax, 1
+    mov [bp - 14], ax           /* bytes/row */
+    mov al, [BDA_CRT_PAGE]
+    xor ah, ah
+    mov bx, [BDA_CRT_LEN]
+    mul bx
+    mov [bp - 18], ax           /* page base */
+
+    mov al, [bp - 7]            /* DH */
+    sub al, [bp - 5]            /* CH */
+    jb .vss_empty
+    inc al
+    xor ah, ah
+    mov [bp - 10], ax           /* height */
+
+    mov al, [bp - 8]            /* DL */
+    sub al, [bp - 6]            /* CL */
+    jb .vss_empty
+    inc al
+    xor ah, ah
+    mov [bp - 16], ax           /* width words */
+    clc
+    ret
+.vss_empty:
+    stc
     ret
 
 cursor_to_offset:

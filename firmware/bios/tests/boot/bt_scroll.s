@@ -81,6 +81,25 @@ _start:
     cmp byte ptr es:[160], 'B'
     jne .fail_down
 
+    /*
+     * Partial window cols 1..10 rows 0..2: poke X/Y/Z then AH=06 up 1.
+     * (1,1)←Y, (1,0) Z survives, (2,1) blank.
+     */
+    mov word ptr es:[162], 0x0758     /* (1,1)='X' */
+    mov word ptr es:[322], 0x0759     /* (2,1)='Y' */
+    mov word ptr es:[160], 0x075A     /* (1,0)='Z' */
+    mov ax, 0x0601
+    mov bh, 0x07
+    mov cx, 0x0001
+    mov dx, 0x020A
+    int 0x10
+    cmp byte ptr es:[162], 'Y'
+    jne .fail_part
+    cmp byte ptr es:[160], 'Z'
+    jne .fail_part
+    cmp byte ptr es:[322], ' '
+    jne .fail_part
+
     push cs
     pop ds
     mov si, offset name
@@ -101,6 +120,11 @@ _start:
     pop ds
     mov si, offset msg_down
     call fail_and_halt
+.fail_part:
+    push cs
+    pop ds
+    mov si, offset msg_part
+    call fail_and_halt
 
 name:
     .asciz "bt_scroll"
@@ -110,5 +134,7 @@ msg_blank:
     .asciz "bt_scroll:blank"
 msg_down:
     .asciz "bt_scroll:down"
+msg_part:
+    .asciz "bt_scroll:part"
 
 .include "firmware/bios/tests/boot/common.inc"
