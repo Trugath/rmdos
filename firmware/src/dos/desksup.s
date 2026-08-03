@@ -8,47 +8,54 @@
  * DESK.EXE's resident image.
  *
  * Loop:
- *   1. EXEC A:\DESK\DESK.EXE
- *   2. If A:\DESK\PENDING exists: read path, delete, EXEC path, goto 1
+ *   1. EXEC DESK\DESK.EXE
+ *   2. If DESK\PENDING exists: read path, delete, EXEC path, goto 1
  *   3. Else DESK quit with no pending → AH=4Ch (back to COMMAND)
+ *
+ * Relative paths assume CWD A:\ (AUTOEXEC). Scratch (EPB/FCB/path) lives in
+ * RAM past the COM image so the on-disk COM stays code+strings only.
  */
 
 .section .text
 .global _start
+
+/* Scratch layout at img_end (not stored in the .COM file). */
+.equ OFF_EPB,     0
+.equ OFF_TAIL,    14
+.equ OFF_FCB,     16
+.equ OFF_PATH,    32
+.equ PATHMAX,     80
+
 _start:
     push cs
     pop ds
     push cs
     pop es
+    call init_epb
 
 .loop_desk:
-    lea dx, [path_desk]
+    mov dx, offset path_desk
     call do_exec
-    /* CF set → desk failed to start; give up */
     jc .exit
 
-    /* Try open PENDING (read-only) */
-    lea dx, [path_pending]
+    mov dx, offset path_pend
     mov ax, 0x3D00
     int 0x21
-    jc .exit                   /* no pending → desk quit intentionally */
-    mov bx, ax                 /* BX = handle */
+    jc .exit
+    xchg bx, ax
 
-    /* Read path into path_buf (leave room for NUL) */
-    lea dx, [path_buf]
-    mov cx, 120
+    lea dx, [img_end + OFF_PATH]
+    mov cx, PATHMAX
     mov ah, 0x3F
     int 0x21
     jc .close_exit
-    mov cx, ax                 /* bytes read */
-    mov si, offset path_buf
-    add si, cx
-    /* Strip trailing CR/LF and NUL-terminate */
+    lea si, [img_end + OFF_PATH]
+    add si, ax
+    lea bx, [img_end + OFF_PATH]
 .trim:
-    cmp cx, 0
-    je .trimmed
+    cmp si, bx
+    je .nul
     dec si
-    dec cx
     mov al, [si]
     cmp al, 13
     je .trim
@@ -57,24 +64,19 @@ _start:
     cmp al, 0
     je .trim
     inc si
-    inc cx
-.trimmed:
+.nul:
     mov byte ptr [si], 0
 
     mov ah, 0x3E
-    int 0x21                   /* close PENDING */
-
-    /* Delete PENDING before EXEC so a crash does not re-launch forever */
-    lea dx, [path_pending]
+    int 0x21
+    mov dx, offset path_pend
     mov ah, 0x41
     int 0x21
 
-    cmp byte ptr [path_buf], 0
-    je .loop_desk              /* empty path → relaunch desk */
-
-    lea dx, [path_buf]
+    cmp byte ptr [img_end + OFF_PATH], 0
+    je .loop_desk
+    lea dx, [img_end + OFF_PATH]
     call do_exec
-    /* Child returned (or failed) → always go back to desk */
     jmp .loop_desk
 
 .close_exit:
@@ -84,66 +86,49 @@ _start:
     mov ax, 0x4C00
     int 0x21
 
-/*
- * IN:  DS:DX = ASCIZ program path
- * OUT: CF clear on success (child ran and returned), CF set on EXEC failure
- * Clobbers AX,BX; restores DS=CS
- */
+init_epb:
+    lea di, [img_end]
+    /* EPB: env, tail off/seg, fcb1 off/seg, fcb2 off/seg */
+    xor ax, ax
+    stosw                       /* env (filled in do_exec) */
+    lea ax, [img_end + OFF_TAIL]
+    stosw
+    mov ax, ds
+    stosw
+    lea ax, [img_end + OFF_FCB]
+    stosw
+    mov ax, ds
+    stosw
+    lea ax, [img_end + OFF_FCB]
+    stosw
+    mov ax, ds
+    stosw
+    /* empty tail: len=0, CR */
+    xor ax, ax
+    stosb
+    mov al, 13
+    stosb
+    /* zero shared FCB (16 bytes); DI already at OFF_FCB */
+    xor ax, ax
+    mov cx, 8
+    rep stosw
+    ret
+
 do_exec:
     push dx
-    call make_epb
+    mov ax, [0x2C]
+    mov [img_end + OFF_EPB], ax
     pop dx
-    push es
-    push ds
-    pop es
-    mov bx, offset exec_pb
+    lea bx, [img_end + OFF_EPB]
     mov ax, 0x4B00
     int 0x21
-    pop es
     push cs
     pop ds
     ret
 
-make_epb:
-    /* Empty command tail: length 0, CR */
-    mov byte ptr [exec_tail], 0
-    mov byte ptr [exec_tail + 1], 13
-    /* Clear FCBs */
-    push di
-    push cx
-    lea di, [fcb1]
-    mov cx, 16
-    xor ax, ax
-    rep stosb
-    lea di, [fcb2]
-    mov cx, 16
-    rep stosb
-    pop cx
-    pop di
-    /* EPB: inherit env from our PSP:002C */
-    mov ax, [0x2C]
-    mov word ptr [exec_pb], ax
-    mov word ptr [exec_pb + 2], offset exec_tail
-    mov ax, ds
-    mov word ptr [exec_pb + 4], ax
-    mov word ptr [exec_pb + 6], offset fcb1
-    mov word ptr [exec_pb + 8], ax
-    mov word ptr [exec_pb + 10], offset fcb2
-    mov word ptr [exec_pb + 12], ax
-    ret
-
 path_desk:
-    .asciz "A:\\DESK\\DESK.EXE"
-path_pending:
-    .asciz "A:\\DESK\\PENDING"
+    .asciz "DESK\\DESK.EXE"
+path_pend:
+    .asciz "DESK\\PENDING"
 
-exec_pb:
-    .space 14, 0
-exec_tail:
-    .space 2, 0
-fcb1:
-    .space 16, 0
-fcb2:
-    .space 16, 0
-path_buf:
-    .space 128, 0
+img_end:
