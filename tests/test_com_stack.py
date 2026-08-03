@@ -40,17 +40,16 @@ class TestComStackPointer(unittest.TestCase):
         self.assertGreater(sp, 0xF000)
 
     def test_built_desk_com_needs_sp_cap(self) -> None:
-        if not DESK_COM.is_file():
-            self.skipTest(f"missing {DESK_COM}")
-        size = DESK_COM.stat().st_size
+        # Historical: desk shipped as ~60KiB COM-style body; SP math must cap.
+        # DESK is now small-model MZ (no desk.com); keep the size gate synthetic.
+        size = 60467
         paras = com_alloc_paragraphs(size)
         self.assertGreater(
             paras,
             0x1000,
-            f"desk.com ({size} bytes) should exceed 64K paras with 8K stack",
+            f"desk-sized COM ({size} bytes) should exceed 64K paras with 8K stack",
         )
         broken = ((paras << 4) - 2) & 0xFFFF
-        # Uncapped shl wraps past 64K; exact low value depends on COM size.
         self.assertNotEqual(broken, 0xFFFE)
         self.assertEqual(com_exe_sp(paras), 0xFFFE)
 

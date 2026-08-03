@@ -1189,6 +1189,7 @@ com_resume_kernel:
     /* restore parent INT 22/23/24 from terminating PSP, then parent PSP */
     push bx
     mov ax, word ptr [psp_tbl + bx]
+    mov word ptr [tsr_psp], ax
     push es
     push ds
     mov es, ax
@@ -1219,41 +1220,40 @@ com_resume_kernel:
     mov word ptr [current_psp], ax
     pop bx
 
-    /* Free this level's auxiliary blocks, then its PSP arena. */
-    push bx
-    mov ax, word ptr [psp_tbl + bx]
-    push es
-    mov es, ax
-    call psp_free_external_jft
-    /* free env block if non-zero */
-    mov ax, word ptr es:[0x2C]
-    test ax, ax
-    jz .crk_no_env
-    push bx
-    mov es, ax
-    mov ah, 0x49
-    int 0x21
-    pop bx
-.crk_no_env:
-    mov ax, word ptr [psp_tbl + bx]
-    mov es, ax
-    mov ah, 0x49
-    int 0x21
-    pop es
-    pop bx
+    /*
+     * Free on the dedicated kernel stack. Child SS may lie inside the PSP
+     * arena (small-model MZ); parent SS must keep the EXEC frame untouched
+     * until we return — no nested INT 21 from that frame either.
+     */
+    mov word ptr [term_depth_idx], bx
+    mov ax, cs
+    mov ss, ax
+    lea sp, [kernel_stack_top]
 
-    push cs
-    pop es
-    mov ss, word ptr [save_ss_tbl + bx]
-    mov sp, word ptr [save_sp_tbl + bx]
     cmp byte ptr [com_depth], 0
-    jne .crk_nested
+    jne .crk_free
     mov byte ptr [com_active], 0
-    /* restore kernel DTA */
     mov word ptr [dta_seg], cs
     lea ax, [default_dta]
     mov word ptr [dta_off], ax
-.crk_nested:
+.crk_free:
+    mov ax, word ptr [tsr_psp]
+    mov es, ax
+    call psp_free_external_jft_noint
+    mov ax, word ptr es:[0x2C]
+    test ax, ax
+    jz .crk_no_env
+    call mcb_free_seg
+.crk_no_env:
+    mov ax, word ptr [tsr_psp]
+    call mcb_free_seg
+
+    mov bx, word ptr [term_depth_idx]
+    mov ss, word ptr [save_ss_tbl + bx]
+    mov sp, word ptr [save_sp_tbl + bx]
+    push cs
+    pop es
+
     sti
     clc
     pop ds
@@ -1262,6 +1262,46 @@ com_resume_kernel:
     pop si
     pop dx
     pop cx
+    pop bx
+    pop ax
+    ret
+
+/* AX = segment to free (owner MCB at AX-1). No INT 21. */
+mcb_free_seg:
+    push ax
+    push es
+    dec ax
+    mov es, ax
+    mov al, es:[0]
+    cmp al, 'M'
+    je .mfs_ok
+    cmp al, 'Z'
+    jne .mfs_done
+.mfs_ok:
+    mov word ptr es:[1], 0
+    call mem_coalesce
+.mfs_done:
+    pop es
+    pop ax
+    ret
+
+/* Like psp_free_external_jft but frees via mcb_free_seg (no nested INT 21). */
+psp_free_external_jft_noint:
+    push ax
+    push bx
+    push es
+    mov bx, es
+    cmp word ptr es:[0x34], 0x18
+    jne .pfejn_free
+    cmp word ptr es:[0x36], bx
+    je .pfejn_done
+.pfejn_free:
+    mov ax, word ptr es:[0x36]
+    test ax, ax
+    jz .pfejn_done
+    call mcb_free_seg
+.pfejn_done:
+    pop es
     pop bx
     pop ax
     ret

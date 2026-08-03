@@ -259,6 +259,63 @@ int main(void) {
     assert "mov ax, 1" in asm
 
 
+def test_extern_scalar_and_incomplete_array() -> None:
+    asm = _compile(
+        """
+extern int flag;
+extern char blit_data[];
+int main(void) {
+    return flag;
+}
+"""
+    )
+    assert ".extern flag" in asm
+    assert ".extern blit_data" in asm
+    assert "mov ax, [flag]" in asm
+    # No storage for externs
+    assert not re.search(r"^flag:", asm, re.M)
+    assert not re.search(r"^blit_data:", asm, re.M)
+    # Parsing continues past extern (main is emitted)
+    assert "main:" in asm
+
+
+def test_extern_array_decays_to_lea() -> None:
+    asm = _compile(
+        """
+extern char buf[];
+void take(char *p) { }
+void main(void) {
+    take(buf);
+}
+"""
+    )
+    assert ".extern buf" in asm
+    assert "lea ax, [buf]" in asm
+
+
+def test_extern_with_initializer_rejected() -> None:
+    from scripts.wcc import CompileError
+
+    try:
+        _compile("extern int x = 1;\nvoid main(void) { }\n")
+        raise AssertionError("expected CompileError")
+    except CompileError as e:
+        assert "initializer" in e.msg
+
+
+def test_extern_function_prototype() -> None:
+    asm = _compile(
+        """
+extern int helper(int x);
+int main(void) {
+    return helper(3);
+}
+"""
+    )
+    assert "call helper" in asm
+    assert "helper:" not in asm.split("main:")[0]
+
+
 if __name__ == "__main__":
     test_for_increment_after_body()
     test_for_empty_clauses()
@@ -272,4 +329,8 @@ if __name__ == "__main__":
     test_function_like_requires_paren_to_expand()
     test_define_space_before_paren_is_object_like()
     test_nested_macro_expansion()
+    test_extern_scalar_and_incomplete_array()
+    test_extern_array_decays_to_lea()
+    test_extern_with_initializer_rejected()
+    test_extern_function_prototype()
     print("test_wcc: OK")

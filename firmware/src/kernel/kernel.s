@@ -278,6 +278,8 @@ tsr_keep_paras:
     .word 0
 tsr_psp:
     .word 0
+term_depth_idx:
+    .word 0
 cfg_files:
     .word 20
 cfg_buffers:

@@ -9,7 +9,8 @@ static int dos_tmp;
 
 void reload_ds(void)
 {
-    asm("push cs");
+    /* Small-model MZ: DS=SS (data). COM wrap: SS=CS, so this matches push cs. */
+    asm("push ss");
     asm("pop ds");
 }
 

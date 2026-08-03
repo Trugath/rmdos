@@ -18,6 +18,7 @@ from scripts.wcc_preprocess import default_include_dirs, preprocess_includes
 
 # --- Token types ---
 T_INT, T_CHAR, T_VOID = "INT", "CHAR", "VOID"
+T_EXTERN, T_STATIC = "EXTERN", "STATIC"
 T_IF, T_ELSE, T_WHILE, T_FOR, T_RETURN, T_ASM, T_BREAK, T_CONTINUE = (
     "IF", "ELSE", "WHILE", "FOR", "RETURN", "ASM", "BREAK", "CONTINUE",
 )
@@ -37,6 +38,7 @@ T_EOF = "EOF"
 
 KEYWORDS = {
     "int": T_INT, "char": T_CHAR, "void": T_VOID,
+    "extern": T_EXTERN, "static": T_STATIC,
     "if": T_IF, "else": T_ELSE, "while": T_WHILE, "for": T_FOR,
     "return": T_RETURN, "asm": T_ASM, "break": T_BREAK, "continue": T_CONTINUE,
 }
@@ -471,11 +473,13 @@ class Compiler:
         filename: str = "<input>",
         module_name: str | None = None,
         com_entry: bool = False,
+        exe_entry: bool = False,
     ):
         self.lexer = Lexer(source, filename)
         self.gen = CodeGen()
         self.module_name = module_name
         self.com_entry = com_entry
+        self.exe_entry = exe_entry
         self.cur_token: Token | None = None
         self.globals: dict[str, tuple[str, int]] = {}  # name -> (type, size) size=0 for scalar
         self.locals: dict[str, tuple[str, int]] = {}  # name -> (type, bp_offset)
@@ -558,6 +562,22 @@ class Compiler:
             self.gen.emit("    call main")
             self.gen.emit("    mov ah, 0x4C")
             self.gen.emit("    int 0x21")
+        elif self.exe_entry:
+            # Small-model MZ: CS=code, SS=DS=data (set by loader SS); zero BSS.
+            self.gen.emit(".global _start")
+            self.gen.emit("_start:")
+            self.gen.emit("    mov ax, ss")
+            self.gen.emit("    mov ds, ax")
+            self.gen.emit("    mov es, ax")
+            self.gen.emit("    mov di, offset __bss_start")
+            self.gen.emit("    mov cx, offset __bss_end")
+            self.gen.emit("    sub cx, di")
+            self.gen.emit("    xor al, al")
+            self.gen.emit("    cld")
+            self.gen.emit("    rep stosb")
+            self.gen.emit("    call main")
+            self.gen.emit("    mov ah, 0x4C")
+            self.gen.emit("    int 0x21")
         elif self.module_name:
             self.gen.emit(".global module_header")
             self.gen.emit("module_header:")
@@ -590,9 +610,13 @@ class Compiler:
             self.gen.emit("    retf")
 
         while not self._at(T_EOF):
-            # Optional storage class (ignored)
-            if self._at(T_IDENT) and self.cur_token.value == "static":
+            # Optional storage class
+            is_extern = False
+            if self._at(T_EXTERN):
+                is_extern = True
                 self._advance()
+            elif self._at(T_STATIC):
+                self._advance()  # accepted; still emit .global (single TU)
             t = self._type_spec()
             if t is None:
                 break
@@ -604,20 +628,44 @@ class Compiler:
                 name = self.cur_token.value
                 self._advance()
                 size = 0
+                is_array = False
                 if self._at(T_LBRACKET):
                     self._advance()
-                    size = self._expect(T_NUMBER).value
+                    is_array = True
+                    if self._at(T_NUMBER):
+                        size = self.cur_token.value
+                        self._advance()
+                    elif not is_extern:
+                        raise CompileError(
+                            "array size required (use extern for incomplete [])",
+                            self.cur_token.line,
+                            self.cur_token.col,
+                        )
+                    # extern T name[] → incomplete; keep as array with size 1 sentinel
+                    if is_array and size == 0:
+                        size = 1
                     self._expect(T_RBRACKET)
                 has_init = self._at(T_ASSIGN)
                 if has_init:
                     self._advance()  # consume =
+                if is_extern and has_init:
+                    raise CompileError(
+                        "extern declaration cannot have an initializer",
+                        self.cur_token.line,
+                        self.cur_token.col,
+                    )
                 self.globals[name] = (t, size)
                 if size > 0:
                     self.arrays.add(name)
-                self.gen.emit(".section .data")
-                self.gen.emit(f".global {name}")
-                self.gen.emit(f"{name}:")
+                if is_extern:
+                    # Declaration only — defined in another object (e.g. .s / other TU).
+                    self.gen.emit(f".extern {name}")
+                    self._expect(T_SEMI)
+                    continue
                 if has_init:
+                    self.gen.emit(".section .data")
+                    self.gen.emit(f".global {name}")
+                    self.gen.emit(f"{name}:")
                     if size > 0:
                         elem_size = 2 if t == "int" else 1
                         if self._at(T_LBRACE):
@@ -679,14 +727,32 @@ class Compiler:
                             else:
                                 raise CompileError("char initializer must be number or character literal", self.cur_token.line, self.cur_token.col)
                 else:
-                    if size > 0:
-                        elem_size = 2 if t == "int" else 1
-                        self.gen.emit(f"    .space {size * elem_size}, 0")
-                    else:
-                        if t == "int":
-                            self.gen.emit("    .word 0")
+                    # Uninitialized: BSS for small-model MZ; COM keeps zeros in .data
+                    # (com.ld discards .bss).
+                    if self.exe_entry:
+                        self.gen.emit(".section .bss")
+                        self.gen.emit(f".global {name}")
+                        self.gen.emit(f"{name}:")
+                        if size > 0:
+                            elem_size = 2 if t == "int" else 1
+                            self.gen.emit(f"    .space {size * elem_size}")
                         else:
-                            self.gen.emit("    .byte 0")
+                            if t == "int":
+                                self.gen.emit("    .space 2")
+                            else:
+                                self.gen.emit("    .space 1")
+                    else:
+                        self.gen.emit(".section .data")
+                        self.gen.emit(f".global {name}")
+                        self.gen.emit(f"{name}:")
+                        if size > 0:
+                            elem_size = 2 if t == "int" else 1
+                            self.gen.emit(f"    .space {size * elem_size}, 0")
+                        else:
+                            if t == "int":
+                                self.gen.emit("    .word 0")
+                            else:
+                                self.gen.emit("    .byte 0")
                 self._expect(T_SEMI)
                 self.gen.emit(".section .text")
                 continue
@@ -1356,11 +1422,17 @@ def main():
     ap.add_argument("-o", "--output", type=Path, required=True, help="Output .s file")
     ap.add_argument("--module", type=str, default=None, help="Emit MOD0 module with this name (e.g. HALT)")
     ap.add_argument("--com", action="store_true", help="Emit DOS .COM entry (_start + INT 21h/4Ch)")
+    ap.add_argument(
+        "--exe",
+        action="store_true",
+        help="Emit small-model MZ entry (DS=SS, zero BSS, INT 21h/4Ch)",
+    )
     ap.add_argument("-I", "--include", action="append", default=[], dest="include_dirs", help="Include path for #include")
     ap.add_argument("--target", choices=("gas", "wasm"), default="gas", help="Assembly target: gas (GNU as) or wasm (tools/asm/wasm)")
     args = ap.parse_args()
-    if args.com and args.module:
-        ap.error("--com and --module are mutually exclusive")
+    modes = sum(1 for f in (args.com, args.exe, bool(args.module)) if f)
+    if modes > 1:
+        ap.error("--com, --exe, and --module are mutually exclusive")
     src = args.input.read_text()
     if args.include_dirs:
         inc_dirs = [Path(d) for d in args.include_dirs]
@@ -1375,6 +1447,7 @@ def main():
             filename=str(args.input),
             module_name=args.module,
             com_entry=args.com,
+            exe_entry=args.exe,
         )
         comp.include_paths = inc_dirs
         asm = comp.compile()
