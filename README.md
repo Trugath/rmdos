@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/Trugath/rmdos/actions/workflows/ci.yml/badge.svg)](https://github.com/Trugath/rmdos/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![GitHub release](https://img.shields.io/github/v/release/Trugath/rmdos)](https://github.com/Trugath/rmdos/releases)
+[![Release](https://img.shields.io/badge/release-v0.8.0-blue.svg)](https://github.com/Trugath/rmdos/releases/tag/v0.8.0)
 
 Clean-room **real-mode** stack for IBM PC/XT-class machines: motherboard system
 ROMs (U18/U19) plus a DOS-compatible OS (8088/8086, ≤1 MiB conventional memory).
