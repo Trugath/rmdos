@@ -337,6 +337,13 @@ load_setup_com:
     mov word ptr es:[0x02], bx
 
     mov bx, cx
+    /* COM SS is the PSP segment: SP must stay inside 64KiB (max paras 0x1000).
+     * Large images request PSP+image+8K (>64K paragraphs); shl would wrap SP
+     * into low memory and smash the program (desk.com ~60KiB hit this). */
+    cmp bx, 0x1000
+    jbe .lsc_sp_ok
+    mov bx, 0x1000
+.lsc_sp_ok:
     mov cl, 4
     shl bx, cl
     sub bx, 2

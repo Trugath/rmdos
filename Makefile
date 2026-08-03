@@ -44,6 +44,7 @@ ANSI_SYS := $(BUILD_DIR)/ansi.sys
 MOUSE_COM := $(BUILD_DIR)/mouse.com
 MOUSETST_COM := $(BUILD_DIR)/mousetst.com
 CLOCK_COM := $(BUILD_DIR)/clock.com
+DESKSUP_COM := $(BUILD_DIR)/desksup.com
 ANSITST_COM := $(BUILD_DIR)/ansitst.com
 EMM_SYS := $(BUILD_DIR)/emm.sys
 EMSTST_COM := $(BUILD_DIR)/emstst.com
@@ -268,7 +269,7 @@ $(BUILD_DIR)/$(1).elf: $(BUILD_DIR)/$(1).o $(LINK_DIR)/com.ld
 $(BUILD_DIR)/$(1).com: $(BUILD_DIR)/$(1).elf
 	$$(OBJCOPY) -O binary $$< $$@
 endef
-$(foreach t,sys partedit format compat int21x ping dhcp telnet net nettest gzip gunzip ansitst emstst clock mouse mousetst,$(eval $(call DOS_ASM_COM_RULE,$(t))))
+$(foreach t,sys partedit format compat int21x ping dhcp telnet net nettest gzip gunzip ansitst emstst clock mouse mousetst desksup,$(eval $(call DOS_ASM_COM_RULE,$(t))))
 
 # ANSI.SYS (device driver — linked at offset 0)
 $(BUILD_DIR)/ansi.o: $(SRC_DIR)/dos/ansi.sys.s | $(BUILD_DIR)
@@ -356,7 +357,7 @@ OS_IMAGE_DEPS := $(BOOT_BIN) $(KERNEL_BIN) \
 	$(EDIT_COM) $(DEBUG_COM) $(DISKCOPY_COM) $(DISKCOMP_COM) $(MODE_COM) $(SUBST_COM) \
 	$(COMP_COM) $(ASSIGN_COM) \
 	$(PING_COM) $(DHCP_COM) $(TELNET_COM) $(NET_COM) $(GZIP_COM) $(GUNZIP_COM) \
-	$(ANSI_SYS) $(EMM_SYS) $(MOUSE_COM) $(CLOCK_COM) \
+	$(ANSI_SYS) $(EMM_SYS) $(MOUSE_COM) $(CLOCK_COM) $(DESKSUP_COM) \
 	$(STAR_COM) $(INSTALL_BAT) \
 	$(EMPTY_AUTOEXEC) scripts/mkfs_fat12.py scripts/fat12.py scripts/disk.py
 
@@ -610,6 +611,8 @@ test-bios: bios-tests
 
 test: all bios-tests $(TEST_IMAGE) $(COMPAT_IMAGE) $(PING_IMAGE) $(DHCP_IMAGE) $(TELNET_IMAGE) $(NET_IMAGE) $(STAR_IMAGE) $(BIGEXE_IMAGE) $(DIR_IMAGE) $(FORMAT_IMAGE) $(FORMAT_HD_IMAGE) $(FAT16_HD_IMAGE) $(PARTEDIT_HD_IMAGE) $(MULTILET_HD_IMAGE) $(EXTPART_HD_IMAGE) $(SUBST_IMAGE) $(BATCH_IMAGE) $(DISK_IMAGE) $(GZIP_IMAGE) $(UTILS_IMAGE) $(DISKCOPY_IMAGE) $(DISKCOMP_IMAGE) $(ANSI_IMAGE) $(EMS_IMAGE) $(STUBCFG_IMAGE) $(MOUSE_IMAGE) $(INSTALL_IMAGE)
 	$(PYTHON) -m tests.test_wcc
+	$(PYTHON) -m tests.test_com_stack
+	$(PYTHON) -m tests.test_pack_mz
 	$(PYTHON) -m tests.test_bios_roms
 	$(PYTHON) -m tests.test_bios_services
 	$(PYTHON) -m tests.test_boot_e2e

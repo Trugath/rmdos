@@ -8,7 +8,14 @@ import struct
 from pathlib import Path
 
 
-def pack_mz(com: bytes, *, stack: int = 0xFFFE, min_size: int = 0) -> bytes:
+def pack_mz(
+    com: bytes,
+    *,
+    stack: int = 0xFFFE,
+    min_size: int = 0,
+    minalloc: int = 0x10,
+    maxalloc: int = 0xFFFF,
+) -> bytes:
     header_paras = 2
     header = bytearray(header_paras * 16)
     image = bytearray(com)
@@ -23,8 +30,8 @@ def pack_mz(com: bytes, *, stack: int = 0xFFFE, min_size: int = 0) -> bytes:
     struct.pack_into("<H", header, 4, pages)
     struct.pack_into("<H", header, 6, 0)  # relocs
     struct.pack_into("<H", header, 8, header_paras)
-    struct.pack_into("<H", header, 10, 0x10)  # minalloc
-    struct.pack_into("<H", header, 12, 0xFFFF)  # maxalloc
+    struct.pack_into("<H", header, 10, minalloc & 0xFFFF)
+    struct.pack_into("<H", header, 12, maxalloc & 0xFFFF)
     struct.pack_into("<H", header, 14, 0xFFF0)  # SS = load_seg-0x10 = PSP
     struct.pack_into("<H", header, 16, stack)  # SP
     struct.pack_into("<H", header, 18, 0)  # checksum
@@ -35,7 +42,7 @@ def pack_mz(com: bytes, *, stack: int = 0xFFFE, min_size: int = 0) -> bytes:
     return bytes(header) + bytes(image)
 
 
-def main() -> None:
+def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--com", type=Path, required=True)
     ap.add_argument("--out", type=Path, required=True)
@@ -45,11 +52,29 @@ def main() -> None:
         default=0,
         help="Pad EXE to at least this many bytes (streaming EXEC stress)",
     )
+    ap.add_argument(
+        "--minalloc",
+        type=lambda s: int(s, 0),
+        default=0x10,
+        help="MZ minalloc paragraphs (default 0x10)",
+    )
+    ap.add_argument(
+        "--maxalloc",
+        type=lambda s: int(s, 0),
+        default=0xFFFF,
+        help="MZ maxalloc paragraphs (default 0xFFFF = take all free RAM)",
+    )
     args = ap.parse_args()
-    data = pack_mz(args.com.read_bytes(), min_size=args.min_size)
+    data = pack_mz(
+        args.com.read_bytes(),
+        min_size=args.min_size,
+        minalloc=args.minalloc,
+        maxalloc=args.maxalloc,
+    )
     args.out.write_bytes(data)
     print(f"wrote {args.out} ({len(data)} bytes)")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
