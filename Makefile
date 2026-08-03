@@ -669,9 +669,11 @@ test-bigexe: $(BIGEXE_IMAGE)
 
 # Optional: requires fixtures/elite/ELITE.EXE (gitignored).
 test-elite: bios
-	@if [ ! -f "$(ELITE_EXE)" ]; then echo "test-elite: SKIP (no $(ELITE_EXE))"; exit 0; fi
-	$(MAKE) $(ELITE_IMAGE)
-	$(PYTHON) -m tests.test_elite_e2e
+	@if [ ! -f "$(ELITE_EXE)" ]; then \
+		echo "test-elite: SKIP (no $(ELITE_EXE))"; \
+	else \
+		$(MAKE) $(ELITE_IMAGE) && $(PYTHON) -m tests.test_elite_e2e; \
+	fi
 
 test-dir: $(DIR_IMAGE)
 	$(PYTHON) -m tests.test_dir_e2e
