@@ -1,11 +1,17 @@
 # rmDOS
 
+[![CI](https://github.com/Trugath/rmdos/actions/workflows/ci.yml/badge.svg)](https://github.com/Trugath/rmdos/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![GitHub release](https://img.shields.io/github/v/release/Trugath/rmdos)](https://github.com/Trugath/rmdos/releases)
+
 Clean-room **real-mode** stack for IBM PC/XT-class machines: motherboard system
 ROMs (U18/U19) plus a DOS-compatible OS (8088/8086, ≤1 MiB conventional memory).
 
 Developed and tested under [k8086](https://github.com/Trugath/k8086). Cassette
 BASIC is intentionally omitted. A later DOS (protected mode / extender era) may
 be derived from this project; **rmDOS itself stays real mode only**.
+
+![rmDOS boot: BIOS POST through A:>](docs/assets/boot.gif)
 
 **License:** [MIT](LICENSE) — see [NOTICE](NOTICE) for submodule and reference notes.
 
@@ -18,7 +24,7 @@ rmdos/
 |   |-- bios/           # Clean-room XT system BIOS → u18.bin / u19.bin
 |   |-- src/            # Boot sector + kernel + DOS tools (16-bit x86)
 |   |-- linker/         # OS link scripts
-|   |-- build/          # Generated ROMs, os.img, logs
+|   |-- build/          # Generated ROMs, os.img, test.img, logs
 |-- fixtures/guest/     # AUTOEXEC variants + SAMPLE.TXT
 |-- scripts/            # Assembler wrapper, mkimg, run-k8086, wcc
 |-- docs/               # Architecture + compatibility matrix
@@ -85,7 +91,7 @@ Headless (serial log):
 ## Tests
 
 ```bash
-make test           # ROMs + BIOS service units + os.img e2e + ping gate
+make test           # ROMs + BIOS service units + os.img/test.img e2e + ping gate
 make test-bios      # BIOS ROM static checks + boot-sector service units
 make test-dos-compat
 make test-fd-img    # k8086 disks/fd.img → A:> on rmDOS U18/U19
@@ -110,6 +116,20 @@ defaults (`make bios` / `make install-roms`). Override at runtime with
 `K8086_U18_ROM` / `K8086_U19_ROM`, `run-k8086.sh --u18/--u19`, or the workstation
 **New…** / **Edit…** ROM dialogs (per-VM snapshots under `~/.k8086/vms/`).
 
+## Releases
+
+Push a version tag to publish the lean boot floppy and ROMs to
+[GitHub Releases](https://github.com/Trugath/rmdos/releases) (changelog from
+commits since the previous tag):
+
+```bash
+git tag v0.9.0
+git push origin v0.9.0
+```
+
+Assets: `os.img`, `u18.bin`, `u19.bin`, `fdrom.bin`, and a `firmware.zip` bundle.
+Rebuild an existing tag via Actions → **Release** → **Run workflow**.
+
 ## Boot flow
 
 1. CPU reset at `0xFFFF0` far-jumps to `F000:E05B` (POST).
@@ -117,9 +137,10 @@ defaults (`make bios` / `make install-roms`). Override at runtime with
 3. INT 19h loads the floppy boot sector to `0000:7C00`.
 4. Boot reads the FAT12/FAT16 `RFAT1` loader sector, loads `KERNEL.SYS` into `0070:0000`.
 5. Kernel installs INT 20h/21h, runs a quiet FAT R/W self-check, then starts
-   `COMMAND.COM` (empty `AUTOEXEC.BAT` → interactive `A:\>` prompt). The image
-   layout is `BIN\` (tools including FIND/CHOICE/MORE/FORMAT), `DEMO\` (HELLO/COMPAT/STAR),
-   `TEST\` (SAMPLE.TXT), with `PATH=A:\BIN`. Interactive `PING`/`DHCP` need the
+   `COMMAND.COM` (empty `AUTOEXEC.BAT` → interactive `A:\>` prompt). The product
+   image layout is `BIN\` (tools including FIND/CHOICE/MORE/FORMAT) and
+   `DEMO\STAR`; `test.img` adds the DEMO/TEST harness. `PATH=A:\BIN`. Interactive
+   `PING`/`DHCP` need the
    DE-220 card:
    `--card cards/de220/build/libs/de220-*.jar,base=0x300,irq=3,network=default`
    (e.g. `DHCP` then `PING 10.0.2.2`).

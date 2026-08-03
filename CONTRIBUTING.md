@@ -14,6 +14,11 @@ native Linux toolchain. See the **Windows host** section in [README.md](README.m
 
 Compatibility expectations for contributions: [docs/compatibility.md](docs/compatibility.md).
 
+## Releases
+
+Ship a build by tagging `vX.Y.Z` and pushing the tag; CI publishes `os.img` +
+ROMs with an auto-generated changelog (see README **Releases**).
+
 ## Style
 
 Match existing assembly and script style in the area you touch. Prefer small,

@@ -393,11 +393,12 @@ A:\
            FORMAT FIND CHOICE MORE MEM FC TREE SORT EDIT DEBUG DISKCOPY
            DISKCOMP MODE SUBST COMP ASSIGN PING DHCP TELNET NET GZIP GUNZIP
            ANSI.SYS EMM.SYS MOUSE.COM CLOCK.COM
-            (os-net.img also: NETTEST)
-  DEMO\    HELLO.COM HELLO.EXE COMPAT.COM INT21X.COM ANSITST.COM EMSTST.COM
-           MOUSETST.COM STAR.COM
-  TEST\    SAMPLE.TXT DBG.SCR BIG.TXT
+  DEMO\    STAR.COM
 ```
+
+`test.img` and specialized e2e images (`os-compat.img`, `os-ansi.img`, …) add the
+DEMO/TEST harness (HELLO, COMPAT, INT21X, ANSITST, EMSTST, MOUSETST, SAMPLE/DBG/BIG,
+SHIFT.BAT; `os-net.img` also packs `BIN\NETTEST`).
 
 Builtin CON in text mode writes the CGA regen buffer directly and programs the CRTC
 once per OUTPUT batch (INT 21h AH=09 is one CON write). CON still mirrors each byte
@@ -418,8 +419,8 @@ partedit / multilet / install / fat16 / ansi / mouse gates). `INSTALL.BAT` on th
 make                       # u18.bin, u19.bin, os.img
 make bios / make os
 make install-roms          # → emulator/k8086/roms/
-make install-floppy        # → emulator/k8086/disks/fd.img
-make test                  # ROMs + BIOS units + OS e2e + ping
+make install-floppy        # → emulator/k8086/disks/fd.img (lean os.img)
+make test                  # ROMs + BIOS units + test.img/os-*.img e2e + ping
 make test-bios             # BIOS ROM checks + boot-sector service units
 make test-dos-compat
 make test-fd-img           # shipped fd.img on rmDOS ROMs

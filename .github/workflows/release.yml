@@ -1,0 +1,132 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to rebuild/update (e.g. v0.9.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          case "$TAG" in
+            v*) ;;
+            *)
+              echo "Tag must start with v (got: $TAG)" >&2
+              exit 1
+              ;;
+          esac
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.tag.outputs.tag }}
+          submodules: false
+          fetch-depth: 0
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends make binutils python3 zip
+
+      - name: Init k8086 submodule
+        run: git submodule update --init emulator/k8086
+
+      - name: Build bios + os
+        run: make bios os
+
+      - name: Stage release assets
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          BUILD=firmware/build
+          OUT=dist
+          mkdir -p "$OUT"
+          for f in os.img u18.bin u19.bin fdrom.bin; do
+            test -f "$BUILD/$f"
+            cp -f "$BUILD/$f" "$OUT/rmdos-${TAG}-${f}"
+          done
+          (
+            cd "$OUT"
+            zip -9 "rmdos-${TAG}-firmware.zip" \
+              "rmdos-${TAG}-os.img" \
+              "rmdos-${TAG}-u18.bin" \
+              "rmdos-${TAG}-u19.bin" \
+              "rmdos-${TAG}-fdrom.bin"
+          )
+          ls -la "$OUT"
+
+      - name: Write release preamble
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          cat > dist/RELEASE_PREAMBLE.md <<EOF
+          ## Assets
+
+          - \`rmdos-${TAG}-os.img\` — lean 720 KB FAT12 boot floppy (KERNEL.SYS, COMMAND.COM, BIN\\\\, DEMO\\\\STAR)
+          - \`rmdos-${TAG}-u18.bin\` / \`rmdos-${TAG}-u19.bin\` — XT system BIOS ROMs
+          - \`rmdos-${TAG}-fdrom.bin\` — Fixed Disk option ROM (C800:)
+          - \`rmdos-${TAG}-firmware.zip\` — all of the above
+
+          EOF
+          # Strip the common leading indent from the YAML block so notes render cleanly.
+          sed -i 's/^[[:space:]]*//' dist/RELEASE_PREAMBLE.md
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          EVENT: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          FILES=(
+            "dist/rmdos-${TAG}-os.img"
+            "dist/rmdos-${TAG}-u18.bin"
+            "dist/rmdos-${TAG}-u19.bin"
+            "dist/rmdos-${TAG}-fdrom.bin"
+            "dist/rmdos-${TAG}-firmware.zip"
+          )
+          PREV="$(gh release list --limit 20 --json tagName \
+            --jq '[.[] | select(.tagName != env.TAG)][0].tagName // empty' || true)"
+          NOTES="$(mktemp)"
+          {
+            cat dist/RELEASE_PREAMBLE.md
+            echo "## Changelog"
+            echo
+            if [ -n "${PREV}" ]; then
+              gh api "repos/${REPO}/releases/generate-notes" \
+                -f tag_name="$TAG" -f previous_tag_name="$PREV" \
+                --jq .body
+            else
+              gh api "repos/${REPO}/releases/generate-notes" \
+                -f tag_name="$TAG" \
+                --jq .body
+            fi
+          } > "$NOTES"
+          if [ "$EVENT" = "workflow_dispatch" ] && gh release view "$TAG" >/dev/null 2>&1; then
+            gh release delete "$TAG" --yes
+          fi
+          gh release create "$TAG" "${FILES[@]}" \
+            --title "rmDOS ${TAG}" \
+            --notes-file "$NOTES" \
+            --verify-tag

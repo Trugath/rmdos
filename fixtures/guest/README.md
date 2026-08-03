@@ -1,7 +1,8 @@
 # Image fixtures and AUTOEXEC variants
 
-`SAMPLE.TXT` and AUTOEXEC/CONFIG scripts for packing `os*.img`. FIND/CHOICE/MORE
-and the rest of `BIN\` are **rmDOS** tools built from `firmware/src/dos/`.
+`SAMPLE.TXT` and AUTOEXEC/CONFIG scripts for packing `os*.img` / `test.img`.
+FIND/CHOICE/MORE and the rest of `BIN\` are **rmDOS** tools built from
+`firmware/src/dos/`.
 
 | File | Role |
 |------|------|
@@ -57,11 +58,18 @@ A:\
            FORMAT FIND CHOICE MORE MEM FC TREE SORT EDIT DEBUG DISKCOPY
            DISKCOMP MODE SUBST COMP ASSIGN PING DHCP TELNET NET GZIP GUNZIP
            ANSI.SYS EMM.SYS MOUSE.COM CLOCK.COM
-            (os-net.img also: NETTEST)
+  DEMO\    STAR.COM
+```
+
+`test.img` and specialized e2e images (`os-compat.img`, `os-ansi.img`, …) add the
+harness on top of that base:
+
+```
   DEMO\    HELLO.COM HELLO.EXE COMPAT.COM INT21X.COM ANSITST.COM EMSTST.COM
            MOUSETST.COM STAR.COM
   TEST\    SAMPLE.TXT DBG.SCR BIG.TXT
   SHIFT.BAT
+            (os-net.img also: BIN\NETTEST)
 ```
 
 `PATH=A:\BIN` is set in the kernel environment so tools work from `A:\>`.

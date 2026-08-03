@@ -84,14 +84,26 @@ def test_fat12_image_layout() -> None:
         "BIN\\DHCP.COM",
         "BIN\\GZIP.COM",
         "BIN\\GUNZIP.COM",
-        "DEMO\\HELLO.COM",
-        "DEMO\\HELLO.EXE",
-        "DEMO\\COMPAT.COM",
         "DEMO\\STAR.COM",
-        "TEST\\SAMPLE.TXT",
     ):
         ent = fat12.find_directory_entry(raw, name)
         assert ent.size_bytes > 0, name
+    for absent in (
+        "DEMO\\HELLO.COM",
+        "DEMO\\HELLO.EXE",
+        "DEMO\\COMPAT.COM",
+        "DEMO\\INT21X.COM",
+        "DEMO\\ANSITST.COM",
+        "DEMO\\EMSTST.COM",
+        "DEMO\\MOUSETST.COM",
+        "TEST\\SAMPLE.TXT",
+        "SHIFT.BAT",
+    ):
+        try:
+            fat12.find_directory_entry(raw, absent)
+            raise AssertionError(f"lean os.img must not contain {absent}")
+        except FileNotFoundError:
+            pass
 
 
 def test_boot_to_prompt() -> None:
