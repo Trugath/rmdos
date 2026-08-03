@@ -175,6 +175,90 @@ int is_space(int c) {
     assert '.asciz " "' not in asm
 
 
+def test_object_like_macro() -> None:
+    asm = _compile(
+        """
+#define N 42
+int main(void) {
+    return N;
+}
+"""
+    )
+    assert "mov ax, 42" in asm
+
+
+def test_function_like_macro_snap4() -> None:
+    asm = _compile(
+        """
+#define SNAP4(x) ((x) & ~3)
+int main(void) {
+    int a;
+    a = SNAP4(7);
+    return a;
+}
+"""
+    )
+    assert "mov ax, 7" in asm
+    assert "and" in asm
+
+
+def test_function_like_macro_two_args() -> None:
+    asm = _compile(
+        """
+#define ADD(a, b) ((a) + (b))
+int main(void) {
+    return ADD(10, 20);
+}
+"""
+    )
+    assert "mov ax, 10" in asm
+    assert "mov ax, 20" in asm or "add ax," in asm
+
+
+def test_function_like_requires_paren_to_expand() -> None:
+    from scripts.wcc import CompileError
+
+    try:
+        _compile(
+            """
+#define FOO(x) (x)
+int main(void) {
+    return FOO;
+}
+"""
+        )
+        raise AssertionError("expected undefined identifier for FOO without call")
+    except CompileError as e:
+        assert "FOO" in e.msg
+
+
+def test_define_space_before_paren_is_object_like() -> None:
+    asm = _compile(
+        """
+#define FOO (3)
+int main(void) {
+    return FOO;
+}
+"""
+    )
+    assert "mov ax, 3" in asm
+
+
+def test_nested_macro_expansion() -> None:
+    asm = _compile(
+        """
+#define INNER(x) ((x) + 1)
+#define OUTER(y) INNER(y)
+int main(void) {
+    return OUTER(5);
+}
+"""
+    )
+    # Expansion yields INNER(5) → ((5) + 1); both immediates must appear.
+    assert "mov ax, 5" in asm
+    assert "mov ax, 1" in asm
+
+
 if __name__ == "__main__":
     test_for_increment_after_body()
     test_for_empty_clauses()
@@ -182,4 +266,10 @@ if __name__ == "__main__":
     test_array_arg_decays_to_pointer()
     test_continue_in_while_and_for()
     test_character_literals_compile_as_immediates()
+    test_object_like_macro()
+    test_function_like_macro_snap4()
+    test_function_like_macro_two_args()
+    test_function_like_requires_paren_to_expand()
+    test_define_space_before_paren_is_object_like()
+    test_nested_macro_expansion()
     print("test_wcc: OK")

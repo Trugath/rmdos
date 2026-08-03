@@ -32,6 +32,7 @@ T_SHL, T_SHR = "SHL", "SHR"
 T_ASSIGN = "ASSIGN"
 T_QUESTION, T_COLON = "QUESTION", "COLON"
 T_PREPROC = "PREPROC"  # #define
+T_MACRO_END = "MACRO_END"  # internal: pop hidden macro after expansion
 T_EOF = "EOF"
 
 KEYWORDS = {
@@ -52,6 +53,13 @@ class Token:
         return f"Token({self.kind}, {self.value!r}, {self.line}:{self.col})"
 
 
+@dataclass
+class Macro:
+    """Object-like if params is None; function-like otherwise (possibly zero params)."""
+    params: list[str] | None
+    body: list[Token]
+
+
 class CompileError(Exception):
     def __init__(self, msg: str, line: int, col: int):
         self.msg = msg
@@ -62,14 +70,16 @@ class CompileError(Exception):
 
 # --- Lexer ---
 class Lexer:
-    def __init__(self, source: str, filename: str = "<input>", macros: dict[str, list[Token]] | None = None):
+    def __init__(self, source: str, filename: str = "<input>", macros: dict[str, Macro] | None = None):
         self.source = source
         self.filename = filename
-        self.macros = macros or {}
+        self.macros: dict[str, Macro] = macros or {}
         self.pos = 0
         self.line = 1
         self.col = 1
         self._pending: list[Token] = []  # for macro expansion
+        self._hidden: set[str] = set()  # macros disabled during their own expansion
+        self._expand = True  # False while reading #define body / macro args
 
     def _peek(self) -> str:
         if self.pos >= len(self.source):
@@ -162,9 +172,175 @@ class Lexer:
     def push_back(self, t: Token):
         self._pending.insert(0, t)
 
+    def _skip_hspace(self):
+        """Skip horizontal whitespace and comments, but not newlines (for #define)."""
+        while True:
+            c = self._peek()
+            if c in " \t\r":
+                self._advance()
+            elif c == "/" and self.pos + 1 < len(self.source) and self.source[self.pos + 1] == "*":
+                self._advance()
+                self._advance()
+                while self._peek() != "\0" and not (
+                    self._peek() == "*"
+                    and self.pos + 1 < len(self.source)
+                    and self.source[self.pos + 1] == "/"
+                ):
+                    self._advance()
+                if self._peek() != "\0":
+                    self._advance()
+                    self._advance()
+            elif c == "/" and self.pos + 1 < len(self.source) and self.source[self.pos + 1] == "/":
+                while self._peek() != "\0" and self._peek() != "\n":
+                    self._advance()
+            else:
+                break
+
+    def _next_raw(self) -> Token:
+        """Next token without macro expansion (for #define bodies and macro args)."""
+        saved = self._expand
+        self._expand = False
+        try:
+            return self.next_token()
+        finally:
+            self._expand = saved
+
+    def _read_define(self, line: int, col: int) -> None:
+        """Parse #define NAME ... or #define NAME(params) ... through end of line."""
+        name = self._read_identifier()
+        if not name:
+            raise CompileError("expected macro name after #define", line, col)
+        params = None
+        # Function-like only if '(' immediately follows the name (no space).
+        if self._peek() == "(":
+            self._advance()
+            params = []
+            self._skip_hspace()
+            if self._peek() != ")":
+                while True:
+                    self._skip_hspace()
+                    if not (self._peek().isalpha() or self._peek() == "_"):
+                        raise CompileError("expected macro parameter name", self.line, self.col)
+                    params.append(self._read_identifier())
+                    self._skip_hspace()
+                    if self._peek() == ",":
+                        self._advance()
+                        continue
+                    break
+            if self._peek() != ")":
+                raise CompileError("expected ')' after macro parameter list", self.line, self.col)
+            self._advance()
+        self._skip_hspace()
+        body = []
+        while self._peek() not in "\0\n":
+            self._skip_hspace()
+            if self._peek() in "\0\n":
+                break
+            body.append(self._next_raw())
+        self.macros[name] = Macro(params, body)
+
+    def _peek_is_lparen(self) -> bool:
+        """True if the next token (after whitespace) is '(' — for function-like invoke."""
+        if self._pending:
+            return self._pending[0].kind == T_LPAREN
+        save_pos, save_line, save_col = self.pos, self.line, self.col
+        self._skip_whitespace_and_comments()
+        is_lp = self._peek() == "("
+        self.pos, self.line, self.col = save_pos, save_line, save_col
+        return is_lp
+
+    def _collect_macro_args(self, line: int, col: int) -> list:
+        """Consume '(...)' and return argument token lists (commas at paren depth 0)."""
+        if self._pending and self._pending[0].kind == T_LPAREN:
+            self._pending.pop(0)
+        else:
+            self._skip_whitespace_and_comments()
+            if self._peek() != "(":
+                raise CompileError("expected '(' for function-like macro", line, col)
+            self._advance()
+
+        args = []
+        cur = []
+        depth = 0
+        while True:
+            t = self._next_raw()
+            if t.kind == T_EOF:
+                raise CompileError("unterminated macro argument list", line, col)
+            if t.kind == T_LPAREN:
+                depth += 1
+                cur.append(t)
+            elif t.kind == T_RPAREN:
+                if depth == 0:
+                    args.append(cur)
+                    break
+                depth -= 1
+                cur.append(t)
+            elif t.kind == T_COMMA and depth == 0:
+                args.append(cur)
+                cur = []
+            else:
+                cur.append(t)
+        return args
+
+    def _substitute_macro(self, macro: Macro, args, line: int, col: int) -> list:
+        if macro.params is None:
+            return list(macro.body)
+        if args is None:
+            raise CompileError("function-like macro requires arguments", line, col)
+        # Zero-parameter macro: FOO() yields args [[]] from collector — treat as no args.
+        if len(macro.params) == 0:
+            if args == [[]]:
+                args = []
+            if len(args) != 0:
+                raise CompileError(
+                    f"macro expects 0 arguments, got {len(args)}", line, col
+                )
+        elif len(args) != len(macro.params):
+            raise CompileError(
+                f"macro expects {len(macro.params)} arguments, got {len(args)}",
+                line,
+                col,
+            )
+        param_map = {p: args[i] for i, p in enumerate(macro.params)}
+        out = []
+        for t in macro.body:
+            if t.kind == T_IDENT and t.value in param_map:
+                out.extend(param_map[t.value])
+            else:
+                out.append(t)
+        return out
+
+    def _push_expansion(self, name: str, tokens: list) -> None:
+        self._hidden.add(name)
+        self._pending = list(tokens) + [Token(T_MACRO_END, name, 0, 0)] + self._pending
+
+    def _expand_ident(self, ident: str, line: int, col: int) -> Token:
+        macro = self.macros[ident]
+        if macro.params is None:
+            self._push_expansion(ident, self._substitute_macro(macro, None, line, col))
+            return self.next_token()
+        # Function-like: only expand when followed by '('; otherwise leave as identifier.
+        if not self._peek_is_lparen():
+            return Token(T_IDENT, ident, line, col)
+        args = self._collect_macro_args(line, col)
+        self._push_expansion(ident, self._substitute_macro(macro, args, line, col))
+        return self.next_token()
+
     def next_token(self) -> Token:
         if self._pending:
-            return self._pending.pop(0)
+            t = self._pending.pop(0)
+            if t.kind == T_MACRO_END:
+                self._hidden.discard(t.value)
+                return self.next_token()
+            if (
+                self._expand
+                and t.kind == T_IDENT
+                and t.value not in KEYWORDS
+                and t.value in self.macros
+                and t.value not in self._hidden
+            ):
+                return self._expand_ident(t.value, t.line, t.col)
+            return t
 
         self._skip_whitespace_and_comments()
         line, col = self.line, self.col
@@ -177,22 +353,12 @@ class Lexer:
         if c == "#" and self.col == 1:
             self._advance()
             directive = self._read_identifier()
-            self._skip_whitespace_and_comments()
+            self._skip_hspace()
             if directive == "define":
-                name = self._read_identifier()
+                self._read_define(line, col)
             else:
-                name = directive
-            self._skip_whitespace_and_comments()
-            value_tokens = []
-            while self._peek() not in "\0\n":
-                self._skip_whitespace_and_comments()
-                if self._peek() in "\0\n":
-                    break
-                t = self.next_token()
-                if t.kind == T_EOF:
-                    break
-                value_tokens.append(t)
-            self.macros[name] = value_tokens
+                while self._peek() not in "\0\n":
+                    self._advance()
             return self.next_token()
 
         # Identifier or keyword
@@ -200,10 +366,8 @@ class Lexer:
             ident = self._read_identifier()
             if ident in KEYWORDS:
                 return Token(KEYWORDS[ident], ident, line, col)
-            # Macro expansion
-            if ident in self.macros:
-                self._pending = list(self.macros[ident])
-                return self.next_token()
+            if self._expand and ident in self.macros and ident not in self._hidden:
+                return self._expand_ident(ident, line, col)
             return Token(T_IDENT, ident, line, col)
 
         # Number
@@ -271,6 +435,7 @@ class Lexer:
         if c in single:
             return Token(single[c], c, line, col)
         raise CompileError(f"unexpected character '{c}'", line, col)
+
 
 
 # --- Code generator ---
