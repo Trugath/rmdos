@@ -86,13 +86,13 @@ WCC := $(PYTHON) -m scripts.wcc
 WCC_DEPS := $(DOS_INC)/dos.h scripts/wcc.py scripts/wcc_preprocess.py
 
 
-SAMPLE_TXT := fixtures/guest/SAMPLE.TXT
-DBG_SCR := fixtures/guest/DBG.SCR
-BIG_TXT := fixtures/guest/BIG.TXT
-SHIFT_BAT := fixtures/guest/SHIFT.BAT
-CALLTST_BAT := fixtures/guest/CALLTST.BAT
-CALLTST2_BAT := fixtures/guest/CALLTST2.BAT
-EMPTY_AUTOEXEC := fixtures/guest/AUTOEXEC.BAT
+SAMPLE_TXT := fixtures/testdata/SAMPLE.TXT
+DBG_SCR := fixtures/testdata/DBG.SCR
+BIG_TXT := fixtures/testdata/BIG.TXT
+SHIFT_BAT := fixtures/batch/SHIFT.BAT
+CALLTST_BAT := fixtures/batch/CALLTST.BAT
+CALLTST2_BAT := fixtures/batch/CALLTST2.BAT
+EMPTY_AUTOEXEC := fixtures/boot/AUTOEXEC.BAT
 
 HELLO_EXE := $(BUILD_DIR)/hello.exe
 BIGEXE_SRC := $(SRC_DIR)/dos/bigexe.s
@@ -101,69 +101,69 @@ BIGEXE_ELF := $(BUILD_DIR)/bigexe.elf
 BIGEXE_COM := $(BUILD_DIR)/bigexe.com
 BIGEXE_EXE := $(BUILD_DIR)/bigexe.exe
 BIGEXE_IMAGE := $(BUILD_DIR)/os-bigexe.img
-BIGEXE_AUTOEXEC := fixtures/guest/AUTOEXEC.BIGEXE.BAT
-ELITE_DIR := fixtures/guest/elite
+BIGEXE_AUTOEXEC := fixtures/boot/AUTOEXEC.BIGEXE.BAT
+ELITE_DIR := fixtures/elite
 ELITE_EXE := $(ELITE_DIR)/ELITE.EXE
-ELITE_AUTOEXEC := fixtures/guest/AUTOEXEC.ELITE.BAT
+ELITE_AUTOEXEC := fixtures/boot/AUTOEXEC.ELITE.BAT
 ELITE_IMAGE := $(BUILD_DIR)/os-elite.img
 
 IMAGE := $(BUILD_DIR)/os.img
 TEST_IMAGE := $(BUILD_DIR)/test.img
 COMPAT_IMAGE := $(BUILD_DIR)/os-compat.img
-COMPAT_AUTOEXEC := fixtures/guest/AUTOEXEC.TEST.BAT
+COMPAT_AUTOEXEC := fixtures/boot/AUTOEXEC.TEST.BAT
 PING_IMAGE := $(BUILD_DIR)/os-ping.img
-PING_AUTOEXEC := fixtures/guest/AUTOEXEC.PING.BAT
+PING_AUTOEXEC := fixtures/boot/AUTOEXEC.PING.BAT
 DHCP_IMAGE := $(BUILD_DIR)/os-dhcp.img
-DHCP_AUTOEXEC := fixtures/guest/AUTOEXEC.DHCP.BAT
+DHCP_AUTOEXEC := fixtures/boot/AUTOEXEC.DHCP.BAT
 TELNET_IMAGE := $(BUILD_DIR)/os-telnet.img
-TELNET_AUTOEXEC := fixtures/guest/AUTOEXEC.TELNET.BAT
+TELNET_AUTOEXEC := fixtures/boot/AUTOEXEC.TELNET.BAT
 STAR_IMAGE := $(BUILD_DIR)/os-star.img
-STAR_AUTOEXEC := fixtures/guest/AUTOEXEC.STAR.BAT
+STAR_AUTOEXEC := fixtures/boot/AUTOEXEC.STAR.BAT
 DIR_IMAGE := $(BUILD_DIR)/os-dir.img
-DIR_AUTOEXEC := fixtures/guest/AUTOEXEC.DIR.BAT
+DIR_AUTOEXEC := fixtures/boot/AUTOEXEC.DIR.BAT
 FORMAT_IMAGE := $(BUILD_DIR)/os-format.img
-FORMAT_AUTOEXEC := fixtures/guest/AUTOEXEC.FORMAT.BAT
+FORMAT_AUTOEXEC := fixtures/boot/AUTOEXEC.FORMAT.BAT
 FORMAT_HD_IMAGE := $(BUILD_DIR)/os-format-hd.img
-FORMAT_HD_AUTOEXEC := fixtures/guest/AUTOEXEC.FORMAT.HD.BAT
+FORMAT_HD_AUTOEXEC := fixtures/boot/AUTOEXEC.FORMAT.HD.BAT
 FAT16_HD_IMAGE := $(BUILD_DIR)/os-fat16-hd.img
-FAT16_HD_AUTOEXEC := fixtures/guest/AUTOEXEC.FAT16.HD.BAT
+FAT16_HD_AUTOEXEC := fixtures/boot/AUTOEXEC.FAT16.HD.BAT
 PARTEDIT_HD_IMAGE := $(BUILD_DIR)/os-partedit-hd.img
-PARTEDIT_HD_AUTOEXEC := fixtures/guest/AUTOEXEC.PARTEDIT.BAT
+PARTEDIT_HD_AUTOEXEC := fixtures/boot/AUTOEXEC.PARTEDIT.BAT
 MULTILET_HD_IMAGE := $(BUILD_DIR)/os-multilet-hd.img
-MULTILET_HD_AUTOEXEC := fixtures/guest/AUTOEXEC.MULTILET.BAT
+MULTILET_HD_AUTOEXEC := fixtures/boot/AUTOEXEC.MULTILET.BAT
 EXTPART_HD_IMAGE := $(BUILD_DIR)/os-extpart-hd.img
-EXTPART_HD_AUTOEXEC := fixtures/guest/AUTOEXEC.EXTPART.BAT
+EXTPART_HD_AUTOEXEC := fixtures/boot/AUTOEXEC.EXTPART.BAT
 SUBST_IMAGE := $(BUILD_DIR)/os-subst.img
-SUBST_AUTOEXEC := fixtures/guest/AUTOEXEC.SUBST.BAT
+SUBST_AUTOEXEC := fixtures/boot/AUTOEXEC.SUBST.BAT
 BATCH_IMAGE := $(BUILD_DIR)/os-batch.img
-BATCH_AUTOEXEC := fixtures/guest/AUTOEXEC.BATCH.BAT
+BATCH_AUTOEXEC := fixtures/boot/AUTOEXEC.BATCH.BAT
 DISK_IMAGE := $(BUILD_DIR)/os-disk.img
-DISK_AUTOEXEC := fixtures/guest/AUTOEXEC.DISK.BAT
-INSTALL_BAT := fixtures/guest/INSTALL.BAT
+DISK_AUTOEXEC := fixtures/boot/AUTOEXEC.DISK.BAT
+INSTALL_BAT := fixtures/boot/INSTALL.BAT
 INSTALL_IMAGE := $(BUILD_DIR)/os-install.img
-INSTALL_AUTOEXEC := fixtures/guest/AUTOEXEC.INSTALL.BAT
+INSTALL_AUTOEXEC := fixtures/boot/AUTOEXEC.INSTALL.BAT
 NET_IMAGE := $(BUILD_DIR)/os-net.img
-NET_AUTOEXEC := fixtures/guest/AUTOEXEC.NET.BAT
-NET_CONFIG := fixtures/guest/CONFIG.NET.SYS
+NET_AUTOEXEC := fixtures/boot/AUTOEXEC.NET.BAT
+NET_CONFIG := fixtures/config/CONFIG.NET.SYS
 GZIP_IMAGE := $(BUILD_DIR)/os-gzip.img
-GZIP_AUTOEXEC := fixtures/guest/AUTOEXEC.GZIP.BAT
+GZIP_AUTOEXEC := fixtures/boot/AUTOEXEC.GZIP.BAT
 UTILS_IMAGE := $(BUILD_DIR)/os-utils.img
-UTILS_AUTOEXEC := fixtures/guest/AUTOEXEC.UTILS.BAT
+UTILS_AUTOEXEC := fixtures/boot/AUTOEXEC.UTILS.BAT
 DISKCOPY_IMAGE := $(BUILD_DIR)/os-diskcopy.img
-DISKCOPY_AUTOEXEC := fixtures/guest/AUTOEXEC.DISKCOPY.BAT
+DISKCOPY_AUTOEXEC := fixtures/boot/AUTOEXEC.DISKCOPY.BAT
 DISKCOMP_IMAGE := $(BUILD_DIR)/os-diskcomp.img
-DISKCOMP_AUTOEXEC := fixtures/guest/AUTOEXEC.DISKCOMP.BAT
+DISKCOMP_AUTOEXEC := fixtures/boot/AUTOEXEC.DISKCOMP.BAT
 ANSI_IMAGE := $(BUILD_DIR)/os-ansi.img
-ANSI_AUTOEXEC := fixtures/guest/AUTOEXEC.ANSI.BAT
-ANSI_CONFIG := fixtures/guest/CONFIG.ANSI.SYS
+ANSI_AUTOEXEC := fixtures/boot/AUTOEXEC.ANSI.BAT
+ANSI_CONFIG := fixtures/config/CONFIG.ANSI.SYS
 EMS_IMAGE := $(BUILD_DIR)/os-ems.img
-EMS_AUTOEXEC := fixtures/guest/AUTOEXEC.EMS.BAT
-EMS_CONFIG := fixtures/guest/CONFIG.EMS.SYS
+EMS_AUTOEXEC := fixtures/boot/AUTOEXEC.EMS.BAT
+EMS_CONFIG := fixtures/config/CONFIG.EMS.SYS
 STUBCFG_IMAGE := $(BUILD_DIR)/os-stubcfg.img
-STUBCFG_AUTOEXEC := fixtures/guest/AUTOEXEC.STUB.BAT
-STUBCFG_CONFIG := fixtures/guest/CONFIG.STUB.SYS
+STUBCFG_AUTOEXEC := fixtures/boot/AUTOEXEC.STUB.BAT
+STUBCFG_CONFIG := fixtures/config/CONFIG.STUB.SYS
 MOUSE_IMAGE := $(BUILD_DIR)/os-mouse.img
-MOUSE_AUTOEXEC := fixtures/guest/AUTOEXEC.MOUSE.BAT
+MOUSE_AUTOEXEC := fixtures/boot/AUTOEXEC.MOUSE.BAT
 
 BIOS_MODULES := post init video keyboard timer disk fdc misc bios_entries bios_font
 BIOS_OBJS := $(addprefix $(BUILD_DIR)/,$(addsuffix .o,$(BIOS_MODULES)))
@@ -332,7 +332,7 @@ $(BIGEXE_IMAGE): $(BOOT_BIN) $(KERNEL_BIN) $(COMMAND_COM) $(BIGEXE_EXE) $(BIGEXE
 		--file DEMO/BIGEXE.EXE=$(BIGEXE_EXE) \
 		--file AUTOEXEC.BAT=$(BIGEXE_AUTOEXEC)
 
-# Lean Elite image — only built when fixtures/guest/elite/ELITE.EXE is present.
+# Lean Elite image — only built when fixtures/elite/ELITE.EXE is present.
 $(ELITE_IMAGE): $(BOOT_BIN) $(KERNEL_BIN) $(COMMAND_COM) $(ELITE_AUTOEXEC) $(ELITE_EXE) scripts/mkfs_fat12.py
 	$(PYTHON) -m scripts.mkfs_fat12 --output $@ --boot $(BOOT_BIN) --kernel $(KERNEL_BIN) \
 		--file COMMAND.COM=$(COMMAND_COM) \
@@ -597,7 +597,7 @@ run: all
 run-fd: bios $(FD_IMG)
 	./scripts/run-k8086.sh --display cga --turbo --image $(CURDIR)/$(FD_IMG)
 
-# Nonturbo CGA boot of lean Elite floppy (requires fixtures/guest/elite/ELITE.EXE).
+# Nonturbo CGA boot of lean Elite floppy (requires fixtures/elite/ELITE.EXE).
 run-elite: bios $(ELITE_IMAGE)
 	./scripts/run-k8086.sh --display cga --image $(CURDIR)/$(ELITE_IMAGE)
 
@@ -667,7 +667,7 @@ test-star: $(STAR_IMAGE)
 test-bigexe: $(BIGEXE_IMAGE)
 	$(PYTHON) -m tests.test_bigexe_e2e
 
-# Optional: requires fixtures/guest/elite/ELITE.EXE (gitignored).
+# Optional: requires fixtures/elite/ELITE.EXE (gitignored).
 test-elite: bios
 	@if [ ! -f "$(ELITE_EXE)" ]; then echo "test-elite: SKIP (no $(ELITE_EXE))"; exit 0; fi
 	$(MAKE) $(ELITE_IMAGE)

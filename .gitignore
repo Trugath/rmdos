@@ -30,8 +30,8 @@ tools/host/
 .tools/
 
 # Elite drop-in binaries (track README / local .gitignore only)
-fixtures/guest/elite/**
-!fixtures/guest/elite/README.md
-!fixtures/guest/elite/.gitignore
+fixtures/elite/**
+!fixtures/elite/README.md
+!fixtures/elite/.gitignore
 *.zip
 

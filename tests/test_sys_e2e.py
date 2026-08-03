@@ -77,7 +77,7 @@ def _make_source(path: Path) -> None:
             "--file",
             f"BIN/SYS.COM={BUILD / 'sys.com'}",
             "--file",
-            f"AUTOEXEC.BAT={ROOT / 'fixtures/guest/AUTOEXEC.SYS.BAT'}",
+            f"AUTOEXEC.BAT={ROOT / 'fixtures/boot/AUTOEXEC.SYS.BAT'}",
         ],
         cwd=ROOT,
         check=True,

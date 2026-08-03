@@ -23,7 +23,7 @@ rmdos/
 |   |-- src/dos/        # COMMAND.COM and userland tools
 |   |-- linker/         # OS link scripts
 |   |-- build/          # Generated ROMs, images, logs
-|-- fixtures/guest/     # AUTOEXEC variants + SAMPLE.TXT for image packing
+|-- fixtures/          # boot/config/testdata/batch + elite drop-in
 |-- scripts/            # as8086, mkimg, pack_roms, run-k8086, wcc
 |-- tests/              # Host-side / E2E gates
 |-- Makefile
@@ -405,7 +405,7 @@ once per OUTPUT batch (INT 21h AH=09 is one CON write). CON still mirrors each b
 to COM1 so host `--serial-log` e2e gates keep working. `BIN\CLOCK.COM` reads an
 MM58167-style RTC at I/O `2C0h` and sets DOS date/time (AH=2B/2D).
 
-Packing fixtures live in [`fixtures/guest/`](../fixtures/guest/README.md)
+Packing fixtures live in [`fixtures/`](../fixtures/README.md)
 (AUTOEXEC variants for compat / ping / dhcp / telnet / net / star / batch / disk / format /
 partedit / multilet / install / fat16 / ansi / mouse gates). `INSTALL.BAT` on the floppy walks PARTEDIT → FORMAT C: /S
 → DIR C: for hard-disk installs. `os-net.img` also packs `CONFIG.SYS` with

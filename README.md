@@ -25,7 +25,7 @@ rmdos/
 |   |-- src/            # Boot sector + kernel + DOS tools (16-bit x86)
 |   |-- linker/         # OS link scripts
 |   |-- build/          # Generated ROMs, os.img, test.img, logs
-|-- fixtures/guest/     # AUTOEXEC variants + SAMPLE.TXT
+|-- fixtures/          # boot/config/testdata/batch + elite drop-in
 |-- scripts/            # Assembler wrapper, mkimg, run-k8086, wcc
 |-- docs/               # Architecture + compatibility matrix
 |-- tests/              # Host-side / E2E tests
@@ -103,7 +103,7 @@ make run-fd         # interactive disks/fd.img on our ROMs
 
 ### Elite (optional)
 
-Drop 1987 CGA `ELITE.EXE` into [`fixtures/guest/elite/`](fixtures/guest/elite/)
+Drop 1987 CGA `ELITE.EXE` into [`fixtures/elite/`](fixtures/elite/)
 (see that README; binaries are gitignored), then:
 
 ```bash

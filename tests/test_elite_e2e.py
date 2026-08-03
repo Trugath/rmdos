@@ -1,6 +1,6 @@
 """E2E smoke: 1987 CGA Elite EXE loads under streaming EXEC (optional binary).
 
-Skips when fixtures/guest/elite/ELITE.EXE is absent (not redistributed).
+Skips when fixtures/elite/ELITE.EXE is absent (not redistributed).
 With the binary present: pack lean image, boot headless/turbo, require that
 AH=4Bh does not fail (no 'Bad command') and the guest stays in the game
 (does not drop back to A:> within the smoke window).
@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "firmware" / "build"
 SERIAL = BUILD / "serial-elite.log"
 IMAGE = BUILD / "os-elite.img"
-ELITE = ROOT / "fixtures" / "guest" / "elite" / "ELITE.EXE"
+ELITE = ROOT / "fixtures" / "elite" / "ELITE.EXE"
 MIN_EXE = 50_000
 
 
