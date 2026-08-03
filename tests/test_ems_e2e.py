@@ -22,9 +22,7 @@ MARKERS = ("EMS OK",)
 
 
 def _ensure_ems_jar() -> Path:
-    jars = sorted(K8086.glob(EMS_JAR_GLOB))
-    if jars:
-        return jars[-1]
+    """Always rebuild so a stale JAR cannot miss FFh-unmap semantics EMM.SYS probes."""
     subprocess.check_call(
         ["./gradlew", ":cards:ems-window:jar", "-q"],
         cwd=str(K8086),
