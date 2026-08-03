@@ -29,9 +29,10 @@ _start:
     int 0x33
     sti
 
+    /* inject dx=+10, dy=+5 (MS Y up) → screen (110, 45) */
     cmp cx, 110
     jne .fail_pos
-    cmp dx, 55
+    cmp dx, 45
     jne .fail_pos
     cmp bx, 1
     jne .fail_btn

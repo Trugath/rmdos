@@ -103,8 +103,9 @@ mouse_apply_pkt:
 .ap_xmax:
     mov word ptr [pos_x], ax
 
+    /* Microsoft serial Y is up-positive; INT 33h screen Y is down-positive. */
     mov ax, word ptr [pos_y]
-    add ax, di
+    sub ax, di
     cmp ax, word ptr [min_y]
     jge .ap_ymin
     mov ax, word ptr [min_y]
@@ -172,6 +173,20 @@ cursor_undraw:
     push bx
     push cx
     push dx
+    push ds
+    mov ax, 0x40
+    mov ds, ax
+    cmp byte ptr [0x49], 4      /* BDA video mode */
+    pop ds
+    jb .cu_text
+    /* Graphics modes: desk owns soft cursor; do not AH=09 glyph stamps. */
+    mov byte ptr [cur_vis], 0
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+.cu_text:
     mov dh, byte ptr [cur_row]
     mov dl, byte ptr [cur_col]
     mov ah, 0x02
@@ -196,6 +211,18 @@ cursor_draw:
     push bx
     push cx
     push dx
+    push ds
+    mov ax, 0x40
+    mov ds, ax
+    cmp byte ptr [0x49], 4
+    pop ds
+    jb .cd_text
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+.cd_text:
     mov ax, word ptr [pos_x]
     mov cl, 3
     shr ax, cl
