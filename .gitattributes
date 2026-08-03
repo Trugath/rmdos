@@ -1,0 +1,4 @@
+# DOS batch/CONFIG fixtures must stay CRLF (COMMAND.COM ends lines on CR).
+fixtures/boot/*.BAT text eol=crlf
+fixtures/batch/*.BAT text eol=crlf
+fixtures/config/*.SYS text eol=crlf
