@@ -9,6 +9,7 @@ Host-side files packed into `os*.img` / `test.img`. Layout:
 | [`testdata/`](testdata/) | → `TEST\` on harness images (`SAMPLE.TXT`, `BIG.TXT`, `DBG.SCR`) |
 | [`batch/`](batch/) | Root-of-`A:\` helpers (`SHIFT.BAT`, `CALLTST*.BAT`) |
 | [`elite/`](elite/) | Optional 1987 CGA Elite drop-in (gitignored binary) |
+| [`wolf3d/`](wolf3d/) | Optional Wolfenstein 3D drop-in → partitioned `hd-wolf3d.img` (gitignored) |
 
 FIND/CHOICE/MORE and the rest of `BIN\` are **rmDOS** tools built from
 `firmware/src/dos/`.
@@ -35,6 +36,8 @@ FIND/CHOICE/MORE and the rest of `BIN\` are **rmDOS** tools built from
 | `boot/AUTOEXEC.STAR.BAT` | `DEMO\STAR` for `os-star.img` |
 | `boot/AUTOEXEC.BIGEXE.BAT` | `DEMO\BIGEXE.EXE` streaming MZ gate (`os-bigexe.img`) |
 | `boot/AUTOEXEC.ELITE.BAT` | `ELITE` for lean `os-elite.img` (see [`elite/`](elite/)) |
+| `boot/AUTOEXEC.WOLF3D.BAT` | Kept on `os-wolf3d.img` but unused when `SHELL=WOLFGO.COM` |
+| `boot/CONFIG.WOLF3D.SYS` | `SHELL=WOLFGO.COM` so COMMAND is not resident during the game |
 | `boot/AUTOEXEC.DIR.BAT` | `DIR` / `DIR BIN` for `os-dir.img` |
 | `boot/AUTOEXEC.FORMAT.BAT` | `BIN\FORMAT A: /S /Y` for `os-format.img` |
 | `boot/AUTOEXEC.FORMAT.HD.BAT` | `BIN\FORMAT C: /Y` then `DIR C:` for `os-format-hd.img` |

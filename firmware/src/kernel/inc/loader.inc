@@ -471,15 +471,35 @@ load_setup_exe:
     push ax
     dec ax
     mov es, ax
-    mov bx, es:[3]
+    mov cx, es:[3]
     pop ax
-    add bx, ax
+    mov bx, ax
+    add bx, cx
+    mov word ptr cs:[exe_block_top], bx
 
+    /* Zero entire AH=48 block so EXE/LZEXE BSS and far-segment statics
+     * (SD_Started, IN_Started, …) start clear before the image streams in. */
+    cld
+    cli
     mov es, ax
     xor di, di
-    mov cx, PSP_SIZE
-    xor al, al
-    rep stosb
+.lse_zero_para:
+    jcxz .lse_zero_done
+    push cx
+    mov cx, 8
+    xor ax, ax
+    rep stosw
+    pop cx
+    mov ax, es
+    inc ax
+    mov es, ax
+    xor di, di
+    dec cx
+    jmp .lse_zero_para
+.lse_zero_done:
+    sti
+    mov ax, word ptr [psp_run]
+    mov es, ax
     mov byte ptr es:[0], 0xCD
     mov byte ptr es:[1], 0x20
     mov word ptr es:[2], bx

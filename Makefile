@@ -107,6 +107,16 @@ ELITE_DIR := fixtures/elite
 ELITE_EXE := $(ELITE_DIR)/ELITE.EXE
 ELITE_AUTOEXEC := fixtures/boot/AUTOEXEC.ELITE.BAT
 ELITE_IMAGE := $(BUILD_DIR)/os-elite.img
+WOLF3D_DIR := fixtures/wolf3d
+WOLF3D_EXE := $(WOLF3D_DIR)/WOLF3D.EXE
+WOLF3D_AUTOEXEC := fixtures/boot/AUTOEXEC.WOLF3D.BAT
+WOLF3D_CONFIG := fixtures/boot/CONFIG.WOLF3D.SYS
+WOLFGO_SRC := $(SRC_DIR)/dos/wolfgo.s
+WOLFGO_OBJ := $(BUILD_DIR)/wolfgo.o
+WOLFGO_ELF := $(BUILD_DIR)/wolfgo.elf
+WOLFGO_COM := $(BUILD_DIR)/wolfgo.com
+WOLF3D_IMAGE := $(BUILD_DIR)/os-wolf3d.img
+WOLF3D_HD := $(BUILD_DIR)/hd-wolf3d.img
 
 IMAGE := $(BUILD_DIR)/os.img
 TEST_IMAGE := $(BUILD_DIR)/test.img
@@ -187,7 +197,7 @@ FD_IMG := emulator/k8086/disks/fd.img
 
 K8086_ROMS_DIR := emulator/k8086/roms
 
-.PHONY: all bios os os-disk.img bios-tests clean run run-fd run-elite setup test test-bios test-fd-img test-dos-compat test-ping test-dhcp test-telnet test-net test-star test-bigexe test-elite test-dir test-format test-format-options test-sys test-format-hd test-fat16-hd test-lba32-hd test-bpb-mount test-partedit-hd test-multilet-hd test-extpart-hd test-subst test-batch test-disk test-gzip test-utils test-diskcopy test-diskcomp test-ansi test-ems test-stubcfg test-mouse test-install-hd install-roms install-floppy
+.PHONY: all bios os os-disk.img bios-tests clean run run-fd run-elite run-wolf3d setup test test-bios test-fd-img test-dos-compat test-ping test-dhcp test-telnet test-net test-star test-bigexe test-elite test-wolf3d test-dir test-format test-format-options test-sys test-format-hd test-fat16-hd test-lba32-hd test-bpb-mount test-partedit-hd test-multilet-hd test-extpart-hd test-subst test-batch test-disk test-gzip test-utils test-diskcopy test-diskcomp test-ansi test-ems test-stubcfg test-mouse test-install-hd install-roms install-floppy
 
 all: bios os
 
@@ -339,6 +349,27 @@ $(ELITE_IMAGE): $(BOOT_BIN) $(KERNEL_BIN) $(COMMAND_COM) $(ELITE_AUTOEXEC) $(ELI
 		--file COMMAND.COM=$(COMMAND_COM) \
 		--file ELITE.EXE=$(ELITE_EXE) \
 		--file AUTOEXEC.BAT=$(ELITE_AUTOEXEC)
+
+$(WOLFGO_OBJ): $(WOLFGO_SRC) | $(BUILD_DIR)
+	$(AS8086) --32 -o $@ $(WOLFGO_SRC)
+
+$(WOLFGO_ELF): $(WOLFGO_OBJ) $(LINK_DIR)/com.ld
+	$(LD) -m elf_i386 -T $(LINK_DIR)/com.ld -o $@ $<
+
+$(WOLFGO_COM): $(WOLFGO_ELF)
+	$(OBJCOPY) -O binary $< $@
+
+# Lean Wolf3D boot floppy — SHELL=WOLFGO.COM execs C:\WOLF3D (no 58K COMMAND).
+$(WOLF3D_IMAGE): $(BOOT_BIN) $(KERNEL_BIN) $(COMMAND_COM) $(WOLFGO_COM) $(WOLF3D_CONFIG) $(WOLF3D_AUTOEXEC) scripts/mkfs_fat12.py
+	$(PYTHON) -m scripts.mkfs_fat12 --output $@ --boot $(BOOT_BIN) --kernel $(KERNEL_BIN) \
+		--file COMMAND.COM=$(COMMAND_COM) \
+		--file WOLFGO.COM=$(WOLFGO_COM) \
+		--file CONFIG.SYS=$(WOLF3D_CONFIG) \
+		--file AUTOEXEC.BAT=$(WOLF3D_AUTOEXEC)
+
+# XT ~10MB HD with Wolf3D shareware on C: (MBR + FAT primary; requires WOLF3D.EXE).
+$(WOLF3D_HD): $(WOLF3D_EXE) scripts/mkfs_fat_hd.py
+	$(PYTHON) -m scripts.mkfs_fat_hd --output $@ --dir $(WOLF3D_DIR)
 
 $(BOOT_OBJ): $(BOOT_SRC) | $(BUILD_DIR)
 	$(AS8086) --32 -o $@ $(BOOT_SRC)
@@ -602,6 +633,20 @@ run-fd: bios $(FD_IMG)
 run-elite: bios $(ELITE_IMAGE)
 	./scripts/run-k8086.sh --display cga --image $(CURDIR)/$(ELITE_IMAGE)
 
+# 80286 + VGA + AdLib: lean floppy + Wolf3D on XT HD (requires WOLF3D.EXE).
+# Realtime by default (toolbar Fast Forward for Mode Y pace); headless tests use --turbo.
+run-wolf3d: bios $(WOLF3D_IMAGE) $(WOLF3D_HD)
+	cd emulator/k8086 && ./gradlew :cards:vga:jar :cards:adlib:jar :k8086-emulator:installDist -q
+	@vga=$$(ls -1 emulator/k8086/cards/vga/build/libs/vga-*.jar | tail -n 1); \
+	vga_rel=$${vga#emulator/k8086/}; \
+	adlib=$$(ls -1 emulator/k8086/cards/adlib/build/libs/adlib-*.jar | tail -n 1); \
+	adlib_rel=$${adlib#emulator/k8086/}; \
+	./scripts/run-k8086.sh --display vga --no-floppy-int13-shim \
+		--cpu 80286 --no-cga --initial-video special \
+		--card "$$vga_rel,window=true" \
+		--card "$$adlib_rel" \
+		--image $(CURDIR)/$(WOLF3D_IMAGE) --hd $(CURDIR)/$(WOLF3D_HD)
+
 setup:
 	./setup.sh
 
@@ -676,6 +721,14 @@ test-elite: bios
 		echo "test-elite: SKIP (no $(ELITE_EXE))"; \
 	else \
 		$(MAKE) $(ELITE_IMAGE) && $(PYTHON) -m tests.test_elite_e2e; \
+	fi
+
+# Optional: requires fixtures/wolf3d/WOLF3D.EXE (gitignored); game lives on HD.
+test-wolf3d: bios
+	@if [ ! -f "$(WOLF3D_EXE)" ]; then \
+		echo "test-wolf3d: SKIP (no $(WOLF3D_EXE))"; \
+	else \
+		$(MAKE) $(WOLF3D_IMAGE) $(WOLF3D_HD) && $(PYTHON) -m tests.test_wolf3d_e2e; \
 	fi
 
 test-dir: $(DIR_IMAGE)

@@ -206,26 +206,33 @@ dos_ah49:
     stc
     jmp int21_iret_cf
 
+/*
+ * AH=4Ah — resize block at ES to BX paragraphs.
+ * Grow absorbs contiguous free MCBs (MS-DOS), then extends a trailing 'Z'
+ * toward mem_top. On CF, BX = maximum possible size. PSP:0002 updated on OK.
+ */
 dos_ah4a:
     push ax
     push cx
     push dx
     push si
-    push es
+    push di
+    push bp
+    push es                      /* saved PSP */
+    mov bp, bx                   /* BP = requested paras */
     mov ax, es
     dec ax
-    mov es, ax
-    mov cx, es:[3]
-    cmp bx, cx
+    mov es, ax                   /* ES = MCB */
+    mov cx, es:[3]               /* CX = current size */
+    cmp bp, cx
     ja .a4a_grow
     je .a4a_ok
-    /* Split: free tail inherits original 'M'/'Z' (do not force Z). */
-    mov dx, bx
+    /* Shrink */
+    mov dx, bp
     mov bl, byte ptr es:[0]
-    mov si, es
-    mov ax, si
+    mov ax, es
     inc ax
-    add ax, dx
+    add ax, dx                   /* AX = new free MCB seg */
     push es
     mov es, ax
     mov byte ptr es:[0], bl
@@ -238,8 +245,117 @@ dos_ah4a:
     mov byte ptr es:[0], 'M'
     mov word ptr es:[3], dx
     call mem_coalesce
-.a4a_ok:
+    jmp .a4a_ok
+
+.a4a_grow:
+    /*
+     * Compute DI = max size: current + sum(1+sz) over contiguous free
+     * followers; if the last absorbed/current is 'Z', also mem_top-mcb-1.
+     */
+    mov di, cx
+    mov si, es                   /* SI walks MCBs we could absorb */
+.a4a_walk:
+    push es
+    mov es, si
+    mov bl, es:[0]               /* BL = 'M' or 'Z' */
+    mov dx, es:[3]
     pop es
+    cmp bl, 'Z'
+    je .a4a_as_z
+    /* Not Z: look at next */
+    mov ax, si
+    mov bx, dx
+    inc bx
+    add bx, ax
+    jc .a4a_have_max
+    push es
+    mov es, bx
+    cmp word ptr es:[1], 0
+    jne .a4a_next_busy
+    mov dx, es:[3]
+    pop es
+    mov ax, dx
+    inc ax
+    add di, ax
+    jc .a4a_have_max
+    mov si, bx
+    jmp .a4a_walk
+.a4a_next_busy:
+    pop es
+    jmp .a4a_have_max
+.a4a_as_z:
+    /* Max for a Z block ending the arena */
+    mov ax, es                   /* our MCB (unchanged) */
+    inc ax
+    mov bx, word ptr cs:[mem_top]
+    sub bx, ax                   /* BX = absolute max paras for our MCB */
+    cmp bx, di
+    jbe .a4a_have_max
+    mov di, bx
+.a4a_have_max:
+    cmp bp, di
+    ja .a4a_fail
+    /*
+     * Commit: set size to BP. If BP < DI, free tail gets DI-BP-1 and
+     * inherits whether we reach mem_top (Z) or not (M).
+     * First mark our block large enough that the old free headers die.
+     */
+    cmp di, cx
+    je .a4a_no_absorb
+    /* Coalesce free followers into us up to DI before splitting */
+    mov es:[3], di
+    mov ax, es
+    inc ax
+    add ax, di
+    cmp ax, word ptr cs:[mem_top]
+    jb .a4a_mark_m
+    mov byte ptr es:[0], 'Z'
+    jmp .a4a_no_absorb
+.a4a_mark_m:
+    mov byte ptr es:[0], 'M'
+.a4a_no_absorb:
+    cmp bp, di
+    je .a4a_exact
+    /* Split off free tail */
+    mov dx, bp
+    mov bl, byte ptr es:[0]
+    mov ax, es
+    inc ax
+    add ax, dx
+    push es
+    mov es, ax
+    mov byte ptr es:[0], bl
+    mov word ptr es:[1], 0
+    mov bx, di
+    sub bx, dx
+    dec bx
+    mov word ptr es:[3], bx
+    pop es
+    mov byte ptr es:[0], 'M'
+    mov word ptr es:[3], dx
+    jmp .a4a_ok
+.a4a_exact:
+    mov es:[3], bp
+    mov ax, es
+    inc ax
+    add ax, bp
+    cmp ax, word ptr cs:[mem_top]
+    jb .a4a_exact_m
+    mov byte ptr es:[0], 'Z'
+    jmp .a4a_ok
+.a4a_exact_m:
+    /* Mid-arena exact grow (absorbed free that left a busy follower) */
+    mov byte ptr es:[0], 'M'
+    jmp .a4a_ok
+
+.a4a_ok:
+    mov bx, es:[3]
+    pop es                       /* PSP */
+    mov ax, es
+    add ax, bx
+    mov word ptr es:[0x02], ax
+    pop bp
+    pop di
     pop si
     pop dx
     pop cx
@@ -247,21 +363,11 @@ dos_ah4a:
     clc
     jmp int21_iret
 
-.a4a_grow:
-    /* Grow only if this is the last MCB and mem_top has room */
-    cmp byte ptr es:[0], 'Z'
-    jne .a4a_fail
-    mov ax, es
-    inc ax
-    add ax, bx
-    cmp ax, word ptr cs:[mem_top]
-    ja .a4a_fail
-    mov word ptr es:[3], bx
-    jmp .a4a_ok
-
 .a4a_fail:
-    mov bx, cx
+    mov bx, di                   /* report max possible */
     pop es
+    pop bp
+    pop di
     pop si
     pop dx
     pop cx
@@ -275,7 +381,9 @@ mem_coalesce:
     push bx
     push cx
     push dx
+    push si
     push es
+    xor si, si                   /* merge budget — corrupt arenas must not spin forever */
 .mc_again:
     mov ax, word ptr cs:[first_mcb]
 .mc_scan:
@@ -287,6 +395,7 @@ mem_coalesce:
     mov bx, es:[3]
     inc bx
     add bx, ax
+    jc .mc_done                  /* wrapped segment math → stop */
     push es
     mov es, bx
     cmp word ptr es:[1], 0
@@ -295,8 +404,13 @@ mem_coalesce:
     mov dx, es:[3]
     pop es
     inc dx
+    jz .mc_done                  /* size overflow */
     add word ptr es:[3], dx
+    jc .mc_done
     mov es:[0], cl
+    inc si
+    cmp si, 256
+    jae .mc_done
     jmp .mc_again
 .mc_nn:
     pop es
@@ -306,9 +420,11 @@ mem_coalesce:
     mov bx, es:[3]
     inc bx
     add ax, bx
+    jc .mc_done
     jmp .mc_scan
 .mc_done:
     pop es
+    pop si
     pop dx
     pop cx
     pop bx

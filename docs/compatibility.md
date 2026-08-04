@@ -43,7 +43,7 @@ CGA, FAT12/FAT16 volumes **≤128 MiB**. Developed/tested on
 | XMS / HIMEM / A20 / protected mode / extenders | Later project may grow beyond real mode |
 | FAT32, LFN, volumes >128 MiB | Hard ceiling |
 | Block `DEVICE=` drivers | Rejected; character-only |
-| MDA / EGA / VGA | CGA only |
+| MDA / EGA / VGA | Motherboard BIOS is CGA-only; k8086 `cards/vga` adds mode 03h/13h/Mode Y (WM0 rotate/set-reset/bitmask, WM1/WM2 + latches, ATC pel pan, INT 10h overscan AH=10h/AL=01). CPU `MOV` to memory is write-only (no dest read) so VGA WM1 latch copies work. AdLib card: OPL2 2-op FM at 388h (timer detect). Wolf3D uses `SHELL=WOLFGO.COM` (~50 KiB more MAIN heap). Mid-REP string quanta (IF=1 only) let IRQ0 run during long fills; CLI disk transfers stay atomic. Still OOS on VGA: WM3, split-screen compose; no XMS/SB |
 | COM3–4 / LPT3 | |
 | Crynwr packet driver / INT 2Fh redirector | Use rmDOS INT 60h `AH=B8h` or standalone COMs |
 | JOIN, full SHARE/PRINT/APPEND bodies | |
@@ -61,4 +61,4 @@ CGA, FAT12/FAT16 volumes **≤128 MiB**. Developed/tested on
 
 - Validation is **k8086-first**; no second-emulator/hardware gate in CI.
 - Floating LPT can look “ready” with no printer attached.
-- Elite / third-party EXEs are optional smoke only when the binary is present.
+- Elite / Wolf3D / third-party EXEs are optional smoke only when the binary is present.

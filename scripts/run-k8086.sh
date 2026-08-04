@@ -30,9 +30,14 @@ Boot an rmDOS floppy image in k8086 using rmDOS U18/U19 by default.
 
 Options:
   --image PATH          Floppy image to boot (default: firmware/build/os.img)
+  --hd PATH             Attach hard-disk image as C: (second launcher arg)
   --serial-log PATH     Serial (COM1) output log file
   --emu-log PATH        Host emulator stdout/stderr log
-  --display NAME        Open the CGA window (interactive). Headless is default.
+  --display NAME        Open the video window (interactive). Headless is default.
+  --cpu MODEL           Motherboard CPU: 8088 (default), 8086, or 80286
+  --no-cga              Disable built-in CGA (pair with a VGA ISA --card)
+  --initial-video MODE  SW1 video: cga80 (default) or special (card BIOS)
+  --card SPEC           ISA card jar[,k=v...] (repeatable)
   --turbo               Free-run CPU (fast boot; click toolbar to return to realtime)
   --no-floppy-int13-shim  Guest BIOS owns floppy INT 13h (FDC); default is host shim
   --u18 PATH            Override U18 system ROM
@@ -47,13 +52,23 @@ USAGE
 
 TURBO=0
 NO_FLOPPY_INT13_SHIM=0
+HD_IMAGE=""
+CPU=""
+NO_CGA=0
+INITIAL_VIDEO=""
+CARDS=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --help|-h) usage; exit 0 ;;
         --image) IMAGE="$2"; shift 2 ;;
+        --hd) HD_IMAGE="$2"; shift 2 ;;
         --serial-log) SERIAL_LOG="$2"; shift 2 ;;
         --emu-log) EMU_LOG="$2"; shift 2 ;;
         --display) HEADLESS=0; shift 2 ;;
+        --cpu) CPU="$2"; shift 2 ;;
+        --no-cga) NO_CGA=1; shift ;;
+        --initial-video) INITIAL_VIDEO="$2"; shift 2 ;;
+        --card) CARDS+=("$2"); shift 2 ;;
         --turbo) TURBO=1; shift ;;
         --no-floppy-int13-shim) NO_FLOPPY_INT13_SHIM=1; shift ;;
         --u18) U18_ROM="$2"; shift 2 ;;
@@ -88,6 +103,11 @@ if [[ ! -f "$IMAGE" ]]; then
     exit 1
 fi
 
+if [[ -n "$HD_IMAGE" && ! -f "$HD_IMAGE" ]]; then
+    echo "Hard-disk image not found: $HD_IMAGE" >&2
+    exit 1
+fi
+
 if [[ ! -f "$U18_ROM" ]]; then
     U18_ROM="$SHIPPED_U18"
 fi
@@ -107,10 +127,26 @@ mkdir -p "$(dirname "$SERIAL_LOG")" "$(dirname "$EMU_LOG")"
 : >"$SERIAL_LOG"
 : >"$EMU_LOG"
 
-ARGS=("$IMAGE" --quiet --serial-log "$SERIAL_LOG")
+ARGS=("$IMAGE")
+if [[ -n "$HD_IMAGE" ]]; then
+    ARGS+=("$HD_IMAGE")
+fi
+ARGS+=(--quiet --serial-log "$SERIAL_LOG")
 if [[ $HEADLESS -eq 1 ]]; then
     ARGS+=(--headless)
 fi
+if [[ -n "$CPU" ]]; then
+    ARGS+=(--cpu "$CPU")
+fi
+if [[ $NO_CGA -eq 1 ]]; then
+    ARGS+=(--no-cga)
+fi
+if [[ -n "$INITIAL_VIDEO" ]]; then
+    ARGS+=(--initial-video "$INITIAL_VIDEO")
+fi
+for card in "${CARDS[@]+"${CARDS[@]}"}"; do
+    ARGS+=(--card "$card")
+done
 if [[ $TURBO -eq 1 ]]; then
     ARGS+=(--turbo)
 fi

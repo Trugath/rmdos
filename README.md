@@ -25,7 +25,7 @@ rmdos/
 |   |-- src/            # Boot sector + kernel + DOS tools (16-bit x86)
 |   |-- linker/         # OS link scripts
 |   |-- build/          # Generated ROMs, os.img, test.img, logs
-|-- fixtures/          # boot/config/testdata/batch + elite drop-in
+|-- fixtures/          # boot/config/testdata/batch + elite/wolf3d drop-ins
 |-- scripts/            # Assembler wrapper, mkimg, run-k8086, wcc
 |-- docs/               # Architecture + compatibility matrix
 |-- tests/              # Host-side / E2E tests
@@ -109,6 +109,16 @@ Drop 1987 CGA `ELITE.EXE` into [`fixtures/elite/`](fixtures/elite/)
 ```bash
 make run-elite      # lean floppy, CGA window, nonturbo realtime
 make test-elite     # headless load smoke (skips if no binary)
+```
+
+### Wolfenstein 3D (optional)
+
+Drop `WOLF3D.EXE` (and `.WL1` data) into [`fixtures/wolf3d/`](fixtures/wolf3d/)
+(see that README; binaries are gitignored), then:
+
+```bash
+make run-wolf3d     # 80286 + VGA card, floppy + ~10MB HD, nonturbo realtime
+make test-wolf3d    # headless load smoke (skips if no binary)
 ```
 
 Built `u18.bin` / `u19.bin` install into `emulator/k8086/roms/` as the emulator

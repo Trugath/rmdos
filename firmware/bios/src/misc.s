@@ -19,6 +19,18 @@
 isr_default:
     iret
 
+/*
+ * Absent-mouse INT 33h stub. First opcode is IRET so Wolf's INL_StartMouse
+ * (`*vector == 207`) treats the mouse as missing, but any accidental INT 33h
+ * (SetupControlPanel Mouse(4)) still returns safely instead of jumping to
+ * 0000:0000 on BIOSes that leave the vector null.
+ *
+ * Wired from init_ivt; MOUSE.COM replaces this when installed.
+ */
+.global int33_stub
+int33_stub:
+    iret
+
 int11_handler:
     push ds
     mov ax, BDA_SEG

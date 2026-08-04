@@ -271,6 +271,9 @@ init_ivt:
     mov word ptr [0x1E * 4 + 2], BIOS_SEG
     mov word ptr [0x1F * 4], offset bios_font_hi
     mov word ptr [0x1F * 4 + 2], BIOS_SEG
+    /* INT 33h — safe absent-mouse IRET (MOUSE.COM replaces when loaded) */
+    mov word ptr [0x33 * 4], offset int33_stub
+    mov word ptr [0x33 * 4 + 2], BIOS_SEG
 
     pop ds
     pop es

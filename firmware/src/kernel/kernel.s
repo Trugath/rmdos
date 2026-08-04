@@ -645,6 +645,8 @@ img_bytes_lo:
     .word 0
 img_bytes_hi:
     .word 0
+exe_block_top:
+    .word 0
 exe_hdr_len:
     .word 0
 exe_cs:

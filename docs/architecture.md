@@ -23,7 +23,7 @@ rmdos/
 |   |-- src/dos/        # COMMAND.COM and userland tools
 |   |-- linker/         # OS link scripts
 |   |-- build/          # Generated ROMs, images, logs
-|-- fixtures/          # boot/config/testdata/batch + elite drop-in
+|-- fixtures/          # boot/config/testdata/batch + elite/wolf3d drop-ins
 |-- scripts/            # as8086, mkimg, pack_roms, run-k8086, wcc
 |-- tests/              # Host-side / E2E gates
 |-- Makefile

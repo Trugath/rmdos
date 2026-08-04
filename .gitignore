@@ -29,9 +29,12 @@ firmware/build/bios_tests/
 tools/host/
 .tools/
 
-# Elite drop-in binaries (track README / local .gitignore only)
+# Elite / Wolf3D drop-in binaries (track README / local .gitignore only)
 fixtures/elite/**
 !fixtures/elite/README.md
 !fixtures/elite/.gitignore
+fixtures/wolf3d/**
+!fixtures/wolf3d/README.md
+!fixtures/wolf3d/.gitignore
 *.zip
 
