@@ -123,28 +123,6 @@ int dos_chdir(char *path)
     asm("Lcmd_chdir_ok:");
 }
 
-int dos_mkdir(char *path)
-{
-    asm("mov dx, [bp+4]");
-    asm("mov ah, 0x39");
-    asm("int 0x21");
-    asm("mov ax, 0");
-    asm("jnc Lcmd_mkdir_ok");
-    asm("mov ax, 0xFFFF");
-    asm("Lcmd_mkdir_ok:");
-}
-
-int dos_rmdir(char *path)
-{
-    asm("mov dx, [bp+4]");
-    asm("mov ah, 0x3A");
-    asm("int 0x21");
-    asm("mov ax, 0");
-    asm("jnc Lcmd_rmdir_ok");
-    asm("mov ax, 0xFFFF");
-    asm("Lcmd_rmdir_ok:");
-}
-
 int dos_dup(int handle)
 {
     asm("mov bx, [bp+4]");

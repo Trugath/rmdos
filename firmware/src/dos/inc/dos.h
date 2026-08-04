@@ -355,6 +355,30 @@ int dos_rename(char *src, char *dst)
     asm("Lrn_ok:");
 }
 
+/* Create directory (AH=39h). Returns 0 on success, -1 on failure. */
+int dos_mkdir(char *path)
+{
+    asm("mov dx, [bp+4]");
+    asm("mov ah, 0x39");
+    asm("int 0x21");
+    asm("mov ax, 0");
+    asm("jnc Lmd_ok");
+    asm("mov ax, 0xFFFF");
+    asm("Lmd_ok:");
+}
+
+/* Remove directory (AH=3Ah). Returns 0 on success, -1 on failure. */
+int dos_rmdir(char *path)
+{
+    asm("mov dx, [bp+4]");
+    asm("mov ah, 0x3A");
+    asm("int 0x21");
+    asm("mov ax, 0");
+    asm("jnc Lrmd_ok");
+    asm("mov ax, 0xFFFF");
+    asm("Lrmd_ok:");
+}
+
 void dos_set_dta(char *dta)
 {
     asm("mov dx, [bp+4]");

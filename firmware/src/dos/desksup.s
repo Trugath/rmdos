@@ -4,27 +4,25 @@
 /*
  * DESKSUP.COM — tiny desk process supervisor for rmDesk.
  *
- * Not an AH=31h TSR: stays as AH=4Bh parent so foreign apps never share
- * DESK.EXE's resident image.
- *
  * Loop:
  *   1. EXEC DESK\DESK.EXE
- *   2. If DESK\PENDING exists: read path, delete, EXEC path, goto 1
- *   3. Else DESK quit with no pending → AH=4Ch (back to COMMAND)
+ *   2. If DESK\PENDING exists: read app (+ optional cwd line), delete,
+ *      AH=3Bh cwd if present, EXEC app, AH=3Bh A:\, goto 1
+ *   3. Else quit → AH=4Ch
  *
- * Relative paths assume CWD A:\ (AUTOEXEC). Scratch (EPB/FCB/path) lives in
- * RAM past the COM image so the on-disk COM stays code+strings only.
+ * PENDING: line1=app path, line2=folder cwd (optional). Both stay in the
+ * OFF_PATH scratch buffer (cwd is the bytes after the first NUL).
  */
 
 .section .text
 .global _start
 
-/* Scratch layout at img_end (not stored in the .COM file). */
 .equ OFF_EPB,     0
 .equ OFF_TAIL,    14
 .equ OFF_FCB,     16
 .equ OFF_PATH,    32
-.equ PATHMAX,     80
+.equ OFF_CWDP,    192
+.equ READMAX,     160
 
 _start:
     push cs
@@ -45,28 +43,12 @@ _start:
     xchg bx, ax
 
     lea dx, [img_end + OFF_PATH]
-    mov cx, PATHMAX
+    mov cx, READMAX
     mov ah, 0x3F
     int 0x21
     jc .close_exit
-    lea si, [img_end + OFF_PATH]
-    add si, ax
-    lea bx, [img_end + OFF_PATH]
-.trim:
-    cmp si, bx
-    je .nul
-    dec si
-    mov al, [si]
-    cmp al, 13
-    je .trim
-    cmp al, 10
-    je .trim
-    cmp al, 0
-    je .trim
-    inc si
-.nul:
-    mov byte ptr [si], 0
-
+    mov cx, ax
+    call parse_pending
     mov ah, 0x3E
     int 0x21
     mov dx, offset path_pend
@@ -75,8 +57,19 @@ _start:
 
     cmp byte ptr [img_end + OFF_PATH], 0
     je .loop_desk
+
+    mov bx, [img_end + OFF_CWDP]
+    cmp byte ptr [bx], 0
+    je .do_child
+    mov dx, bx
+    mov ah, 0x3B
+    int 0x21
+.do_child:
     lea dx, [img_end + OFF_PATH]
     call do_exec
+    mov dx, offset path_root
+    mov ah, 0x3B
+    int 0x21
     jmp .loop_desk
 
 .close_exit:
@@ -86,11 +79,66 @@ _start:
     mov ax, 0x4C00
     int 0x21
 
+/* CX=bytes read. NUL-split line1/line2 in OFF_PATH; OFF_CWDP = cwd ptr. */
+parse_pending:
+    lea ax, [img_end + OFF_PATH]
+    mov [img_end + OFF_CWDP], ax
+    or cx, cx
+    jnz .pp_go
+    mov byte ptr [img_end + OFF_PATH], 0
+    ret
+.pp_go:
+    lea si, [img_end + OFF_PATH]
+    add si, cx
+.pp_trim:
+    lea bx, [img_end + OFF_PATH]
+    cmp si, bx
+    ja .pp_t1
+    mov byte ptr [img_end + OFF_PATH], 0
+    ret
+.pp_t1:
+    dec si
+    mov al, [si]
+    cmp al, 13
+    je .pp_trim
+    cmp al, 10
+    je .pp_trim
+    cmp al, 0
+    je .pp_trim
+    inc si
+    mov byte ptr [si], 0
+    lea si, [img_end + OFF_PATH]
+.pp_find:
+    mov al, [si]
+    or al, al
+    jz .pp_done
+    cmp al, 13
+    je .pp_split
+    cmp al, 10
+    je .pp_split
+    inc si
+    jmp .pp_find
+.pp_split:
+    mov byte ptr [si], 0
+    inc si
+.pp_skip:
+    mov al, [si]
+    cmp al, 13
+    je .pp_sk
+    cmp al, 10
+    je .pp_sk
+    mov [img_end + OFF_CWDP], si
+    jmp .pp_done
+.pp_sk:
+    inc si
+    jmp .pp_skip
+.pp_done:
+    ret
+
 init_epb:
     lea di, [img_end]
-    /* EPB: env, tail off/seg, fcb1 off/seg, fcb2 off/seg */
     xor ax, ax
-    stosw                       /* env (filled in do_exec) */
+    stosw
     lea ax, [img_end + OFF_TAIL]
     stosw
     mov ax, ds
@@ -103,12 +151,10 @@ init_epb:
     stosw
     mov ax, ds
     stosw
-    /* empty tail: len=0, CR */
     xor ax, ax
     stosb
     mov al, 13
     stosb
-    /* zero shared FCB (16 bytes); DI already at OFF_FCB */
     xor ax, ax
     mov cx, 8
     rep stosw
@@ -130,5 +176,7 @@ path_desk:
     .asciz "DESK\\DESK.EXE"
 path_pend:
     .asciz "DESK\\PENDING"
+path_root:
+    .asciz "A:\\"
 
 img_end:
