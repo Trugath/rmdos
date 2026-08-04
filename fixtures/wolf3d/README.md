@@ -20,10 +20,10 @@ This packs:
 `WOLFGO.COM` is a tiny shell so COMMAND.COM (~58 KiB) is not resident while the
 game runs — that frees conventional heap for the sign-on MAIN gauge / InitGame.
 
-Boots k8086 as **80286** with built-in CGA off, SW1 “special” video, VGA + AdLib
-ISA cards (Mode 13h / Mode Y; OPL2 at 388h). `run-wolf3d` is **realtime**
-(~8 MHz 286 pacing); use the toolbar Fast Forward for bring-up. Headless
-`make test-wolf3d` uses `--turbo`.
+Boots k8086 as **80286 @ 10 MHz** with built-in CGA off, SW1 “special” video,
+VGA + AdLib ISA cards (Mode 13h / Mode Y; OPL2 at 388h). `run-wolf3d` is
+**realtime** (period-appropriate 10 MHz pacing); use the toolbar Fast Forward for
+bring-up. Headless `make test-wolf3d` uses `--turbo`.
 
 Long `REP STOS`/`MOVS` fills yield every 256 iterations when IF=1 so guest IRQ0
 can service the AdLib timer; CLI paths (HD INT 13h) do not yield. Realtime play

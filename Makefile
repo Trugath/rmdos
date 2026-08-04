@@ -633,7 +633,7 @@ run-fd: bios $(FD_IMG)
 run-elite: bios $(ELITE_IMAGE)
 	./scripts/run-k8086.sh --display cga --image $(CURDIR)/$(ELITE_IMAGE)
 
-# 80286 + VGA + AdLib: lean floppy + Wolf3D on XT HD (requires WOLF3D.EXE).
+# 80286 @ 10 MHz + VGA + AdLib: lean floppy + Wolf3D on XT HD (requires WOLF3D.EXE).
 # Realtime by default (toolbar Fast Forward for Mode Y pace); headless tests use --turbo.
 run-wolf3d: bios $(WOLF3D_IMAGE) $(WOLF3D_HD)
 	cd emulator/k8086 && ./gradlew :cards:vga:jar :cards:adlib:jar :k8086-emulator:installDist -q
@@ -642,7 +642,7 @@ run-wolf3d: bios $(WOLF3D_IMAGE) $(WOLF3D_HD)
 	adlib=$$(ls -1 emulator/k8086/cards/adlib/build/libs/adlib-*.jar | tail -n 1); \
 	adlib_rel=$${adlib#emulator/k8086/}; \
 	./scripts/run-k8086.sh --display vga --no-floppy-int13-shim \
-		--cpu 80286 --no-cga --initial-video special \
+		--cpu 80286 --mhz 10 --no-cga --initial-video special \
 		--card "$$vga_rel,window=true" \
 		--card "$$adlib_rel" \
 		--image $(CURDIR)/$(WOLF3D_IMAGE) --hd $(CURDIR)/$(WOLF3D_HD)

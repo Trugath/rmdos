@@ -117,7 +117,7 @@ Drop `WOLF3D.EXE` (and `.WL1` data) into [`fixtures/wolf3d/`](fixtures/wolf3d/)
 (see that README; binaries are gitignored), then:
 
 ```bash
-make run-wolf3d     # 80286 + VGA card, floppy + ~10MB HD, nonturbo realtime
+make run-wolf3d     # 80286 @ 10 MHz + VGA, floppy + ~10MB HD, realtime
 make test-wolf3d    # headless load smoke (skips if no binary)
 ```
 

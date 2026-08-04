@@ -35,6 +35,7 @@ Options:
   --emu-log PATH        Host emulator stdout/stderr log
   --display NAME        Open the video window (interactive). Headless is default.
   --cpu MODEL           Motherboard CPU: 8088 (default), 8086, or 80286
+  --mhz N               Guest clock MHz (8088: 4.77; 286: 6/8/10/12.5)
   --no-cga              Disable built-in CGA (pair with a VGA ISA --card)
   --initial-video MODE  SW1 video: cga80 (default) or special (card BIOS)
   --card SPEC           ISA card jar[,k=v...] (repeatable)
@@ -54,6 +55,7 @@ TURBO=0
 NO_FLOPPY_INT13_SHIM=0
 HD_IMAGE=""
 CPU=""
+MHZ=""
 NO_CGA=0
 INITIAL_VIDEO=""
 CARDS=()
@@ -66,6 +68,7 @@ while [[ $# -gt 0 ]]; do
         --emu-log) EMU_LOG="$2"; shift 2 ;;
         --display) HEADLESS=0; shift 2 ;;
         --cpu) CPU="$2"; shift 2 ;;
+        --mhz) MHZ="$2"; shift 2 ;;
         --no-cga) NO_CGA=1; shift ;;
         --initial-video) INITIAL_VIDEO="$2"; shift 2 ;;
         --card) CARDS+=("$2"); shift 2 ;;
@@ -137,6 +140,9 @@ if [[ $HEADLESS -eq 1 ]]; then
 fi
 if [[ -n "$CPU" ]]; then
     ARGS+=(--cpu "$CPU")
+fi
+if [[ -n "$MHZ" ]]; then
+    ARGS+=(--mhz "$MHZ")
 fi
 if [[ $NO_CGA -eq 1 ]]; then
     ARGS+=(--no-cga)
