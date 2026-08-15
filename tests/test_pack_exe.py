@@ -252,10 +252,17 @@ class TestPackExeMaxalloc(unittest.TestCase):
         self.assertEqual(hdr["maxalloc"], hdr["minalloc"])
 
     def test_maxalloc_masked(self):
-        """maxalloc should be masked to 16 bits."""
+        """maxalloc should be masked to 16 bits before the minalloc raise."""
         mz = pack_exe(b"\x90", b"", maxalloc=0x12345)
         hdr = _parse_mz_header(mz)
         self.assertEqual(hdr["maxalloc"], 0x2345)
+
+    def test_maxalloc_wrap_raised_to_minalloc(self):
+        """A 17-bit maxalloc that wraps below minalloc must still be raised."""
+        mz = pack_exe(b"\x90", b"", maxalloc=0x10001)
+        hdr = _parse_mz_header(mz)
+        self.assertEqual(hdr["maxalloc"], hdr["minalloc"])
+        self.assertGreaterEqual(hdr["minalloc"], 1)
 
 
 

@@ -68,10 +68,11 @@ def pack_exe(
     # DOS maxalloc is also "above image". It must be >= minalloc or the
     # loader under-allocates and BSS/stack corrupt the MCB chain (and hang
     # on terminate coalesce). Cap at minalloc so children still get free RAM
-    # (unlike maxalloc=0xFFFF claiming the arena).
+    # (unlike maxalloc=0xFFFF claiming the arena). Mask first so a value
+    # like 0x10001 does not skip the raise and then wrap to 1.
+    maxalloc = maxalloc & 0xFFFF
     if maxalloc < minalloc:
         maxalloc = minalloc
-    maxalloc = maxalloc & 0xFFFF
 
     header_paras = 2
     header = bytearray(header_paras * 16)
