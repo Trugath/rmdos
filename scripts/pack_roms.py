@@ -31,7 +31,10 @@ def main() -> None:
     args = ap.parse_args()
 
     if args.u18 is not None:
-        data = bytearray(args.u18.read_bytes())
+        try:
+            data = bytearray(args.u18.read_bytes())
+        except FileNotFoundError:
+            raise SystemExit(f"source file not found: {args.u18}")
         if len(data) < U18_SIZE:
             data.extend(b"\x00" * (U18_SIZE - len(data)))
         elif len(data) > U18_SIZE:

@@ -2696,7 +2696,10 @@ def main():
     modes = sum(1 for f in (args.com, args.exe, bool(args.module)) if f)
     if modes > 1:
         ap.error("--com, --exe, and --module are mutually exclusive")
-    src = args.input.read_text()
+    try:
+        src = args.input.read_text()
+    except FileNotFoundError:
+        raise SystemExit(f"source file not found: {args.input}")
     if args.include_dirs:
         inc_dirs = [Path(d) for d in args.include_dirs]
     else:

@@ -68,10 +68,11 @@ def pack_exe(
     # DOS maxalloc is also "above image". It must be >= minalloc or the
     # loader under-allocates and BSS/stack corrupt the MCB chain (and hang
     # on terminate coalesce). Cap at minalloc so children still get free RAM
-    # (unlike maxalloc=0xFFFF claiming the arena).
+    # (unlike maxalloc=0xFFFF claiming the arena). Mask first so a value
+    # like 0x10001 does not skip the raise and then wrap to 1.
+    maxalloc = maxalloc & 0xFFFF
     if maxalloc < minalloc:
         maxalloc = minalloc
-    maxalloc = maxalloc & 0xFFFF
 
     header_paras = 2
     header = bytearray(header_paras * 16)
@@ -137,10 +138,23 @@ def main() -> int:
         help="Entry IP within code segment (default 0 = _start)",
     )
     args = ap.parse_args()
-    const = args.const.read_bytes() if args.const else b""
+    const = b""
+    if args.const:
+        try:
+            const = args.const.read_bytes()
+        except FileNotFoundError:
+            raise SystemExit(f"source file not found: {args.const}")
+    try:
+        code_data = args.code.read_bytes()
+    except FileNotFoundError:
+        raise SystemExit(f"source file not found: {args.code}")
+    try:
+        data_data = args.data.read_bytes()
+    except FileNotFoundError:
+        raise SystemExit(f"source file not found: {args.data}")
     mz = pack_exe(
-        args.code.read_bytes(),
-        args.data.read_bytes(),
+        code_data,
+        data_data,
         const=const,
         bss_bytes=args.bss_bytes,
         bss_end=args.bss_end,
