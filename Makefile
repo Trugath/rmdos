@@ -6,13 +6,15 @@ PYTHON := python3
 
 BUILD_DIR := firmware/build
 SRC_DIR := firmware/src
+MAIN_SRC := $(SRC_DIR)/main
+TEST_SRC := $(SRC_DIR)/test
 LINK_DIR := firmware/linker
 
 BIOS_SRC_DIR := firmware/bios/src
 BIOS_LINK_DIR := firmware/bios/linker
 
-BOOT_SRC := $(SRC_DIR)/boot/boot.s
-KERNEL_SRC := $(SRC_DIR)/kernel/kernel.s
+BOOT_SRC := $(MAIN_SRC)/boot/boot.s
+KERNEL_SRC := $(MAIN_SRC)/kernel/kernel.s
 
 BOOT_OBJ := $(BUILD_DIR)/boot.o
 BOOT_ELF := $(BUILD_DIR)/boot.elf
@@ -22,7 +24,7 @@ KERNEL_OBJ := $(BUILD_DIR)/kernel.o
 KERNEL_ELF := $(BUILD_DIR)/kernel.elf
 KERNEL_BIN := $(BUILD_DIR)/kernel.bin
 
-HELLO_SRC := $(SRC_DIR)/dos/hello.s
+HELLO_SRC := $(TEST_SRC)/dos/hello.s
 HELLO_OBJ := $(BUILD_DIR)/hello.o
 HELLO_ELF := $(BUILD_DIR)/hello.elf
 HELLO_COM := $(BUILD_DIR)/hello.com
@@ -77,14 +79,22 @@ SUBST_COM := $(BUILD_DIR)/subst.com
 COMP_COM := $(BUILD_DIR)/comp.com
 ASSIGN_COM := $(BUILD_DIR)/assign.com
 
-STAR_C := $(SRC_DIR)/dos/starfield.c
+STAR_C := $(MAIN_SRC)/dos/starfield.c
 STAR_ASM := $(BUILD_DIR)/starfield.s
 STAR_OBJ := $(BUILD_DIR)/starfield.o
 STAR_ELF := $(BUILD_DIR)/starfield.elf
 STAR_COM := $(BUILD_DIR)/star.com
-DOS_INC := $(SRC_DIR)/dos/inc
+DOS_INC := $(MAIN_SRC)/dos/inc
+DOS_RT_C := $(DOS_INC)/dos.c
+DOS_RT_ASM := $(BUILD_DIR)/dos_rt.s
+DOS_RT_OBJ := $(BUILD_DIR)/dos_rt.o
+DIRLIST_H := $(DOS_INC)/dirlist.h
+DIRLIST_C := $(DOS_INC)/dirlist.c
+DIRLIST_ASM := $(BUILD_DIR)/dirlist.s
+DIRLIST_OBJ := $(BUILD_DIR)/dirlist.o
 WCC := $(PYTHON) -m scripts.wcc
-WCC_DEPS := $(DOS_INC)/dos.h scripts/wcc.py scripts/wcc_preprocess.py
+WCC_DEPS := $(DOS_INC)/dos.h $(DOS_RT_C) scripts/wcc.py scripts/wcc_preprocess.py
+DOS_C_LINK_EXTRA :=
 
 
 SAMPLE_TXT := fixtures/testdata/SAMPLE.TXT
@@ -96,7 +106,7 @@ CALLTST2_BAT := fixtures/batch/CALLTST2.BAT
 EMPTY_AUTOEXEC := fixtures/boot/AUTOEXEC.BAT
 
 HELLO_EXE := $(BUILD_DIR)/hello.exe
-BIGEXE_SRC := $(SRC_DIR)/dos/bigexe.s
+BIGEXE_SRC := $(TEST_SRC)/dos/bigexe.s
 BIGEXE_OBJ := $(BUILD_DIR)/bigexe.o
 BIGEXE_ELF := $(BUILD_DIR)/bigexe.elf
 BIGEXE_COM := $(BUILD_DIR)/bigexe.com
@@ -111,7 +121,7 @@ WOLF3D_DIR := fixtures/wolf3d
 WOLF3D_EXE := $(WOLF3D_DIR)/WOLF3D.EXE
 WOLF3D_AUTOEXEC := fixtures/boot/AUTOEXEC.WOLF3D.BAT
 WOLF3D_CONFIG := fixtures/boot/CONFIG.WOLF3D.SYS
-WOLFGO_SRC := $(SRC_DIR)/dos/wolfgo.s
+WOLFGO_SRC := $(TEST_SRC)/dos/wolfgo.s
 WOLFGO_OBJ := $(BUILD_DIR)/wolfgo.o
 WOLFGO_ELF := $(BUILD_DIR)/wolfgo.elf
 WOLFGO_COM := $(BUILD_DIR)/wolfgo.com
@@ -197,7 +207,7 @@ FD_IMG := emulator/k8086/disks/fd.img
 
 K8086_ROMS_DIR := emulator/k8086/roms
 
-.PHONY: all bios os os-disk.img bios-tests clean run run-fd run-elite run-wolf3d setup test test-bios test-fd-img test-dos-compat test-ping test-dhcp test-telnet test-net test-star test-bigexe test-elite test-wolf3d test-dir test-format test-format-options test-sys test-format-hd test-fat16-hd test-lba32-hd test-bpb-mount test-partedit-hd test-multilet-hd test-extpart-hd test-subst test-batch test-disk test-gzip test-utils test-diskcopy test-diskcomp test-ansi test-ems test-stubcfg test-mouse test-install-hd install-roms install-floppy
+.PHONY: all bios os os-disk.img bios-tests clean run run-fd run-elite run-wolf3d setup test test-bios test-fd-img test-dos-compat test-ping test-dhcp test-telnet test-net test-star test-bigexe test-elite test-wolf3d test-dir test-format test-format-options test-sys test-format-hd test-fat16-hd test-lba32-hd test-bpb-mount test-partedit-hd test-multilet-hd test-extpart-hd test-subst test-batch test-disk test-gzip test-utils test-diskcopy test-diskcomp test-ansi test-ems test-stubcfg test-mouse test-install-hd test-install-large install-roms install-floppy
 
 all: bios os
 
@@ -250,7 +260,7 @@ $(BUILD_DIR)/fdrom.bin: $(BUILD_DIR)/fdrom.elf scripts/pack_fdrom.py
 
 # --- OS floppy image ---------------------------------------------------------
 
-KERNEL_INCS := $(wildcard $(SRC_DIR)/kernel/inc/*.inc)
+KERNEL_INCS := $(wildcard $(MAIN_SRC)/kernel/inc/*.inc)
 
 $(KERNEL_OBJ): $(KERNEL_SRC) $(KERNEL_INCS) | $(BUILD_DIR)
 	$(AS8086) --32 -o $@ $(KERNEL_SRC)
@@ -272,17 +282,18 @@ $(HELLO_COM): $(HELLO_ELF)
 
 # Asm COM pattern (hardware / smoke tools)
 define DOS_ASM_COM_RULE
-$(BUILD_DIR)/$(1).o: $(SRC_DIR)/dos/$(1).s $(wildcard $(SRC_DIR)/dos/inc/*.inc) | $(BUILD_DIR)
+$(BUILD_DIR)/$(1).o: $(2)/dos/$(1).s $(wildcard $(MAIN_SRC)/dos/inc/*.inc) | $(BUILD_DIR)
 	$$(AS8086) --32 -o $$@ $$<
 $(BUILD_DIR)/$(1).elf: $(BUILD_DIR)/$(1).o $(LINK_DIR)/com.ld
 	$$(LD) -m elf_i386 -T $(LINK_DIR)/com.ld -o $$@ $$<
 $(BUILD_DIR)/$(1).com: $(BUILD_DIR)/$(1).elf
 	$$(OBJCOPY) -O binary $$< $$@
 endef
-$(foreach t,sys partedit format compat int21x ping dhcp telnet net nettest gzip gunzip ansitst emstst clock mouse mousetst desksup,$(eval $(call DOS_ASM_COM_RULE,$(t))))
+$(foreach t,sys partedit format ping dhcp telnet net gzip gunzip clock mouse desksup,$(eval $(call DOS_ASM_COM_RULE,$(t),$(MAIN_SRC))))
+$(foreach t,compat int21x nettest ansitst emstst mousetst,$(eval $(call DOS_ASM_COM_RULE,$(t),$(TEST_SRC))))
 
 # ANSI.SYS (device driver — linked at offset 0)
-$(BUILD_DIR)/ansi.o: $(SRC_DIR)/dos/ansi.sys.s | $(BUILD_DIR)
+$(BUILD_DIR)/ansi.o: $(MAIN_SRC)/dos/ansi.sys.s | $(BUILD_DIR)
 	$(AS8086) --32 -o $@ $<
 $(BUILD_DIR)/ansi.elf: $(BUILD_DIR)/ansi.o $(LINK_DIR)/sys.ld
 	$(LD) -m elf_i386 -T $(LINK_DIR)/sys.ld -o $@ $<
@@ -290,25 +301,45 @@ $(ANSI_SYS): $(BUILD_DIR)/ansi.elf
 	$(OBJCOPY) -O binary $< $@
 
 # EMM.SYS (LIM EMS 3.2 — linked at offset 0)
-$(BUILD_DIR)/emm.o: $(SRC_DIR)/dos/emm.sys.s | $(BUILD_DIR)
+$(BUILD_DIR)/emm.o: $(MAIN_SRC)/dos/emm.sys.s | $(BUILD_DIR)
 	$(AS8086) --32 -o $@ $<
 $(BUILD_DIR)/emm.elf: $(BUILD_DIR)/emm.o $(LINK_DIR)/sys.ld
 	$(LD) -m elf_i386 -T $(LINK_DIR)/sys.ld -o $@ $<
 $(EMM_SYS): $(BUILD_DIR)/emm.elf
 	$(OBJCOPY) -O binary $< $@
 
+# Shared DOS runtime (declarations in dos.h, bodies in dos.c)
+$(DOS_RT_ASM): $(DOS_RT_C) $(DOS_INC)/dos.h scripts/wcc.py scripts/wcc_preprocess.py | $(BUILD_DIR)
+	$(WCC) $< -o $@ -I $(DOS_INC)
+
+$(DOS_RT_OBJ): $(DOS_RT_ASM) | $(BUILD_DIR)
+	$(AS8086) --32 -o $@ $<
+
+$(DIRLIST_ASM): $(DIRLIST_C) $(DOS_INC)/dos.h $(DIRLIST_H) scripts/wcc.py scripts/wcc_preprocess.py | $(BUILD_DIR)
+	$(WCC) $< -o $@ -I $(DOS_INC)
+
+$(DIRLIST_OBJ): $(DIRLIST_ASM) | $(BUILD_DIR)
+	$(AS8086) --32 -o $@ $<
+
 # C COM pattern: foo.c -> build/foo.s -> .o -> .elf -> .com
 define DOS_C_COM_RULE
-$(BUILD_DIR)/$(1).s: $(SRC_DIR)/dos/$(1).c $$(WCC_DEPS) | $(BUILD_DIR)
+$(BUILD_DIR)/$(1).s: $(MAIN_SRC)/dos/$(1).c $$(WCC_DEPS) | $(BUILD_DIR)
 	$$(WCC) $$< -o $$@ --com -I $$(DOS_INC)
 $(BUILD_DIR)/$(1).o: $(BUILD_DIR)/$(1).s | $(BUILD_DIR)
 	$$(AS8086) --32 -o $$@ $$<
-$(BUILD_DIR)/$(1).elf: $(BUILD_DIR)/$(1).o $(LINK_DIR)/com.ld
-	$$(LD) -m elf_i386 -T $(LINK_DIR)/com.ld -o $$@ $$<
+$(BUILD_DIR)/$(1).elf: $(BUILD_DIR)/$(1).o $$(DOS_RT_OBJ) $$(DOS_C_LINK_EXTRA) $(LINK_DIR)/com.ld
+	$$(LD) -m elf_i386 -T $(LINK_DIR)/com.ld --gc-sections -o $$@ $$< $$(DOS_RT_OBJ) $$(DOS_C_LINK_EXTRA)
 $(BUILD_DIR)/$(1).com: $(BUILD_DIR)/$(1).elf
 	$$(OBJCOPY) -O binary $$< $$@
 endef
 $(foreach t,$(DOS_C_TOOLS),$(eval $(call DOS_C_COM_RULE,$(t))))
+
+$(BUILD_DIR)/command.s: $(DIRLIST_H)
+$(BUILD_DIR)/dir.s: $(DIRLIST_H)
+$(BUILD_DIR)/command.elf: $(DIRLIST_OBJ)
+$(BUILD_DIR)/dir.elf: $(DIRLIST_OBJ)
+$(BUILD_DIR)/command.elf: DOS_C_LINK_EXTRA = $(DIRLIST_OBJ)
+$(BUILD_DIR)/dir.elf: DOS_C_LINK_EXTRA = $(DIRLIST_OBJ)
 
 $(STAR_ASM): $(STAR_C) $(WCC_DEPS) | $(BUILD_DIR)
 	$(WCC) $< -o $@ --com -I $(DOS_INC)
@@ -316,8 +347,8 @@ $(STAR_ASM): $(STAR_C) $(WCC_DEPS) | $(BUILD_DIR)
 $(STAR_OBJ): $(STAR_ASM) | $(BUILD_DIR)
 	$(AS8086) --32 -o $@ $(STAR_ASM)
 
-$(STAR_ELF): $(STAR_OBJ) $(LINK_DIR)/com.ld
-	$(LD) -m elf_i386 -T $(LINK_DIR)/com.ld -o $@ $<
+$(STAR_ELF): $(STAR_OBJ) $(DOS_RT_OBJ) $(LINK_DIR)/com.ld
+	$(LD) -m elf_i386 -T $(LINK_DIR)/com.ld --gc-sections -o $@ $< $(DOS_RT_OBJ)
 
 $(STAR_COM): $(STAR_ELF)
 	$(OBJCOPY) -O binary $< $@
@@ -690,6 +721,7 @@ test: all bios-tests $(TEST_IMAGE) $(COMPAT_IMAGE) $(PING_IMAGE) $(DHCP_IMAGE) $
 	$(PYTHON) -m tests.test_ansi_e2e
 	$(PYTHON) -m tests.test_ems_e2e
 	$(PYTHON) -m tests.test_stubcfg_e2e
+	$(PYTHON) -m tests.test_install_large_com_e2e
 	$(PYTHON) -m tests.test_mouse_e2e
 	$(PYTHON) -m tests.test_install_hd_e2e
 	$(PYTHON) -m tests.starfield_alg_test
@@ -793,6 +825,9 @@ test-ems: $(EMS_IMAGE)
 
 test-stubcfg: $(STUBCFG_IMAGE)
 	$(PYTHON) -m tests.test_stubcfg_e2e
+
+test-install-large: all
+	$(PYTHON) -m tests.test_install_large_com_e2e
 
 test-mouse: $(MOUSE_IMAGE)
 	$(PYTHON) -m tests.test_mouse_e2e

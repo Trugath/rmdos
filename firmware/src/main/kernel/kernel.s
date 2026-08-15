@@ -1,0 +1,745 @@
+.code16
+.intel_syntax noprefix
+.section .text
+.global _start
+
+.equ CDS_ENTRY_SIZE, 81
+.equ CDS_COUNT, 16
+.equ DPB_SIZE, 0x21
+/* Classic SFTE / LoL buffer header sizes (used by files.inc / int21.inc). */
+.equ SFT_ENTRY_SIZE, 0x35
+.equ SFT_TABLE_CAP, 64
+.equ DOS_BUF_HDR_SIZE, 16
+.equ DOS_BUF_CAP, 99
+
+/*
+ * rmDOS KERNEL.SYS — INT 21h + writable FAT12/FAT16 + tools.
+ * Boot leaves DL = drive; entered at 0070:0000.
+ */
+
+_start:
+    cli
+    mov ax, cs
+    mov ds, ax
+    mov ss, ax
+    lea ax, [country_case_map]
+    mov word ptr [country_case_map_ptr], ax
+    mov word ptr [country_case_map_ptr + 2], cs
+    /* Stack must live inside the image, not at 0xFFFE overlapping the MCB arena. */
+    lea sp, [kernel_stack_top]
+    mov [boot_drive], dl
+    mov byte ptr [cur_drive], 0
+    mov byte ptr [num_drives], 2
+    mov word ptr [vol_want_base], 0
+    mov word ptr [vol_want_base + 2], 0
+    mov byte ptr [com_active], 0
+    mov byte ptr [com_depth], 0
+    mov word ptr [current_psp], cs
+    mov word ptr [cwd_cluster], 0
+    mov byte ptr [cwd_path], 0
+    mov word ptr [dta_seg], cs
+    lea ax, [default_dta]
+    mov word ptr [dta_off], ax
+    sti
+
+    call dos_rebuild_drivemap
+    call dos_bind_boot_drive
+    call fat12_init_bpb
+    jc .fat_fail
+    call fat12_load_fat
+    jc .fat_fail
+    call init_std_handles
+    call install_dos_vectors
+    call mem_init
+    call dev_init_chain
+
+    mov ax, 0x0003
+    int 0x10
+
+    mov ah, 0x09
+    lea dx, [msg_banner]
+    int 0x21
+
+    /* Silent FAT read self-test */
+    mov ah, 0x3D
+    xor al, al
+    lea dx, [path_kernel]
+    int 0x21
+    jc .fat_fail
+    mov [self_handle], bx
+
+    mov ah, 0x3F
+    mov bx, [self_handle]
+    mov cx, 5
+    lea dx, [read_buf]
+    int 0x21
+    jc .fat_fail_close
+
+    mov ah, 0x3E
+    mov bx, [self_handle]
+    int 0x21
+
+    /* Silent R/W self-test: create, write, read, delete */
+    mov ah, 0x3C
+    xor cx, cx
+    lea dx, [path_rw]
+    int 0x21
+    jc .rw_fail
+    mov [self_handle], bx
+
+    mov ah, 0x40
+    mov bx, [self_handle]
+    mov cx, 5
+    lea dx, [rw_payload]
+    int 0x21
+    jc .rw_fail_close
+
+    mov ah, 0x3E
+    mov bx, [self_handle]
+    int 0x21
+
+    mov ah, 0x3D
+    xor al, al
+    lea dx, [path_rw]
+    int 0x21
+    jc .rw_fail
+    mov [self_handle], bx
+
+    mov ah, 0x3F
+    mov bx, [self_handle]
+    mov cx, 5
+    lea dx, [read_buf]
+    int 0x21
+    jc .rw_fail_close
+
+    mov ah, 0x3E
+    mov bx, [self_handle]
+    int 0x21
+
+    mov ah, 0x41
+    lea dx, [path_rw]
+    int 0x21
+    jc .rw_fail
+
+    call dos_process_config
+    call handles_apply_files
+    call dos_rebuild_drivemap
+    call dos_sysvars_refresh
+
+    /* Drop into the shell (path_command may be set by SHELL=) */
+    lea dx, [path_command]
+    call load_and_run_com
+    jc .com_fail
+    jmp .echo
+
+.fat_fail_close:
+    mov ah, 0x3E
+    mov bx, [self_handle]
+    int 0x21
+.fat_fail:
+    /*
+     * May run before install_dos_vectors. Print via BIOS + COM1 so headless
+     * gates still see "fat fail" without depending on INT 21h.
+     */
+    push cs
+    pop ds
+    lea si, [msg_fat_bad]
+    call print_early_msg
+    jmp kernel_halt
+
+.rw_fail_close:
+    mov ah, 0x3E
+    mov bx, [self_handle]
+    int 0x21
+.rw_fail:
+    mov ah, 0x09
+    lea dx, [msg_rw_bad]
+    int 0x21
+    jmp .echo
+
+.com_fail:
+    mov ah, 0x09
+    lea dx, [msg_com_bad]
+    int 0x21
+
+.echo:
+    mov ah, 0x01
+    int 0x21
+    jmp .echo
+
+kernel_halt:
+    hlt
+    jmp kernel_halt
+
+/* DS:SI → '$'-terminated string → INT 10h teletype + COM1. */
+print_early_msg:
+    push ax
+    push bx
+    push si
+.pem_lp:
+    lodsb
+    cmp al, '$'
+    je .pem_done
+    push ax
+    mov ah, 0x0E
+    mov bx, 0x0007
+    int 0x10
+    pop ax
+    call com1_out
+    jmp .pem_lp
+.pem_done:
+    pop si
+    pop bx
+    pop ax
+    ret
+
+/* Country-info case-map callback: rmDOS currently uses an identity mapping. */
+country_case_map:
+    retf
+
+.include "firmware/src/main/kernel/inc/device.inc"
+.include "firmware/src/main/kernel/inc/console.inc"
+.include "firmware/src/main/kernel/inc/drivemap.inc"
+.include "firmware/src/main/kernel/inc/int21.inc"
+.include "firmware/src/main/kernel/inc/fat12.inc"
+.include "firmware/src/main/kernel/inc/path.inc"
+.include "firmware/src/main/kernel/inc/files.inc"
+.include "firmware/src/main/kernel/inc/find.inc"
+.include "firmware/src/main/kernel/inc/fcb.inc"
+.include "firmware/src/main/kernel/inc/memory.inc"
+.include "firmware/src/main/kernel/inc/loader.inc"
+.include "firmware/src/main/kernel/inc/config.inc"
+.include "firmware/src/main/kernel/inc/absdisk.inc"
+.include "firmware/src/main/kernel/inc/int2f.inc"
+
+.section .data
+
+boot_drive:
+    .byte 0
+cur_drive:
+    .byte 0
+num_drives:
+    .byte 1
+bpb_spc:
+    .byte 1
+bpb_fats:
+    .byte 2
+bpb_media:
+    .byte 0xF9
+bpb_fat_type:
+    .byte 12
+bpb_reserved:
+    .word 2
+bpb_root_ents:
+    .word 112
+bpb_totsec:
+    .word 1440
+bpb_totsec_hi:
+    .word 0
+bpb_spf:
+    .word 3
+bpb_spt:
+    .word 9
+bpb_heads:
+    .word 2
+bpb_fat1_lba:
+    .word 2, 0
+bpb_fat2_lba:
+    .word 5, 0
+bpb_root_lba:
+    .word 8, 0
+bpb_root_secs:
+    .word 7
+bpb_data_lba:
+    .word 15, 0
+bpb_max_clust:
+    .word 0x592
+fat_win_sec:
+    .word 0xFFFF
+fat_eoc:
+    .word 0x0FF8
+com_active:
+    .byte 0
+com_depth:
+    .byte 0
+com_err:
+    .byte 0
+fat_dirty:
+    .byte 0
+break_flag:
+    .byte 1
+switchar:
+    .byte '/'
+child_exit_code:
+    .byte 0
+child_exit_type:
+    .byte 0
+tsr_keep_paras:
+    .word 0
+tsr_psp:
+    .word 0
+term_depth_idx:
+    .word 0
+cfg_files:
+    .word 20
+cfg_buffers:
+    .word 8
+cfg_lastdrive:
+    .byte 8
+cfg_handle:
+    .word 0
+exec_pb_valid:
+    .byte 0
+find_attr:
+    .byte 0
+self_handle:
+    .word 0
+com_handle:
+    .word 0
+psp_run:
+    .word 0
+current_psp:
+    .word 0
+saved_psp_tmp:
+    .word 0
+dos_last_error:
+    .word 0
+dos_verify_flag:
+    .byte 0
+dos_indos:
+    .byte 0
+dos_alloc_strategy:
+    .word 0
+/* Per-drive DPBs for AH=1F/32, one 21h-byte slot per LASTDRIVE entry. */
+dos_dpb:
+    .space (CDS_COUNT * DPB_SIZE), 0
+dos_country_id:
+    .word 1
+dos_codepage_active:
+    .word 437
+dos_codepage_system:
+    .word 437
+tmp_name_ctr:
+    .word 0
+tmp_attrs:
+    .word 0
+tmp_prefix_end:
+    .word 0
+tmp_path:
+    .space 64, 0
+fcb_blk_want:
+    .word 0
+fcb_blk_done:
+    .word 0
+path_off:
+    .word 0
+path_seg:
+    .word 0
+exec_pb_seg:
+    .word 0
+exec_pb_off:
+    .word 0
+ovl_load_seg:
+    .word 0
+ovl_reloc:
+    .word 0
+dta_seg:
+    .word 0
+dta_off:
+    .word 0
+last_dir_lba:
+    .word 0, 0
+last_dir_idx:
+    .word 0
+last_size_hi:
+    .word 0
+cwd_cluster:
+    .word 0
+/* Per-drive last cwd: cluster word + 64-byte path, CDS_COUNT entries */
+drive_cwd_cluster:
+    .space (CDS_COUNT * 2), 0
+drive_cwd_path:
+    .space (CDS_COUNT * 64), 0
+/* SUBST: 0xFF = inactive; else real drive index. Prefix path 64 bytes each. */
+subst_real:
+    .space CDS_COUNT, 0xFF
+subst_prefix:
+    .space (CDS_COUNT * 64), 0
+subst_walk:
+    .byte 0
+subst_walk_idx:
+    .byte 0
+path_resolve_cluster:
+    .word 0
+path_resolve_drive:
+    .byte 0
+xfer_buf_off:
+    .word 0
+xfer_buf_seg:
+    .word 0
+xfer_want:
+    .word 0
+xfer_cnt:
+    .word 0
+xfer_soff:
+    .word 0
+xfer_sec:
+    .word 0
+find_path_off:
+    .word 0
+find_path_seg:
+    .word 0
+dos_year:
+    .word 2026
+dos_month:
+    .byte 7
+dos_day:
+    .byte 31
+dos_dow:
+    .byte 5
+dos_time_set:
+    .byte 0
+dos_hour:
+    .byte 0
+dos_minute:
+    .byte 0
+dos_second:
+    .byte 0
+dos_hsecond:
+    .byte 0
+truename_src_off:
+    .word 0
+truename_src_seg:
+    .word 0
+truename_drive:
+    .byte 0
+truename_abs:
+    .byte 0
+truename_root_end:
+    .word 0
+save_ss_tbl:
+    .word 0, 0, 0, 0
+save_sp_tbl:
+    .word 0, 0, 0, 0
+psp_tbl:
+    .word 0, 0, 0, 0
+save_dta_seg_tbl:
+    .word 0, 0, 0, 0
+save_dta_off_tbl:
+    .word 0, 0, 0, 0
+first_mcb:
+    .word 0
+mem_top:
+    .word 0
+/*
+ * DOS list of lists (AH=52). +00 is first MCB segment (rmDOS/MEM.COM
+ * convention). Remaining fields follow DOS 3.1+ layout so walkers find
+ * SFT/CDS/CON pointers.
+ */
+dos_sysvars:
+    .word 0                      /* +00 first MCB segment */
+    .word 0                      /* +02 pad */
+    .word offset dos_sft_header  /* +04 SFT off */
+    .word 0                      /* +06 SFT seg (CS) */
+    .word offset dev_con_hdr     /* +08 CLOCK → CON */
+    .word 0                      /* +0A */
+    .word offset dev_con_hdr     /* +0C CON */
+    .word 0                      /* +0E */
+    .word 512                    /* +10 max sector size */
+    .word 0                      /* +12 buffer off */
+    .word 0                      /* +14 buffer seg */
+    .word offset dos_cds         /* +16 CDS off */
+    .word 0                      /* +18 CDS seg */
+    .word 0                      /* +1A FCB SFT */
+    .word 0
+    .word 0                      /* +1E protected FCBs */
+    .byte 0                      /* +20 block devices */
+    .byte 8                      /* +21 LASTDRIVE / CDS count */
+    .byte 0                      /* +22 boot drive 0=A */
+
+dos_sft_header:
+    .word 0xFFFF
+    .word 0xFFFF
+    .word 20
+/* Classic SFTE table sized to SFT_TABLE_CAP (see .equ above). */
+dos_sft_table:
+    .space (SFT_TABLE_CAP * SFT_ENTRY_SIZE), 0
+/* 8.3 names cached at open for SFTE +20 (parallel to handles[]). */
+sft_names:
+    .space (SFT_TABLE_CAP * 11), 0x20
+
+/* Minimal DOS buffer-chain headers for LoL walkers (not a full sector cache). */
+dos_buf_table:
+    .space (DOS_BUF_CAP * DOS_BUF_HDR_SIZE), 0
+
+dos_cds:
+    .space (CDS_COUNT * CDS_ENTRY_SIZE), 0
+
+msg_banner:
+    .ascii "rmDOS 0.8\r\n$"
+msg_fat_bad:
+    .ascii "fat fail\r\n$"
+msg_rw_bad:
+    .ascii "rw fail\r\n$"
+msg_com_bad:
+    .ascii "com fail\r\n$"
+msg_int24:
+    .asciz "\r\nAbort, Retry, Ignore? "
+path_kernel:
+    .asciz "KERNEL.SYS"
+path_rw:
+    .asciz "RWTEST.TXT"
+path_command:
+    .asciz "COMMAND.COM"
+path_config:
+    .asciz "CONFIG.SYS"
+cfg_kw_install:
+    .asciz "INSTALL"
+cfg_kw_device:
+    .asciz "DEVICE"
+cfg_kw_files:
+    .asciz "FILES"
+cfg_kw_buffers:
+    .asciz "BUFFERS"
+cfg_kw_shell:
+    .asciz "SHELL"
+cfg_kw_lastdrive:
+    .asciz "LASTDRIVE"
+cfg_kw_break:
+    .asciz "BREAK"
+cfg_kw_stacks:
+    .asciz "STACKS"
+cfg_kw_fcbs:
+    .asciz "FCBS"
+cfg_kw_country:
+    .asciz "COUNTRY"
+cfg_kw_drivparm:
+    .asciz "DRIVPARM"
+msg_cfg_install:
+    .ascii "CONFIG: INSTALL failed\r\n$"
+msg_cfg_ignored:
+    .ascii "CONFIG: ignored "
+msg_cfg_crlf:
+    .ascii "\r\n$"
+msg_cfg_device_sys:
+    .ascii "CONFIG: DEVICE requires a .SYS character driver\r\n$"
+msg_cfg_device_size:
+    .ascii "CONFIG: DEVICE exceeds 8 KiB limit\r\n$"
+msg_cfg_device_char:
+    .ascii "CONFIG: DEVICE is not a character driver\r\n$"
+msg_cfg_device_failed:
+    .ascii "CONFIG: DEVICE failed\r\n$"
+rw_payload:
+    .ascii "rwok\n"
+env_comspec:
+    .asciz "COMSPEC=A:\\COMMAND.COM"
+env_path:
+    .asciz "PATH=A:\\BIN"
+vol_base_lba:
+    .word 0, 0
+vol_want_base:
+    .word 0, 0
+drive_map_bios:
+    .space DRIVEMAP_MAX, 0
+drive_map_base:
+    .space DRIVEMAP_MAX * 4, 0
+device_load_error:
+    .byte 0
+drm_ext_base:
+    .word 0, 0
+drm_ebr_lba:
+    .word 0, 0
+drm_spt:
+    .word 17
+drm_heads:
+    .word 4
+drm_bios_dl:
+    .byte 0x80
+drm_saw_mbr:
+    .byte 0
+drm_ext_list:
+    .word 0, 0, 0, 0, 0, 0, 0, 0
+abs_write:
+    .byte 0
+abs_saved_drv:
+    .byte 0xFF
+a57_time:
+    .word 0
+a57_date:
+    .word 0
+a57_lba:
+    .word 0
+wsa_ch:
+    .byte 0
+country_info:
+    .word 0x002E                /* date format */
+    .ascii "$"                  /* currency */
+    .byte 0, 0, 0, 0, 0, 0, 0
+    .ascii ","                  /* thousands */
+    .byte 0
+    .ascii "."                  /* decimal */
+    .byte 0
+    .ascii "-"                  /* date sep */
+    .byte 0
+    .ascii ":"                  /* time sep */
+    .byte 0
+    .byte 0                    /* currency format */
+    .byte 2                    /* currency digits */
+    .byte 0                    /* time format */
+country_case_map_ptr:
+    .word 0, 0                 /* far pointer, initialized to country_case_map */
+    .byte 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+
+name83:
+    .space 11, 0x20
+find_pat:
+    .space 11, 0x20
+find_dirbuf:
+    .space 64, 0
+fcb_path:
+    .space 16, 0
+fcb_path2:
+    .space 16, 0
+fcb_pos_lo:
+    .word 0
+fcb_pos_hi:
+    .word 0
+fcb_xfer:
+    .word 0
+fcb_saved_dta_seg:
+    .word 0
+fcb_saved_dta_off:
+    .word 0
+fcb_parse_wild:
+    .byte 0
+fcb_ext_flag:
+    .byte 0
+fcb_find_dta:
+    .space 128, 0
+cwd_path:
+    .space 64, 0
+read_buf:
+    .space 8, 0
+default_dta:
+    .space 128, 0
+
+handles:
+    .space 1152, 0               /* 64 × 18 */
+
+handle_owner:
+    .space 128, 0                /* 64 × WORD owning PSP (0 = none/std) */
+
+max_handles:
+    .word 20
+
+sector_buf:
+    .space 512, 0
+sector_guard:
+    .byte 0xA5, 0xA5, 0xA5, 0xA5
+
+/* Dedicated kernel stack (grows down). Kept out of the MCB arena. */
+kernel_stack:
+    .space 4096, 0
+kernel_stack_top:
+
+/*
+ * Separate teardown stack for com_resume_kernel. Must not alias kernel_stack:
+ * INSTALL's saved SS:SP frame sits on kernel_stack near the top; freeing on
+ * kernel_stack_top would overwrite that frame.
+ */
+term_stack:
+    .space 768, 0
+term_stack_top:
+
+com_size:
+    .word 0
+img_bytes_lo:
+    .word 0
+img_bytes_hi:
+    .word 0
+exe_block_top:
+    .word 0
+exe_hdr_len:
+    .word 0
+exe_cs:
+    .word 0
+exe_ip:
+    .word 0
+exe_ss:
+    .word 0
+exe_sp:
+    .word 0
+cfg_ch:
+    .byte 0
+cfg_line:
+    .space 120, 0
+cfg_install_tail:
+    .space 129, 0
+cfg_install_fcb1:
+    .space 16, 0
+cfg_install_fcb2:
+    .space 16, 0
+cfg_install_pb:
+    .space 14, 0
+
+/* Device ABI state + builtin NUL/CON headers */
+dev_chain_off:
+    .word 0
+dev_chain_seg:
+    .word 0
+con_dev_off:
+    .word 0
+con_dev_seg:
+    .word 0
+dev_call_off:
+    .word 0
+dev_call_seg:
+    .word 0
+dev_far_off:
+    .word 0
+dev_far_seg:
+    .word 0
+dev_con_rh_off:
+    .word 0
+dev_con_rh_seg:
+    .word 0
+dev_nul_rh_off:
+    .word 0
+dev_nul_rh_seg:
+    .word 0
+dev_putch_reent:
+    .byte 0
+con_defer_crtc:
+    .byte 0                      /* 1 = OUTPUT batch; skip per-char CRTC */
+putch_byte:
+    .byte 0
+dev_req:
+    .space 32, 0
+
+dev_nul_hdr:
+    .word 0                      /* next off — patched in dev_init_chain */
+    .word 0                      /* next seg */
+    .word (DEV_ATTR_CHAR)        /* char device */
+    .word offset dev_nul_strategy
+    .word offset dev_nul_interrupt
+    .ascii "NUL     "
+dev_nul_hdr_end:
+
+dev_con_hdr:
+    .word 0xFFFF
+    .word 0xFFFF
+    .word (DEV_ATTR_CHAR + DEV_ATTR_STDIN + DEV_ATTR_STDOUT)
+    .word offset dev_con_strategy
+    .word offset dev_con_interrupt
+    .ascii "CON     "
+dev_con_hdr_end:
+
+/* MZ/COM header scratch for streaming EXEC (not a full-file buffer). */
+exe_hdr:
+com_buf:
+    .space 0x800, 0
+
+fat_buf:
+    .space 1024, 0
+
+kernel_end:

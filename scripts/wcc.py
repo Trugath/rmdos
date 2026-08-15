@@ -18,13 +18,15 @@ from scripts.wcc_preprocess import default_include_dirs, preprocess_includes
 
 # --- Token types ---
 T_INT, T_CHAR, T_VOID = "INT", "CHAR", "VOID"
+T_STRUCT, T_ENUM, T_SIZEOF = "STRUCT", "ENUM", "SIZEOF"
 T_EXTERN, T_STATIC = "EXTERN", "STATIC"
-T_IF, T_ELSE, T_WHILE, T_FOR, T_RETURN, T_ASM, T_BREAK, T_CONTINUE = (
-    "IF", "ELSE", "WHILE", "FOR", "RETURN", "ASM", "BREAK", "CONTINUE",
+T_IF, T_ELSE, T_WHILE, T_FOR, T_DO, T_RETURN, T_ASM, T_BREAK, T_CONTINUE = (
+    "IF", "ELSE", "WHILE", "FOR", "DO", "RETURN", "ASM", "BREAK", "CONTINUE",
 )
+T_SWITCH, T_CASE, T_DEFAULT = "SWITCH", "CASE", "DEFAULT"
 T_IDENT, T_NUMBER, T_STRING = "IDENT", "NUMBER", "STRING"
 T_LBRACE, T_RBRACE, T_LPAREN, T_RPAREN, T_LBRACKET, T_RBRACKET = "LBRACE", "RBRACE", "LPAREN", "RPAREN", "LBRACKET", "RBRACKET"
-T_SEMI, T_COMMA = "SEMI", "COMMA"
+T_SEMI, T_COMMA, T_DOT, T_ARROW = "SEMI", "COMMA", "DOT", "ARROW"
 T_PLUS, T_MINUS, T_STAR, T_SLASH, T_PERCENT = "PLUS", "MINUS", "STAR", "SLASH", "PERCENT"
 T_EQ, T_NE, T_LT, T_LE, T_GT, T_GE = "EQ", "NE", "LT", "LE", "GT", "GE"
 T_AND, T_OR, T_XOR, T_NOT = "AND", "OR", "XOR", "NOT"
@@ -37,11 +39,46 @@ T_MACRO_END = "MACRO_END"  # internal: pop hidden macro after expansion
 T_EOF = "EOF"
 
 KEYWORDS = {
-    "int": T_INT, "char": T_CHAR, "void": T_VOID,
+    "int": T_INT, "char": T_CHAR, "void": T_VOID, "struct": T_STRUCT, "enum": T_ENUM,
+    "sizeof": T_SIZEOF,
     "extern": T_EXTERN, "static": T_STATIC,
-    "if": T_IF, "else": T_ELSE, "while": T_WHILE, "for": T_FOR,
+    "if": T_IF, "else": T_ELSE, "while": T_WHILE, "for": T_FOR, "do": T_DO,
+    "switch": T_SWITCH, "case": T_CASE, "default": T_DEFAULT,
     "return": T_RETURN, "asm": T_ASM, "break": T_BREAK, "continue": T_CONTINUE,
 }
+
+
+@dataclass
+class StructMember:
+    """One ordinary or bit-field member of a tagged struct."""
+    name: str
+    typ: str  # "int" or "char"
+    byte_offset: int
+    is_bitfield: bool = False
+    bit_offset: int = 0  # LSB-first bit index within the 16-bit unit
+    bit_width: int = 0
+
+    @property
+    def bit_mask(self) -> int:
+        """Mask of the field bits within its storage word (already shifted)."""
+        if not self.is_bitfield:
+            return 0
+        return ((1 << self.bit_width) - 1) << self.bit_offset
+
+    @property
+    def value_mask(self) -> int:
+        """Mask of the field value in isolation (unshifted)."""
+        if not self.is_bitfield:
+            return 0
+        return (1 << self.bit_width) - 1
+
+
+@dataclass
+class StructType:
+    tag: str
+    members: dict[str, StructMember] = field(default_factory=dict)
+    size: int = 0
+    complete: bool = False
 
 
 @dataclass
@@ -423,11 +460,15 @@ class Lexer:
             self._advance()
             self._advance()
             return Token(T_SHR, ">>", line, col)
+        if c == "-" and self.pos + 1 < len(self.source) and self.source[self.pos + 1] == ">":
+            self._advance()
+            self._advance()
+            return Token(T_ARROW, "->", line, col)
 
         # Single char
         single = {
             "{": T_LBRACE, "}": T_RBRACE, "(": T_LPAREN, ")": T_RPAREN,
-            "[": T_LBRACKET, "]": T_RBRACKET, ";": T_SEMI, ",": T_COMMA,
+            "[": T_LBRACKET, "]": T_RBRACKET, ";": T_SEMI, ",": T_COMMA, ".": T_DOT,
             "+": T_PLUS, "-": T_MINUS, "*": T_STAR, "/": T_SLASH, "%": T_PERCENT,
             "<": T_LT, ">": T_GT, "=": T_ASSIGN,
             "&": T_AND, "|": T_OR, "^": T_XOR, "!": T_LNOT, "~": T_NOT,
@@ -484,12 +525,23 @@ class Compiler:
         self.globals: dict[str, tuple[str, int]] = {}  # name -> (type, size) size=0 for scalar
         self.locals: dict[str, tuple[str, int]] = {}  # name -> (type, bp_offset)
         self.params: list[tuple[str, str]] = []  # (name, type)
+        self.structs: dict[str, StructType] = {}  # tag -> StructType
+        self.enum_tags: set[str] = set()
+        self.enumerators: dict[str, int] = {}  # name -> constant value
         self.local_offset = 0
         self.last_primary_type = "int"
         self.include_paths: list[Path] = []
         self.break_labels: list[str] = []
         self.continue_labels: list[str] = []
         self.arrays: set[str] = set()  # names that decay to pointers
+        self.array_lengths: dict[str, int] = {}  # element counts for arrays
+        self.static_locals: dict[str, str] = {}  # C name -> asm label (function-local static)
+        self.current_func: str | None = None
+        self._static_local_seq = 0
+
+    def _label_for(self, name: str) -> str:
+        """Asm symbol for a C name (mangled for function-local static)."""
+        return self.static_locals.get(name, name)
 
     def _advance(self) -> Token:
         self.cur_token = self.lexer.next_token()
@@ -522,6 +574,271 @@ class Compiler:
             return "void"
         return None
 
+    def _is_struct_type(self, typ: str) -> bool:
+        return typ.startswith("struct ") and not typ.endswith("*")
+
+    def _is_struct_ptr(self, typ: str) -> bool:
+        return typ.startswith("struct ") and typ.endswith("*")
+
+    def _struct_tag(self, typ: str) -> str:
+        s = typ[len("struct "):]
+        if s.endswith("*"):
+            s = s[:-1]
+        return s
+
+    def _struct_obj_type(self, typ: str) -> str:
+        """Return object type 'struct Tag' from 'struct Tag' or 'struct Tag*'."""
+        if typ.endswith("*"):
+            return typ[:-1]
+        return typ
+
+    def _type_size(self, typ: str) -> int:
+        if typ.endswith("*") or typ == "int" or typ.startswith("enum "):
+            return 2
+        if typ == "char":
+            return 1
+        if typ == "void":
+            return 0
+        if self._is_struct_type(typ):
+            tag = self._struct_tag(typ)
+            st = self.structs.get(tag)
+            if st is None or not st.complete:
+                return 0
+            return st.size
+        return 0
+
+    def _is_enum_type(self, typ: str) -> bool:
+        return typ.startswith("enum ")
+
+    def _is_cast_type_start(self) -> bool:
+        return (
+            self._at(T_INT)
+            or self._at(T_CHAR)
+            or self._at(T_VOID)
+            or self._at(T_STRUCT)
+            or self._at(T_ENUM)
+        )
+
+    def _require_complete_struct(self, typ: str, line: int, col: int) -> StructType:
+        if self._is_struct_ptr(typ):
+            typ = self._struct_obj_type(typ)
+        if not self._is_struct_type(typ):
+            raise CompileError(f"expected struct type, got '{typ}'", line, col)
+        tag = self._struct_tag(typ)
+        st = self.structs.get(tag)
+        if st is None or not st.complete:
+            raise CompileError(f"incomplete struct '{tag}'", line, col)
+        return st
+
+    def _layout_struct_members(
+        self,
+        tag: str,
+        member_specs: list[tuple[str, str, int | None, int, int]],
+    ) -> StructType:
+        """Build StructType from (name, typ, bit_width_or_None, line, col) specs."""
+        members: dict[str, StructMember] = {}
+        offset = 0
+        bit_unit_start: int | None = None
+        bit_pos = 0
+
+        def close_bit_unit() -> None:
+            nonlocal offset, bit_unit_start, bit_pos
+            if bit_unit_start is not None:
+                offset = bit_unit_start + 2
+                bit_unit_start = None
+                bit_pos = 0
+
+        for name, typ, width, line, col in member_specs:
+            if name in members:
+                raise CompileError(f"duplicate member '{name}' in struct '{tag}'", line, col)
+            if width is not None:
+                if typ != "int":
+                    raise CompileError("bit-fields must have type int", line, col)
+                if width < 1 or width > 16:
+                    raise CompileError(
+                        f"bit-field width must be 1..16 (got {width})", line, col
+                    )
+                if bit_unit_start is None:
+                    if offset % 2:
+                        offset += 1
+                    bit_unit_start = offset
+                    bit_pos = 0
+                if bit_pos + width > 16:
+                    close_bit_unit()
+                    if offset % 2:
+                        offset += 1
+                    bit_unit_start = offset
+                    bit_pos = 0
+                members[name] = StructMember(
+                    name=name,
+                    typ=typ,
+                    byte_offset=bit_unit_start,
+                    is_bitfield=True,
+                    bit_offset=bit_pos,
+                    bit_width=width,
+                )
+                bit_pos += width
+                if bit_pos == 16:
+                    close_bit_unit()
+            else:
+                close_bit_unit()
+                if typ == "int":
+                    if offset % 2:
+                        offset += 1
+                    members[name] = StructMember(name=name, typ=typ, byte_offset=offset)
+                    offset += 2
+                elif typ == "char":
+                    members[name] = StructMember(name=name, typ=typ, byte_offset=offset)
+                    offset += 1
+                else:
+                    raise CompileError(
+                        f"unsupported struct member type '{typ}'", line, col
+                    )
+
+        close_bit_unit()
+        return StructType(tag=tag, members=members, size=offset, complete=True)
+
+    def _parse_struct_type(self) -> str:
+        """Parse 'struct Tag' or 'struct Tag { ... }'. Returns 'struct Tag'."""
+        self._expect(T_STRUCT)
+        if not self._at(T_IDENT):
+            raise CompileError("expected struct tag", self.cur_token.line, self.cur_token.col)
+        tag_tok = self.cur_token
+        tag = tag_tok.value
+        self._advance()
+        if self._at(T_LBRACE):
+            if tag in self.structs and self.structs[tag].complete:
+                raise CompileError(f"redefinition of struct '{tag}'", tag_tok.line, tag_tok.col)
+            self._advance()
+            specs: list[tuple[str, str, int | None, int, int]] = []
+            while not self._at(T_RBRACE) and not self._at(T_EOF):
+                mtyp = self._type_spec()
+                if mtyp is None:
+                    raise CompileError(
+                        "expected member type", self.cur_token.line, self.cur_token.col
+                    )
+                if mtyp == "void":
+                    raise CompileError("void struct members are not allowed", self.cur_token.line, self.cur_token.col)
+                if self._at(T_STAR):
+                    raise CompileError(
+                        "struct pointers are not supported", self.cur_token.line, self.cur_token.col
+                    )
+                if not self._at(T_IDENT):
+                    raise CompileError(
+                        "anonymous / unnamed bit-fields are not supported",
+                        self.cur_token.line,
+                        self.cur_token.col,
+                    )
+                mname_tok = self.cur_token
+                mname = mname_tok.value
+                self._advance()
+                width: int | None = None
+                if self._at(T_COLON):
+                    self._advance()
+                    if not self._at(T_NUMBER):
+                        raise CompileError(
+                            "expected bit-field width", self.cur_token.line, self.cur_token.col
+                        )
+                    width = int(self.cur_token.value)
+                    self._advance()
+                if self._at(T_LBRACKET):
+                    raise CompileError(
+                        "struct member arrays are not supported",
+                        self.cur_token.line,
+                        self.cur_token.col,
+                    )
+                specs.append((mname, mtyp, width, mname_tok.line, mname_tok.col))
+                self._expect(T_SEMI)
+            self._expect(T_RBRACE)
+            self.structs[tag] = self._layout_struct_members(tag, specs)
+        elif tag not in self.structs:
+            # Incomplete tag reference; completeness checked at allocation/use.
+            self.structs[tag] = StructType(tag=tag, complete=False)
+        return f"struct {tag}"
+
+    def _parse_enum_type(self) -> str:
+        """Parse 'enum Tag', 'enum Tag { ... }', or 'enum { ... }'. Returns type string."""
+        self._expect(T_ENUM)
+        tag: str | None = None
+        if self._at(T_IDENT):
+            tag = self.cur_token.value
+            self._advance()
+        if self._at(T_LBRACE):
+            self._advance()
+            next_val = 0
+            saw_member = False
+            while not self._at(T_RBRACE) and not self._at(T_EOF):
+                if not self._at(T_IDENT):
+                    raise CompileError(
+                        "expected enumerator name", self.cur_token.line, self.cur_token.col
+                    )
+                name_tok = self.cur_token
+                name = name_tok.value
+                self._advance()
+                if name in self.enumerators:
+                    raise CompileError(
+                        f"redefinition of enumerator '{name}'", name_tok.line, name_tok.col
+                    )
+                if name in self.globals or name in self.locals:
+                    raise CompileError(
+                        f"enumerator '{name}' conflicts with variable",
+                        name_tok.line,
+                        name_tok.col,
+                    )
+                if self._at(T_ASSIGN):
+                    self._advance()
+                    neg = False
+                    if self._at(T_MINUS):
+                        self._advance()
+                        neg = True
+                    if self._at(T_NUMBER):
+                        val = int(self.cur_token.value)
+                        self._advance()
+                    elif self._at(T_IDENT) and self.cur_token.value in self.enumerators:
+                        val = self.enumerators[self.cur_token.value]
+                        self._advance()
+                    else:
+                        raise CompileError(
+                            "enumerator value must be an integer constant",
+                            self.cur_token.line,
+                            self.cur_token.col,
+                        )
+                    if neg:
+                        val = -val
+                    val &= 0xFFFF
+                else:
+                    val = next_val & 0xFFFF
+                self.enumerators[name] = val
+                next_val = (val + 1) & 0xFFFF
+                saw_member = True
+                if self._at(T_COMMA):
+                    self._advance()
+                    continue
+                break
+            if not saw_member:
+                raise CompileError("empty enum is not supported", self.cur_token.line, self.cur_token.col)
+            self._expect(T_RBRACE)
+            if tag is not None:
+                if tag in self.enum_tags:
+                    raise CompileError(
+                        f"redefinition of enum '{tag}'", self.cur_token.line, self.cur_token.col
+                    )
+                self.enum_tags.add(tag)
+                return f"enum {tag}"
+            return "enum"
+        if tag is None:
+            raise CompileError("expected enum tag or '{'", self.cur_token.line, self.cur_token.col)
+        self.enum_tags.add(tag)
+        return f"enum {tag}"
+
+    def _parse_decl_type(self) -> str | None:
+        """Parse a type specifier (int/char/void/struct/enum). May define a struct/enum."""
+        if self._at(T_STRUCT):
+            return self._parse_struct_type()
+        if self._at(T_ENUM):
+            return self._parse_enum_type()
+        return self._type_spec()
+
     def _parse_type_and_name(self) -> tuple[str, str, int]:  # (type, name, array_size)
         t = self._type_spec()
         if t is None:
@@ -538,12 +855,363 @@ class Compiler:
     def _lookup(self, name: str) -> tuple[str, int]:  # (type, offset_or_size)
         if name in self.locals:
             return self.locals[name]
+        if name in self.static_locals:
+            return self.globals[self.static_locals[name]]
         if name in self.globals:
             return self.globals[name]
         return None, 0
 
     def _is_local(self, name: str) -> bool:
         return name in self.locals
+
+    def _align_local(self, align: int = 2) -> None:
+        rem = self.local_offset % align
+        if rem:
+            pad = align - rem
+            self.gen.emit(f"    sub sp, {pad}")
+            self.local_offset += pad
+
+    def _emit_member_addr_bx(self, base_name: str, member: StructMember) -> None:
+        """Emit address of member storage (byte/word unit) into BX from a named object."""
+        off = member.byte_offset
+        if self._is_local(base_name):
+            _, base_bp = self.locals[base_name]
+            total = base_bp + off
+            self.gen.emit(f"    lea bx, [bp{total:+d}]")
+        else:
+            if off == 0:
+                self.gen.emit(f"    lea bx, [{self._label_for(base_name)}]")
+            else:
+                self.gen.emit(f"    lea bx, [{self._label_for(base_name)}+{off}]")
+
+    def _emit_ptr_member_addr_bx(self, member: StructMember) -> None:
+        """AX holds struct pointer; emit member storage address into BX."""
+        self.gen.emit("    mov bx, ax")
+        if member.byte_offset:
+            self.gen.emit(f"    add bx, {member.byte_offset}")
+
+    def _emit_struct_array_elem_addr_bx(self, name: str, typ: str) -> None:
+        """AX holds element index; emit address of name[index] into BX."""
+        st = self._require_complete_struct(typ, self.cur_token.line, self.cur_token.col)
+        sz = st.size
+        _t, off = self._lookup(name)
+        self.gen.emit("    push ax")
+        if self._is_local(name):
+            self.gen.emit(f"    lea bx, [bp{off:+d}]")
+        else:
+            self.gen.emit(f"    lea bx, [{self._label_for(name)}]")
+        self.gen.emit("    pop ax")
+        if sz == 0:
+            pass
+        elif sz == 1:
+            pass
+        else:
+            self.gen.emit(f"    mov cx, {sz}")
+            self.gen.emit("    mul cx")
+        self.gen.emit("    add bx, ax")
+
+    def _emit_load_scalar(self, name: str) -> None:
+        """Load a scalar/pointer variable's value into AX."""
+        typ, off = self._lookup(name)
+        if typ is None:
+            raise CompileError(f"undefined identifier '{name}'", self.cur_token.line, self.cur_token.col)
+        if self._is_local(name):
+            self.gen.emit(f"    mov ax, [bp{off:+d}]")
+        else:
+            self.gen.emit(f"    mov ax, [{self._label_for(name)}]")
+        self.last_primary_type = typ
+
+    def _emit_load_member_at_bx(self, member: StructMember) -> None:
+        """Load member whose storage unit address is already in BX."""
+        if member.is_bitfield:
+            self.gen.emit("    mov ax, [bx]")
+            if member.bit_offset:
+                self.gen.emit(f"    shr ax, {member.bit_offset}")
+            self.gen.emit(f"    and ax, {member.value_mask}")
+        elif member.typ == "char":
+            self.gen.emit("    xor ah, ah")
+            self.gen.emit("    mov al, [bx]")
+        else:
+            self.gen.emit("    mov ax, [bx]")
+        self.last_primary_type = "int" if member.is_bitfield else member.typ
+
+    def _emit_store_member_at_bx(self, member: StructMember) -> None:
+        """Store AX into member at BX. Bit-fields leave the masked value in AX."""
+        if member.is_bitfield:
+            self.gen.emit(f"    and ax, {member.value_mask}")
+            self.gen.emit("    push ax")
+            if member.bit_offset:
+                self.gen.emit(f"    shl ax, {member.bit_offset}")
+            self.gen.emit("    mov cx, ax")
+            self.gen.emit("    mov ax, [bx]")
+            clear = (~member.bit_mask) & 0xFFFF
+            self.gen.emit(f"    and ax, {clear}")
+            self.gen.emit("    or ax, cx")
+            self.gen.emit("    mov [bx], ax")
+            self.gen.emit("    pop ax")
+        elif member.typ == "char":
+            self.gen.emit("    mov [bx], al")
+        else:
+            self.gen.emit("    mov [bx], ax")
+
+    def _emit_load_member(self, base_name: str, member: StructMember) -> None:
+        self._emit_member_addr_bx(base_name, member)
+        self._emit_load_member_at_bx(member)
+
+    def _emit_store_member(self, base_name: str, member: StructMember) -> None:
+        """Store AX into named object's member; leave assigned (masked) value in AX for bit-fields."""
+        if member.is_bitfield:
+            self.gen.emit(f"    and ax, {member.value_mask}")
+            self.gen.emit("    push ax")
+            if member.bit_offset:
+                self.gen.emit(f"    shl ax, {member.bit_offset}")
+            self.gen.emit("    mov cx, ax")
+            self._emit_member_addr_bx(base_name, member)
+            self.gen.emit("    mov ax, [bx]")
+            clear = (~member.bit_mask) & 0xFFFF
+            self.gen.emit(f"    and ax, {clear}")
+            self.gen.emit("    or ax, cx")
+            self.gen.emit("    mov [bx], ax")
+            self.gen.emit("    pop ax")
+        else:
+            self._emit_member_addr_bx(base_name, member)
+            self._emit_store_member_at_bx(member)
+
+    def _lookup_member(self, struct_typ: str, member_name: str, line: int, col: int) -> StructMember:
+        st = self._require_complete_struct(struct_typ, line, col)
+        m = st.members.get(member_name)
+        if m is None:
+            raise CompileError(
+                f"struct '{st.tag}' has no member '{member_name}'", line, col
+            )
+        return m
+
+    def _parse_sizeof_type(self) -> str:
+        """Parse a type name inside sizeof(...), without allowing a new struct/enum definition."""
+        if self._at(T_STRUCT):
+            self._advance()
+            if not self._at(T_IDENT):
+                raise CompileError("expected struct tag", self.cur_token.line, self.cur_token.col)
+            tag = self.cur_token.value
+            self._advance()
+            if self._at(T_LBRACE):
+                raise CompileError(
+                    "struct definition not allowed in sizeof",
+                    self.cur_token.line,
+                    self.cur_token.col,
+                )
+            typ = f"struct {tag}"
+        elif self._at(T_ENUM):
+            self._advance()
+            if not self._at(T_IDENT):
+                raise CompileError("expected enum tag", self.cur_token.line, self.cur_token.col)
+            tag = self.cur_token.value
+            self._advance()
+            if self._at(T_LBRACE):
+                raise CompileError(
+                    "enum definition not allowed in sizeof",
+                    self.cur_token.line,
+                    self.cur_token.col,
+                )
+            typ = f"enum {tag}"
+        else:
+            typ = self._type_spec()
+            if typ is None:
+                raise CompileError("expected type name", self.cur_token.line, self.cur_token.col)
+        if self._at(T_STAR):
+            self._advance()
+            typ = typ + "*"
+        return typ
+
+    def _emit_cast(self, typ: str) -> None:
+        """Apply a cast to the value in AX and update last_primary_type."""
+        if typ == "void" or typ == "void*":
+            raise CompileError("cast to void is not supported", self.cur_token.line, self.cur_token.col)
+        if typ == "char":
+            self.gen.emit("    and ax, 255")
+            self.last_primary_type = "char"
+        elif typ.startswith("enum "):
+            self.last_primary_type = "int"
+        else:
+            self.last_primary_type = typ
+
+    def _sizeof_value(self, typ: str, line: int, col: int) -> int:
+        if typ == "void" or typ == "void*":
+            raise CompileError("sizeof(void) is not supported", line, col)
+        if self._is_struct_type(typ):
+            self._require_complete_struct(typ, line, col)
+        sz = self._type_size(typ)
+        if sz <= 0:
+            raise CompileError(f"cannot take sizeof('{typ}')", line, col)
+        return sz
+
+    def _sizeof_expr_no_eval(self) -> int:
+        """Compute sizeof an lvalue expression without emitting code."""
+        if not self._at(T_IDENT):
+            raise CompileError(
+                "sizeof(expr) supports identifiers and member access only",
+                self.cur_token.line,
+                self.cur_token.col,
+            )
+        name_tok = self.cur_token
+        name = name_tok.value
+        self._advance()
+        typ, _off = self._lookup(name)
+        if typ is None:
+            raise CompileError(f"undefined identifier '{name}'", name_tok.line, name_tok.col)
+        if self._at(T_DOT) or self._at(T_ARROW):
+            is_arrow = self._at(T_ARROW)
+            self._advance()
+            if not self._at(T_IDENT):
+                raise CompileError("expected member name", self.cur_token.line, self.cur_token.col)
+            mname_tok = self.cur_token
+            mname = mname_tok.value
+            self._advance()
+            if is_arrow:
+                if not self._is_struct_ptr(typ):
+                    raise CompileError(
+                        f"arrow member access on non-struct-pointer '{name}'",
+                        name_tok.line,
+                        name_tok.col,
+                    )
+                base = self._struct_obj_type(typ)
+            else:
+                if not self._is_struct_type(typ):
+                    raise CompileError(
+                        f"dot member access on non-struct '{name}'",
+                        name_tok.line,
+                        name_tok.col,
+                    )
+                base = typ
+            member = self._lookup_member(base, mname, mname_tok.line, mname_tok.col)
+            if member.is_bitfield:
+                raise CompileError(
+                    "cannot apply sizeof to a bit-field", mname_tok.line, mname_tok.col
+                )
+            return 2 if member.typ == "int" else 1
+        if name in self.array_lengths:
+            return self.array_lengths[name] * self._sizeof_value(typ, name_tok.line, name_tok.col)
+        return self._sizeof_value(typ, name_tok.line, name_tok.col)
+    def _emit_global_storage(
+        self,
+        name: str,
+        typ: str,
+        size: int,
+        is_extern: bool,
+        has_init: bool,
+        is_static: bool = False,
+    ) -> None:
+        """Emit data/bss/extern for a global. Caller already consumed '=' if has_init."""
+        if is_extern:
+            self.gen.emit(f".extern {name}")
+            self._expect(T_SEMI)
+            return
+        if has_init:
+            if self._is_struct_type(typ):
+                raise CompileError(
+                    "struct initializers are not supported",
+                    self.cur_token.line,
+                    self.cur_token.col,
+                )
+            # Unique data section so ld --gc-sections can drop unused globals.
+            self.gen.emit(f".section .data.{name}")
+            if not is_static:
+                self.gen.emit(f".global {name}")
+            self.gen.emit(f"{name}:")
+            if size > 0:
+                elem_size = 2 if typ == "int" else 1
+                if self._at(T_LBRACE):
+                    self._advance()
+                    values = []
+                    while not self._at(T_RBRACE) and not self._at(T_EOF):
+                        if not self._at(T_NUMBER):
+                            raise CompileError("brace initializer element must be a number", self.cur_token.line, self.cur_token.col)
+                        values.append(self.cur_token.value & (0xFFFF if typ == "int" else 0xFF))
+                        self._advance()
+                        if not self._at(T_RBRACE):
+                            self._expect(T_COMMA)
+                    self._expect(T_RBRACE)
+                    if not values or (len(values) == 1 and values[0] == 0):
+                        self.gen.emit(f"    .space {size * elem_size}, 0")
+                    else:
+                        if len(values) > size:
+                            raise CompileError(f"too many initializers (have {len(values)}, array size {size})", self.cur_token.line, self.cur_token.col)
+                        if typ == "int":
+                            self.gen.emit("    .word " + ", ".join(str(v) for v in values))
+                        else:
+                            self.gen.emit("    .byte " + ", ".join(str(v) for v in values))
+                        if len(values) < size:
+                            self.gen.emit(f"    .space {(size - len(values)) * elem_size}, 0")
+                elif self._at(T_STRING):
+                    if typ != "char":
+                        raise CompileError("string initializer only for char array", self.cur_token.line, self.cur_token.col)
+                    s = self.cur_token.value
+                    self._advance()
+                    bytes_val = s.encode("latin-1")
+                    if len(bytes_val) + 1 <= size:
+                        bytes_list = list(bytes_val) + [0] + [0] * (size - len(bytes_val) - 1)
+                    else:
+                        bytes_list = list(bytes_val[: size - 1]) + [0]
+                    if bytes_list:
+                        self.gen.emit("    .byte " + ", ".join(str(b) for b in bytes_list))
+                else:
+                    raise CompileError("array initializer must be string or { numbers }", self.cur_token.line, self.cur_token.col)
+            else:
+                # scalar / pointer: int x = 5; or char c = 'a'; or T *p = 0;
+                if typ.endswith("*") or typ == "int" or self._is_enum_type(typ):
+                    if not self._at(T_NUMBER):
+                        raise CompileError(
+                            "int/pointer initializer must be a number",
+                            self.cur_token.line,
+                            self.cur_token.col,
+                        )
+                    val = self.cur_token.value
+                    self._advance()
+                    self.gen.emit(f"    .word {val & 0xFFFF}")
+                else:
+                    if self._at(T_NUMBER):
+                        val = self.cur_token.value
+                        self._advance()
+                        self.gen.emit(f"    .byte {val & 0xFF}")
+                    elif self._at(T_STRING):
+                        s = self.cur_token.value
+                        self._advance()
+                        if len(s) < 1:
+                            raise CompileError("char initializer string must have one character", self.cur_token.line, self.cur_token.col)
+                        self.gen.emit(f"    .byte {ord(s[0]) & 0xFF}")
+                    else:
+                        raise CompileError("char initializer must be number or character literal", self.cur_token.line, self.cur_token.col)
+        else:
+            if size > 0:
+                if self._is_struct_type(typ):
+                    self._require_complete_struct(typ, self.cur_token.line, self.cur_token.col)
+                    nbytes = size * self._type_size(typ)
+                else:
+                    nbytes = size * (2 if typ == "int" else 1)
+            else:
+                nbytes = self._type_size(typ)
+                if nbytes == 0 and self._is_struct_type(typ):
+                    self._require_complete_struct(typ, self.cur_token.line, self.cur_token.col)
+                    nbytes = self._type_size(typ)
+            if self.exe_entry:
+                self.gen.emit(f".section .bss.{name}")
+                if not is_static:
+                    self.gen.emit(f".global {name}")
+                self.gen.emit(f"{name}:")
+                self.gen.emit(f"    .space {nbytes}")
+            else:
+                self.gen.emit(f".section .data.{name}")
+                if not is_static:
+                    self.gen.emit(f".global {name}")
+                self.gen.emit(f"{name}:")
+                if size > 0 or self._is_struct_type(typ):
+                    self.gen.emit(f"    .space {nbytes}, 0")
+                elif typ.endswith("*") or typ == "int" or self._is_enum_type(typ):
+                    self.gen.emit("    .word 0")
+                else:
+                    self.gen.emit("    .byte 0")
+        self._expect(T_SEMI)
+        self.gen.emit(".section .text")
 
     def compile(self) -> str:
         self._advance()
@@ -553,6 +1221,7 @@ class Compiler:
 
         if self.com_entry:
             # DOS .COM: linked at 0x100, CS=DS=ES=PSP segment.
+            self.gen.emit(".section .text._start")
             self.gen.emit(".global _start")
             self.gen.emit("_start:")
             self.gen.emit("    push cs")
@@ -564,6 +1233,7 @@ class Compiler:
             self.gen.emit("    int 0x21")
         elif self.exe_entry:
             # Small-model MZ: CS=code, SS=DS=data (set by loader SS); zero BSS.
+            self.gen.emit(".section .text._start")
             self.gen.emit(".global _start")
             self.gen.emit("_start:")
             self.gen.emit("    mov ax, ss")
@@ -579,12 +1249,14 @@ class Compiler:
             self.gen.emit("    mov ah, 0x4C")
             self.gen.emit("    int 0x21")
         elif self.module_name:
+            self.gen.emit(".section .text.module_header")
             self.gen.emit(".global module_header")
             self.gen.emit("module_header:")
             self.gen.emit('    .ascii "MOD0"')
             self.gen.emit("    .word module_entry")
             self.gen.emit(f'    .ascii "{self.module_name}"')
             self.gen.emit("    .byte 0x00")
+            self.gen.emit(".section .text.module_entry")
             self.gen.emit("module_entry:")
             self.gen.emit("    push ax")
             self.gen.emit("    push bx")
@@ -610,26 +1282,65 @@ class Compiler:
             self.gen.emit("    retf")
 
         while not self._at(T_EOF):
-            # Optional storage class
+            # Optional storage class (mutually exclusive)
             is_extern = False
+            is_static = False
             if self._at(T_EXTERN):
                 is_extern = True
                 self._advance()
+                if self._at(T_STATIC):
+                    raise CompileError(
+                        "cannot combine extern and static",
+                        self.cur_token.line,
+                        self.cur_token.col,
+                    )
             elif self._at(T_STATIC):
-                self._advance()  # accepted; still emit .global (single TU)
-            t = self._type_spec()
+                is_static = True
+                self._advance()
+                if self._at(T_EXTERN):
+                    raise CompileError(
+                        "cannot combine static and extern",
+                        self.cur_token.line,
+                        self.cur_token.col,
+                    )
+            t = self._parse_decl_type()
             if t is None:
                 break
+            # struct Tag { ... };  or enum Tag { ... }; / enum { ... };
+            if (self._is_struct_type(t) or self._is_enum_type(t) or t == "enum") and self._at(T_SEMI):
+                self._advance()
+                continue
+            if t == "enum":
+                raise CompileError(
+                    "anonymous enum cannot declare a variable (give it a tag)",
+                    self.cur_token.line,
+                    self.cur_token.col,
+                )
+            if self._at(T_STAR):
+                if t == "void":
+                    raise CompileError(
+                        "void pointers are not supported",
+                        self.cur_token.line,
+                        self.cur_token.col,
+                    )
+                self._advance()
+                t = t + "*"
             if not self._at(T_IDENT):
                 raise CompileError("expected identifier", self.cur_token.line, self.cur_token.col)
             next_t = self._peek_next()
             if next_t.kind != T_LPAREN:
-                # Global variable (scalar or array), optional initializer
+                # Global variable (scalar, struct, pointer, or array), optional initializer
                 name = self.cur_token.value
                 self._advance()
                 size = 0
                 is_array = False
                 if self._at(T_LBRACKET):
+                    if self._is_struct_ptr(t):
+                        raise CompileError(
+                            "arrays of struct pointers are not supported",
+                            self.cur_token.line,
+                            self.cur_token.col,
+                        )
                     self._advance()
                     is_array = True
                     if self._at(T_NUMBER):
@@ -641,10 +1352,16 @@ class Compiler:
                             self.cur_token.line,
                             self.cur_token.col,
                         )
-                    # extern T name[] → incomplete; keep as array with size 1 sentinel
                     if is_array and size == 0:
                         size = 1
                     self._expect(T_RBRACKET)
+                if self._is_struct_type(t) and not is_extern:
+                    self._require_complete_struct(t, self.cur_token.line, self.cur_token.col)
+                if self._is_struct_ptr(t) and not is_extern:
+                    # Pointee must be complete for -> / sizeof(*p) clarity.
+                    self._require_complete_struct(
+                        self._struct_obj_type(t), self.cur_token.line, self.cur_token.col
+                    )
                 has_init = self._at(T_ASSIGN)
                 if has_init:
                     self._advance()  # consume =
@@ -657,119 +1374,45 @@ class Compiler:
                 self.globals[name] = (t, size)
                 if size > 0:
                     self.arrays.add(name)
-                if is_extern:
-                    # Declaration only — defined in another object (e.g. .s / other TU).
-                    self.gen.emit(f".extern {name}")
-                    self._expect(T_SEMI)
-                    continue
-                if has_init:
-                    self.gen.emit(".section .data")
-                    self.gen.emit(f".global {name}")
-                    self.gen.emit(f"{name}:")
-                    if size > 0:
-                        elem_size = 2 if t == "int" else 1
-                        if self._at(T_LBRACE):
-                            self._advance()
-                            values = []
-                            while not self._at(T_RBRACE) and not self._at(T_EOF):
-                                if not self._at(T_NUMBER):
-                                    raise CompileError("brace initializer element must be a number", self.cur_token.line, self.cur_token.col)
-                                values.append(self.cur_token.value & (0xFFFF if t == "int" else 0xFF))
-                                self._advance()
-                                if not self._at(T_RBRACE):
-                                    self._expect(T_COMMA)
-                            self._expect(T_RBRACE)
-                            if not values or (len(values) == 1 and values[0] == 0):
-                                self.gen.emit(f"    .space {size * elem_size}, 0")
-                            else:
-                                if len(values) > size:
-                                    raise CompileError(f"too many initializers (have {len(values)}, array size {size})", self.cur_token.line, self.cur_token.col)
-                                if t == "int":
-                                    self.gen.emit("    .word " + ", ".join(str(v) for v in values))
-                                else:
-                                    self.gen.emit("    .byte " + ", ".join(str(v) for v in values))
-                                if len(values) < size:
-                                    self.gen.emit(f"    .space {(size - len(values)) * elem_size}, 0")
-                        elif self._at(T_STRING):
-                            # char buf[N] = "string"
-                            if t != "char":
-                                raise CompileError("string initializer only for char array", self.cur_token.line, self.cur_token.col)
-                            s = self.cur_token.value
-                            self._advance()
-                            bytes_val = s.encode("latin-1")
-                            if len(bytes_val) + 1 <= size:
-                                bytes_list = list(bytes_val) + [0] + [0] * (size - len(bytes_val) - 1)
-                            else:
-                                bytes_list = list(bytes_val[: size - 1]) + [0]
-                            if bytes_list:
-                                self.gen.emit("    .byte " + ", ".join(str(b) for b in bytes_list))
-                        else:
-                            raise CompileError("array initializer must be string or { numbers }", self.cur_token.line, self.cur_token.col)
-                    else:
-                        # scalar: int x = 5; or char c = 'a';
-                        if t == "int":
-                            if not self._at(T_NUMBER):
-                                raise CompileError("int initializer must be a number", self.cur_token.line, self.cur_token.col)
-                            val = self.cur_token.value
-                            self._advance()
-                            self.gen.emit(f"    .word {val & 0xFFFF}")
-                        else:
-                            if self._at(T_NUMBER):
-                                val = self.cur_token.value
-                                self._advance()
-                                self.gen.emit(f"    .byte {val & 0xFF}")
-                            elif self._at(T_STRING):
-                                s = self.cur_token.value
-                                self._advance()
-                                if len(s) < 1:
-                                    raise CompileError("char initializer string must have one character", self.cur_token.line, self.cur_token.col)
-                                self.gen.emit(f"    .byte {ord(s[0]) & 0xFF}")
-                            else:
-                                raise CompileError("char initializer must be number or character literal", self.cur_token.line, self.cur_token.col)
-                else:
-                    # Uninitialized: BSS for small-model MZ; COM keeps zeros in .data
-                    # (com.ld discards .bss).
-                    if self.exe_entry:
-                        self.gen.emit(".section .bss")
-                        self.gen.emit(f".global {name}")
-                        self.gen.emit(f"{name}:")
-                        if size > 0:
-                            elem_size = 2 if t == "int" else 1
-                            self.gen.emit(f"    .space {size * elem_size}")
-                        else:
-                            if t == "int":
-                                self.gen.emit("    .space 2")
-                            else:
-                                self.gen.emit("    .space 1")
-                    else:
-                        self.gen.emit(".section .data")
-                        self.gen.emit(f".global {name}")
-                        self.gen.emit(f"{name}:")
-                        if size > 0:
-                            elem_size = 2 if t == "int" else 1
-                            self.gen.emit(f"    .space {size * elem_size}, 0")
-                        else:
-                            if t == "int":
-                                self.gen.emit("    .word 0")
-                            else:
-                                self.gen.emit("    .byte 0")
-                self._expect(T_SEMI)
-                self.gen.emit(".section .text")
+                    self.array_lengths[name] = size
+                self._emit_global_storage(name, t, size, is_extern, has_init, is_static)
                 continue
 
             # Function
+            if self._is_struct_type(t):
+                raise CompileError(
+                    "struct return types are not supported",
+                    self.cur_token.line,
+                    self.cur_token.col,
+                )
             name = self._expect(T_IDENT).value
             self._expect(T_LPAREN)
             params: list[tuple[str, str]] = []
             while not self._at(T_RPAREN):
-                pt = self._type_spec()
+                pt = self._parse_decl_type()
                 if pt is None:
                     break
                 if pt == "void" and self._at(T_RPAREN):
                     break
                 if self._at(T_STAR):
+                    if pt == "void":
+                        raise CompileError(
+                            "void pointers are not supported",
+                            self.cur_token.line,
+                            self.cur_token.col,
+                        )
                     self._advance()
                     pt = pt + "*"
+                if self._is_struct_type(pt):
+                    raise CompileError(
+                        "struct parameters are not supported (use struct pointers)",
+                        self.cur_token.line,
+                        self.cur_token.col,
+                    )
+                if self._is_struct_ptr(pt):
+                    self._require_complete_struct(
+                        self._struct_obj_type(pt), self.cur_token.line, self.cur_token.col
+                    )
                 pname = self._expect(T_IDENT).value
                 params.append((pname, pt))
                 if not self._at(T_RPAREN):
@@ -782,15 +1425,21 @@ class Compiler:
 
             self.params = params
             self.locals = {}
+            self.static_locals = {}
             self.local_offset = 0
+            self.current_func = name
             # Drop previous function's local arrays; keep global arrays.
             self.arrays = {n for n, (_t, sz) in self.globals.items() if sz > 0}
+            self.array_lengths = {n: sz for n, (_t, sz) in self.globals.items() if sz > 0}
             # Args pushed left-to-right: last arg at [bp+4], first at [bp+4+2*(n-1)]
-            for i, (pname, _) in enumerate(params):
-                self.locals[pname] = ("int", 4 + 2 * (len(params) - 1 - i))
+            for i, (pname, ptyp) in enumerate(params):
+                self.locals[pname] = (ptyp, 4 + 2 * (len(params) - 1 - i))
 
-            # Emit function prologue, then body, then epilogue
-            self.gen.emit(f".global {name}")
+            # Emit function prologue, then body, then epilogue.
+            # Per-function text section enables ld --gc-sections.
+            self.gen.emit(f".section .text.{name}")
+            if not is_static:
+                self.gen.emit(f".global {name}")
             self.gen.emit(f"{name}:")
             self.gen.emit("    push bp")
             self.gen.emit("    mov bp, sp")
@@ -799,7 +1448,7 @@ class Compiler:
             self.gen.emit("    mov sp, bp")
             self.gen.emit("    pop bp")
             self.gen.emit("    ret")
-
+            self.current_func = None
         # Emit .rodata for string literals
         if self.gen.strings:
             self.gen.emit(".section .rodata")
@@ -823,22 +1472,139 @@ class Compiler:
                 self._parse_statement()
             self._expect(T_RBRACE)
             return
-        t = self._type_spec()
+        is_static_local = False
+        if self._at(T_STATIC):
+            is_static_local = True
+            self._advance()
+        t = self._parse_decl_type()
         if t is not None:
+            if (
+                self._is_struct_type(t) or self._is_enum_type(t) or t == "enum"
+            ) and self._at(T_SEMI):
+                # Local struct/enum definition only
+                self._advance()
+                return
+            if t == "enum":
+                raise CompileError(
+                    "anonymous enum cannot declare a variable (give it a tag)",
+                    self.cur_token.line,
+                    self.cur_token.col,
+                )
+            if self._at(T_STAR):
+                if t == "void":
+                    raise CompileError(
+                        "void pointers are not supported",
+                        self.cur_token.line,
+                        self.cur_token.col,
+                    )
+                self._advance()
+                t = t + "*"
             while True:
                 name = self._expect(T_IDENT).value
                 size = 0
                 if self._at(T_LBRACKET):
+                    if self._is_struct_ptr(t):
+                        raise CompileError(
+                            "arrays of struct pointers are not supported",
+                            self.cur_token.line,
+                            self.cur_token.col,
+                        )
                     self._advance()
                     size = self._expect(T_NUMBER).value
                     self._expect(T_RBRACKET)
+
+                if is_static_local:
+                    if name in self.locals or name in self.static_locals:
+                        raise CompileError(
+                            f"redefinition of '{name}'",
+                            self.cur_token.line,
+                            self.cur_token.col,
+                        )
+                    if self.current_func is None:
+                        raise CompileError(
+                            "static local outside function",
+                            self.cur_token.line,
+                            self.cur_token.col,
+                        )
+                    if self._is_struct_type(t) and size == 0:
+                        self._require_complete_struct(
+                            t, self.cur_token.line, self.cur_token.col
+                        )
+                    if self._is_struct_ptr(t):
+                        self._require_complete_struct(
+                            self._struct_obj_type(t),
+                            self.cur_token.line,
+                            self.cur_token.col,
+                        )
+                    self._static_local_seq += 1
+                    label = f"{self.current_func}__static_{name}_{self._static_local_seq}"
+                    has_init = self._at(T_ASSIGN)
+                    if has_init:
+                        self._advance()
+                    if self._at(T_COMMA):
+                        raise CompileError(
+                            "comma-separated static locals are not supported",
+                            self.cur_token.line,
+                            self.cur_token.col,
+                        )
+                    self.globals[label] = (t, size)
+                    self.static_locals[name] = label
+                    if size > 0:
+                        self.arrays.add(name)
+                        self.array_lengths[name] = size
+                    # Emit as file-scope static data (no .global); stay in function text after.
+                    self._emit_global_storage(
+                        label, t, size, False, has_init, is_static=True
+                    )
+                    self.gen.emit(f".section .text.{self.current_func}")
+                    return
+
+                if self._at(T_ASSIGN):
+                    raise CompileError(
+                        "local initializers are not supported"
+                        if not self._is_struct_type(t)
+                        else "struct initializers are not supported",
+                        self.cur_token.line,
+                        self.cur_token.col,
+                    )
                 if size > 0:
-                    self.gen.emit(f"    sub sp, {size}")
-                    self.local_offset += size
+                    if self._is_struct_type(t):
+                        st = self._require_complete_struct(
+                            t, self.cur_token.line, self.cur_token.col
+                        )
+                        self._align_local(2)
+                        nbytes = size * st.size
+                        if nbytes > 0:
+                            self.gen.emit(f"    sub sp, {nbytes}")
+                            self.local_offset += nbytes
+                    else:
+                        self.gen.emit(f"    sub sp, {size}")
+                        self.local_offset += size
                     self.locals[name] = (t, -self.local_offset)
                     self.arrays.add(name)
+                    self.array_lengths[name] = size
+                elif self._is_struct_type(t):
+                    st = self._require_complete_struct(
+                        t, self.cur_token.line, self.cur_token.col
+                    )
+                    self._align_local(2)
+                    sz = st.size
+                    if sz > 0:
+                        self.gen.emit(f"    sub sp, {sz}")
+                        self.local_offset += sz
+                    self.locals[name] = (t, -self.local_offset)
+                elif t.endswith("*") or t == "int" or self._is_enum_type(t):
+                    if self._is_struct_ptr(t):
+                        self._require_complete_struct(
+                            self._struct_obj_type(t),
+                            self.cur_token.line,
+                            self.cur_token.col,
+                        )
+                    self.gen.emit("    sub sp, 2")
+                    self.local_offset += 2
+                    self.locals[name] = (t, -self.local_offset)
                 else:
-                    sz = 2 if t == "int" else 1
+                    sz = 1
                     self.gen.emit(f"    sub sp, {sz}")
                     self.local_offset += sz
                     self.locals[name] = (t, -self.local_offset)
@@ -847,6 +1613,12 @@ class Compiler:
                 self._advance()
             self._expect(T_SEMI)
             return
+        if is_static_local:
+            raise CompileError(
+                "expected declaration after static",
+                self.cur_token.line,
+                self.cur_token.col,
+            )
         if self._at(T_IF):
             self._advance()
             self._expect(T_LPAREN)
@@ -866,6 +1638,27 @@ class Compiler:
             else:
                 self.gen.emit(f"{lfalse}:")
             return
+        if self._at(T_DO):
+            self._advance()
+            lstart = self.gen.new_label()
+            lcont = self.gen.new_label()
+            lend = self.gen.new_label()
+            self.break_labels.append(lend)
+            self.continue_labels.append(lcont)
+            self.gen.emit(f"{lstart}:")
+            self._parse_statement()
+            self.gen.emit(f"{lcont}:")
+            self._expect(T_WHILE)
+            self._expect(T_LPAREN)
+            self._expr()
+            self._expect(T_RPAREN)
+            self._expect(T_SEMI)
+            self.gen.emit("    cmp ax, 0")
+            self.gen.emit(f"    jne {lstart}")
+            self.gen.emit(f"{lend}:")
+            self.break_labels.pop()
+            self.continue_labels.pop()
+            return
         if self._at(T_WHILE):
             self._advance()
             self._expect(T_LPAREN)
@@ -883,6 +1676,95 @@ class Compiler:
             self.gen.emit(f"{lend}:")
             self.break_labels.pop()
             self.continue_labels.pop()
+            return
+        if self._at(T_SWITCH):
+            self._advance()
+            self._expect(T_LPAREN)
+            self._expr()
+            self._expect(T_RPAREN)
+            self.gen.emit("    push ax")
+            ldisp = self.gen.new_label()
+            lend = self.gen.new_label()
+            self.gen.emit(f"    jmp {ldisp}")
+            self.break_labels.append(lend)
+            self._expect(T_LBRACE)
+            cases: list[tuple[int, str]] = []
+            default_lab: str | None = None
+            while not self._at(T_RBRACE) and not self._at(T_EOF):
+                if self._at(T_CASE):
+                    while self._at(T_CASE):
+                        self._advance()
+                        neg = False
+                        if self._at(T_MINUS):
+                            self._advance()
+                            neg = True
+                        if self._at(T_NUMBER):
+                            val = int(self.cur_token.value)
+                            self._advance()
+                        elif (
+                            not neg
+                            and self._at(T_IDENT)
+                            and self.cur_token.value in self.enumerators
+                        ):
+                            val = self.enumerators[self.cur_token.value]
+                            self._advance()
+                        else:
+                            raise CompileError(
+                                "case label must be an integer constant",
+                                self.cur_token.line,
+                                self.cur_token.col,
+                            )
+                        if neg:
+                            val = -val
+                        self._expect(T_COLON)
+                        lab = self.gen.new_label()
+                        cases.append((val, lab))
+                        self.gen.emit(f"{lab}:")
+                    while (
+                        not self._at(T_CASE)
+                        and not self._at(T_DEFAULT)
+                        and not self._at(T_RBRACE)
+                        and not self._at(T_EOF)
+                    ):
+                        self._parse_statement()
+                elif self._at(T_DEFAULT):
+                    if default_lab is not None:
+                        raise CompileError(
+                            "duplicate default in switch",
+                            self.cur_token.line,
+                            self.cur_token.col,
+                        )
+                    self._advance()
+                    self._expect(T_COLON)
+                    default_lab = self.gen.new_label()
+                    self.gen.emit(f"{default_lab}:")
+                    while (
+                        not self._at(T_CASE)
+                        and not self._at(T_DEFAULT)
+                        and not self._at(T_RBRACE)
+                        and not self._at(T_EOF)
+                    ):
+                        self._parse_statement()
+                else:
+                    raise CompileError(
+                        "expected case or default in switch",
+                        self.cur_token.line,
+                        self.cur_token.col,
+                    )
+            self._expect(T_RBRACE)
+            # Bodies are above; do not fall into the compare chain.
+            self.gen.emit(f"    jmp {lend}")
+            self.gen.emit(f"{ldisp}:")
+            self.gen.emit("    pop ax")
+            for val, lab in cases:
+                self.gen.emit(f"    cmp ax, {val & 0xFFFF}")
+                self.gen.emit(f"    je {lab}")
+            if default_lab is not None:
+                self.gen.emit(f"    jmp {default_lab}")
+            else:
+                self.gen.emit(f"    jmp {lend}")
+            self.gen.emit(f"{lend}:")
+            self.break_labels.pop()
             return
         if self._at(T_FOR):
             self._advance()
@@ -905,6 +1787,8 @@ class Compiler:
                 self.gen.emit(f"    je {lend}")
             self._expect(T_SEMI)
             # Capture increment tokens without emitting; replay after the body.
+            # Sentinel EOF prevents the replayed expr from consuming tokens that
+            # already follow the loop (the body has advanced the source lexer).
             incr_tokens: list[Token] = []
             depth = 0
             while not self._at(T_EOF):
@@ -921,11 +1805,13 @@ class Compiler:
             self.gen.emit(f"{lcont}:")
             if incr_tokens:
                 saved = self.cur_token
-                self.lexer._pending = list(incr_tokens) + self.lexer._pending
+                eof = Token(T_EOF, None, saved.line, saved.col)
+                self.lexer._pending = list(incr_tokens) + [eof] + self.lexer._pending
                 self._advance()
                 self._expr()
-                self.lexer.push_back(saved)
-                self._advance()
+                self.cur_token = saved
+                while self.lexer._pending and self.lexer._pending[0].kind == T_EOF:
+                    self.lexer._pending.pop(0)
             self.gen.emit(f"    jmp {lcond}")
             self.gen.emit(f"{lend}:")
             self.break_labels.pop()
@@ -980,10 +1866,90 @@ class Compiler:
                 typ, off = self._lookup(name)
                 if typ is None:
                     raise CompileError(f"undefined identifier '{name}'", self.cur_token.line, self.cur_token.col)
+                if self._is_struct_type(typ):
+                    raise CompileError(
+                        "struct assignment is not supported",
+                        self.cur_token.line,
+                        self.cur_token.col,
+                    )
                 if self._is_local(name):
                     self.gen.emit(f"    mov [bp{off:+d}], ax")
                 else:
-                    self.gen.emit(f"    mov [{name}], ax")
+                    self.gen.emit(f"    mov [{self._label_for(name)}], ax")
+                return
+            if t2.kind == T_DOT:
+                name = self.cur_token.value
+                name_tok = self.cur_token
+                self._advance()
+                self._expect(T_DOT)
+                if not self._at(T_IDENT):
+                    raise CompileError(
+                        "expected member name", self.cur_token.line, self.cur_token.col
+                    )
+                mname_tok = self.cur_token
+                mname = mname_tok.value
+                self._advance()
+                typ, _off = self._lookup(name)
+                if typ is None:
+                    raise CompileError(
+                        f"undefined identifier '{name}'", name_tok.line, name_tok.col
+                    )
+                if not self._is_struct_type(typ):
+                    raise CompileError(
+                        f"dot member access on non-struct '{name}'",
+                        name_tok.line,
+                        name_tok.col,
+                    )
+                member = self._lookup_member(typ, mname, mname_tok.line, mname_tok.col)
+                if self._at(T_ASSIGN):
+                    self._advance()
+                    self._expr_assign()
+                    self._emit_store_member(name, member)
+                    return
+                # Load member then continue expression (e.g. s.a + 1)
+                self._emit_load_member(name, member)
+                self._expr_lor_continue()
+                return
+            if t2.kind == T_ARROW:
+                name = self.cur_token.value
+                name_tok = self.cur_token
+                self._advance()
+                self._expect(T_ARROW)
+                if not self._at(T_IDENT):
+                    raise CompileError(
+                        "expected member name", self.cur_token.line, self.cur_token.col
+                    )
+                mname_tok = self.cur_token
+                mname = mname_tok.value
+                self._advance()
+                typ, _off = self._lookup(name)
+                if typ is None:
+                    raise CompileError(
+                        f"undefined identifier '{name}'", name_tok.line, name_tok.col
+                    )
+                if not self._is_struct_ptr(typ):
+                    raise CompileError(
+                        f"arrow member access on non-struct-pointer '{name}'",
+                        name_tok.line,
+                        name_tok.col,
+                    )
+                member = self._lookup_member(
+                    self._struct_obj_type(typ), mname, mname_tok.line, mname_tok.col
+                )
+                if self._at(T_ASSIGN):
+                    self._advance()
+                    self._emit_load_scalar(name)
+                    self.gen.emit("    push ax")
+                    self._expr_assign()
+                    self.gen.emit("    pop bx")
+                    if member.byte_offset:
+                        self.gen.emit(f"    add bx, {member.byte_offset}")
+                    self._emit_store_member_at_bx(member)
+                    return
+                self._emit_load_scalar(name)
+                self._emit_ptr_member_addr_bx(member)
+                self._emit_load_member_at_bx(member)
+                self._expr_lor_continue()
                 return
             if t2.kind == T_LBRACKET:
                 name = self.cur_token.value
@@ -994,12 +1960,41 @@ class Compiler:
                 typ, off = self._lookup(name)
                 if typ is None:
                     raise CompileError(f"undefined identifier '{name}'", self.cur_token.line, self.cur_token.col)
+                if self._is_struct_type(typ) and name in self.arrays:
+                    self._emit_struct_array_elem_addr_bx(name, typ)
+                    if not self._at(T_DOT):
+                        raise CompileError(
+                            "struct array element requires member access",
+                            self.cur_token.line,
+                            self.cur_token.col,
+                        )
+                    self._advance()
+                    if not self._at(T_IDENT):
+                        raise CompileError(
+                            "expected member name", self.cur_token.line, self.cur_token.col
+                        )
+                    mname_tok = self.cur_token
+                    mname = mname_tok.value
+                    self._advance()
+                    member = self._lookup_member(typ, mname, mname_tok.line, mname_tok.col)
+                    if member.byte_offset:
+                        self.gen.emit(f"    add bx, {member.byte_offset}")
+                    if self._at(T_ASSIGN):
+                        self._advance()
+                        self.gen.emit("    push bx")
+                        self._expr_assign()
+                        self.gen.emit("    pop bx")
+                        self._emit_store_member_at_bx(member)
+                        return
+                    self._emit_load_member_at_bx(member)
+                    self._expr_lor_continue()
+                    return
                 if self._at(T_ASSIGN):
                     self._advance()
                     if self._is_local(name):
                         self.gen.emit(f"    lea bx, [bp{off:+d}]")
                     else:
-                        self.gen.emit(f"    lea bx, [{name}]")
+                        self.gen.emit(f"    lea bx, [{self._label_for(name)}]")
                     if typ == "int":
                         self.gen.emit("    add ax, ax")
                     self.gen.emit("    add bx, ax")
@@ -1014,7 +2009,7 @@ class Compiler:
                 if self._is_local(name):
                     self.gen.emit(f"    lea bx, [bp{off:+d}]")
                 else:
-                    self.gen.emit(f"    lea bx, [{name}]")
+                    self.gen.emit(f"    lea bx, [{self._label_for(name)}]")
                 if typ == "int":
                     self.gen.emit("    add ax, ax")
                 self.gen.emit("    add bx, ax")
@@ -1044,34 +2039,73 @@ class Compiler:
             self.gen.emit(f"{l_end}:")
 
     def _expr_lor_continue(self):
-        """Continue expression parsing with left value already in ax (e.g. after array load)."""
-        while self._at(T_LOR):
+        """Continue expression with left value already in ax (after array/member load).
+
+        Handles all binary operators and ternary, matching the precedence chain
+        from multiplicative through logical-OR plus ternary.
+        """
+        while self._at(T_STAR) or self._at(T_SLASH) or self._at(T_PERCENT):
+            op = self.cur_token.kind
             self._advance()
-            ltrue = self.gen.new_label()
-            lnext = self.gen.new_label()
             self.gen.emit("    push ax")
-            self._expr_land()
+            self._expr_unary()
             self.gen.emit("    pop bx")
-            self.gen.emit("    cmp bx, 0")
-            self.gen.emit(f"    jne {ltrue}")
-            self.gen.emit(f"    jmp {lnext}")
-            self.gen.emit(f"{ltrue}:")
-            self.gen.emit("    mov ax, 1")
-            self.gen.emit(f"{lnext}:")
-        while self._at(T_LAND):
+            if op == T_STAR:
+                self.gen.emit("    imul bx")
+            elif op == T_SLASH:
+                self.gen.emit("    xchg ax, bx")
+                self.gen.emit("    cwd")
+                self.gen.emit("    idiv bx")
+            else:
+                self.gen.emit("    xchg ax, bx")
+                self.gen.emit("    cwd")
+                self.gen.emit("    idiv bx")
+                self.gen.emit("    mov ax, dx")
+        while self._at(T_PLUS) or self._at(T_MINUS):
+            op = self.cur_token.kind
             self._advance()
-            l0 = self.gen.new_label()
+            self.gen.emit("    push ax")
+            self._expr_mul()
+            self.gen.emit("    pop bx")
+            if op == T_PLUS:
+                self.gen.emit("    add ax, bx")
+            else:
+                self.gen.emit("    sub bx, ax")
+                self.gen.emit("    mov ax, bx")
+        while self._at(T_SHL) or self._at(T_SHR):
+            op = self.cur_token.kind
+            self._advance()
+            self.gen.emit("    push ax")
+            self._expr_add()
+            self.gen.emit("    pop bx")
+            self.gen.emit("    mov cx, ax")
+            self.gen.emit("    mov ax, bx")
+            if op == T_SHL:
+                self.gen.emit("    shl ax, cl")
+            else:
+                self.gen.emit("    shr ax, cl")
+        while self._at(T_LT) or self._at(T_LE) or self._at(T_GT) or self._at(T_GE):
+            op = self.cur_token.kind
+            self._advance()
+            self.gen.emit("    push ax")
+            self._expr_shift()
+            self.gen.emit("    pop bx")
+            self.gen.emit("    cmp bx, ax")
             l1 = self.gen.new_label()
-            self.gen.emit("    cmp ax, 0")
-            self.gen.emit(f"    je {l0}")
-            self._expr_bor()
-            self.gen.emit("    cmp ax, 0")
-            self.gen.emit(f"    je {l0}")
-            self.gen.emit("    mov ax, 1")
-            self.gen.emit(f"    jmp {l1}")
-            self.gen.emit(f"{l0}:")
+            l2 = self.gen.new_label()
+            jmp_map = {T_LT: "jl", T_LE: "jle", T_GT: "jg", T_GE: "jge"}
+            self.gen.emit(f"    {jmp_map[op]} {l1}")
             self.gen.emit("    mov ax, 0")
+            self.gen.emit(f"    jmp {l2}")
             self.gen.emit(f"{l1}:")
+            self.gen.emit("    mov ax, 1")
+            self.gen.emit(f"{l2}:")
+        while self._at(T_AND):
+            self._advance()
+            self.gen.emit("    push ax")
+            self._expr_rel()
+            self.gen.emit("    pop bx")
+            self.gen.emit("    and ax, bx")
         while self._at(T_EQ) or self._at(T_NE):
             op = self.cur_token.kind
             self._advance()
@@ -1090,12 +2124,45 @@ class Compiler:
             self.gen.emit(f"{l1}:")
             self.gen.emit("    mov ax, 1")
             self.gen.emit(f"{l2}:")
-        while self._at(T_AND):
+        while self._at(T_XOR):
             self._advance()
             self.gen.emit("    push ax")
-            self._expr_rel()
+            self._expr_eq()
             self.gen.emit("    pop bx")
-            self.gen.emit("    and ax, bx")
+            self.gen.emit("    xor ax, bx")
+        while self._at(T_OR):
+            self._advance()
+            self.gen.emit("    push ax")
+            self._expr_bxor()
+            self.gen.emit("    pop bx")
+            self.gen.emit("    or ax, bx")
+        while self._at(T_LAND):
+            self._advance()
+            l0 = self.gen.new_label()
+            l1 = self.gen.new_label()
+            self.gen.emit("    cmp ax, 0")
+            self.gen.emit(f"    je {l0}")
+            self._expr_bor()
+            self.gen.emit("    cmp ax, 0")
+            self.gen.emit(f"    je {l0}")
+            self.gen.emit("    mov ax, 1")
+            self.gen.emit(f"    jmp {l1}")
+            self.gen.emit(f"{l0}:")
+            self.gen.emit("    mov ax, 0")
+            self.gen.emit(f"{l1}:")
+        while self._at(T_LOR):
+            self._advance()
+            ltrue = self.gen.new_label()
+            lnext = self.gen.new_label()
+            self.gen.emit("    push ax")
+            self._expr_land()
+            self.gen.emit("    pop bx")
+            self.gen.emit("    cmp bx, 0")
+            self.gen.emit(f"    jne {ltrue}")
+            self.gen.emit(f"    jmp {lnext}")
+            self.gen.emit(f"{ltrue}:")
+            self.gen.emit("    mov ax, 1")
+            self.gen.emit(f"{lnext}:")
         if self._at(T_QUESTION):
             self._advance()
             l_else = self.gen.new_label()
@@ -1262,6 +2329,39 @@ class Compiler:
                 self.gen.emit("    mov ax, dx")
 
     def _expr_unary(self):
+        if self._at(T_SIZEOF):
+            tok = self.cur_token
+            self._advance()
+            if self._at(T_LPAREN):
+                self._advance()
+                if self._is_cast_type_start():
+                    typ = self._parse_sizeof_type()
+                    self._expect(T_RPAREN)
+                    sz = self._sizeof_value(typ, tok.line, tok.col)
+                else:
+                    sz = self._sizeof_expr_no_eval()
+                    self._expect(T_RPAREN)
+            else:
+                sz = self._sizeof_expr_no_eval()
+            self.gen.emit(f"    mov ax, {sz}")
+            self.last_primary_type = "int"
+            return
+        if self._at(T_LPAREN):
+            # Cast: (type)unary  vs parenthesized expr handled in primary.
+            t2 = self._peek_next()
+            if (
+                t2.kind == T_INT
+                or t2.kind == T_CHAR
+                or t2.kind == T_VOID
+                or t2.kind == T_STRUCT
+                or t2.kind == T_ENUM
+            ):
+                self._advance()
+                typ = self._parse_sizeof_type()
+                self._expect(T_RPAREN)
+                self._expr_unary()
+                self._emit_cast(typ)
+                return
         if self._at(T_MINUS):
             self._advance()
             self._expr_unary()
@@ -1292,9 +2392,16 @@ class Compiler:
         if self._at(T_STAR):
             self._advance()
             self._expr_unary()
+            if self._is_struct_ptr(self.last_primary_type):
+                raise CompileError(
+                    "cannot dereference struct pointer (use ->)",
+                    self.cur_token.line,
+                    self.cur_token.col,
+                )
             # dereference: load word at [ax]
             self.gen.emit("    mov bx, ax")
             self.gen.emit("    mov ax, [bx]")
+            self.last_primary_type = "int"
             return
         self._expr_postfix()
 
@@ -1321,6 +2428,38 @@ class Compiler:
             self.gen.emit("    push ax")
             self._expr()
             self._expect(T_RBRACKET)
+            if self._is_struct_type(elt_type):
+                st = self._require_complete_struct(
+                    elt_type, self.cur_token.line, self.cur_token.col
+                )
+                sz = st.size
+                self.gen.emit("    mov cx, ax")
+                if sz <= 1:
+                    self.gen.emit("    mov ax, cx")
+                else:
+                    self.gen.emit(f"    mov ax, {sz}")
+                    self.gen.emit("    mul cx")
+                self.gen.emit("    pop bx")
+                self.gen.emit("    add bx, ax")
+                if not self._at(T_DOT):
+                    raise CompileError(
+                        "struct array element requires member access",
+                        self.cur_token.line,
+                        self.cur_token.col,
+                    )
+                self._advance()
+                if not self._at(T_IDENT):
+                    raise CompileError(
+                        "expected member name", self.cur_token.line, self.cur_token.col
+                    )
+                mname_tok = self.cur_token
+                mname = mname_tok.value
+                self._advance()
+                member = self._lookup_member(elt_type, mname, mname_tok.line, mname_tok.col)
+                if member.byte_offset:
+                    self.gen.emit(f"    add bx, {member.byte_offset}")
+                self._emit_load_member_at_bx(member)
+                return
             if elt_type != "char":
                 self.gen.emit("    add ax, ax")
             self.gen.emit("    pop bx")
@@ -1332,7 +2471,7 @@ class Compiler:
                 self.gen.emit("    mov ax, [bx]")
 
     def _expr_primary_addr(self):
-        """Parse lvalue (ident or ident[expr]) and emit its address into AX."""
+        """Parse lvalue (ident, ident[expr], ident.member, ident->member) into AX."""
         if not self._at(T_IDENT):
             raise CompileError("expected identifier for address-of", self.cur_token.line, self.cur_token.col)
         name = self.cur_token.value
@@ -1340,36 +2479,106 @@ class Compiler:
         typ, off = self._lookup(name)
         if typ is None:
             raise CompileError(f"undefined identifier '{name}'", self.cur_token.line, self.cur_token.col)
+        if self._at(T_DOT):
+            self._advance()
+            if not self._at(T_IDENT):
+                raise CompileError(
+                    "expected member name", self.cur_token.line, self.cur_token.col
+                )
+            mname_tok = self.cur_token
+            mname = mname_tok.value
+            self._advance()
+            if not self._is_struct_type(typ):
+                raise CompileError(
+                    f"dot member access on non-struct '{name}'",
+                    mname_tok.line,
+                    mname_tok.col,
+                )
+            member = self._lookup_member(typ, mname, mname_tok.line, mname_tok.col)
+            if member.is_bitfield:
+                raise CompileError(
+                    "cannot take address of bit-field", mname_tok.line, mname_tok.col
+                )
+            self._emit_member_addr_bx(name, member)
+            self.gen.emit("    mov ax, bx")
+            return
+        if self._at(T_ARROW):
+            self._advance()
+            if not self._at(T_IDENT):
+                raise CompileError(
+                    "expected member name", self.cur_token.line, self.cur_token.col
+                )
+            mname_tok = self.cur_token
+            mname = mname_tok.value
+            self._advance()
+            if not self._is_struct_ptr(typ):
+                raise CompileError(
+                    f"arrow member access on non-struct-pointer '{name}'",
+                    mname_tok.line,
+                    mname_tok.col,
+                )
+            member = self._lookup_member(
+                self._struct_obj_type(typ), mname, mname_tok.line, mname_tok.col
+            )
+            if member.is_bitfield:
+                raise CompileError(
+                    "cannot take address of bit-field", mname_tok.line, mname_tok.col
+                )
+            self._emit_load_scalar(name)
+            self._emit_ptr_member_addr_bx(member)
+            self.gen.emit("    mov ax, bx")
+            return
         if self._at(T_LBRACKET):
             self._advance()
             if self._is_local(name):
                 self.gen.emit(f"    lea ax, [bp{off:+d}]")
             else:
-                self.gen.emit(f"    lea ax, [{name}]")
+                self.gen.emit(f"    lea ax, [{self._label_for(name)}]")
             self.gen.emit("    push ax")
             self._expr()
             self._expect(T_RBRACKET)
-            self.gen.emit("    add ax, ax")
-            self.gen.emit("    pop bx")
-            self.gen.emit("    add bx, ax")
-            self.gen.emit("    mov ax, bx")
+            if self._is_struct_type(typ):
+                st = self._require_complete_struct(typ, self.cur_token.line, self.cur_token.col)
+                sz = st.size
+                self.gen.emit("    mov cx, ax")
+                if sz <= 1:
+                    self.gen.emit("    mov ax, cx")
+                else:
+                    self.gen.emit(f"    mov ax, {sz}")
+                    self.gen.emit("    mul cx")
+                self.gen.emit("    pop bx")
+                self.gen.emit("    add bx, ax")
+                self.gen.emit("    mov ax, bx")
+            else:
+                self.gen.emit("    add ax, ax")
+                self.gen.emit("    pop bx")
+                self.gen.emit("    add bx, ax")
+                self.gen.emit("    mov ax, bx")
         else:
-            if self._is_local(name):
+            if self._is_struct_type(typ):
+                # Address of whole struct
+                if self._is_local(name):
+                    self.gen.emit(f"    lea ax, [bp{off:+d}]")
+                else:
+                    self.gen.emit(f"    lea ax, [{self._label_for(name)}]")
+            elif self._is_local(name):
                 self.gen.emit(f"    lea ax, [bp{off:+d}]")
             else:
-                self.gen.emit(f"    lea ax, [{name}]")
+                self.gen.emit(f"    lea ax, [{self._label_for(name)}]")
 
     def _expr_primary(self):
         if self._at(T_NUMBER):
             v = self.cur_token.value
             self._advance()
             self.gen.emit(f"    mov ax, {v}")
+            self.last_primary_type = "int"
             return
         if self._at(T_STRING):
             s = self.cur_token.value
             self._advance()
             label = self.gen.add_string(s)
             self.gen.emit(f"    lea ax, [{label}]")
+            self.last_primary_type = "char*"
             return
         if self._at(T_IDENT):
             name = self.cur_token.value
@@ -1386,27 +2595,81 @@ class Compiler:
                 self._expect(T_RPAREN)
                 self.gen.emit(f"    call {name}")
                 self.gen.emit(f"    add sp, {2 * nargs}")
+                self.last_primary_type = "int"
                 return
             typ, off = self._lookup(name)
             if typ is None:
+                if name in self.enumerators:
+                    self.gen.emit(f"    mov ax, {self.enumerators[name] & 0xFFFF}")
+                    self.last_primary_type = "int"
+                    return
                 raise CompileError(f"undefined identifier '{name}'", self.cur_token.line, self.cur_token.col)
+            if self._at(T_DOT):
+                self._advance()
+                if not self._at(T_IDENT):
+                    raise CompileError(
+                        "expected member name", self.cur_token.line, self.cur_token.col
+                    )
+                mname_tok = self.cur_token
+                mname = mname_tok.value
+                self._advance()
+                if not self._is_struct_type(typ):
+                    raise CompileError(
+                        f"dot member access on non-struct '{name}'",
+                        mname_tok.line,
+                        mname_tok.col,
+                    )
+                member = self._lookup_member(typ, mname, mname_tok.line, mname_tok.col)
+                self._emit_load_member(name, member)
+                return
+            if self._at(T_ARROW):
+                self._advance()
+                if not self._at(T_IDENT):
+                    raise CompileError(
+                        "expected member name", self.cur_token.line, self.cur_token.col
+                    )
+                mname_tok = self.cur_token
+                mname = mname_tok.value
+                self._advance()
+                if not self._is_struct_ptr(typ):
+                    raise CompileError(
+                        f"arrow member access on non-struct-pointer '{name}'",
+                        mname_tok.line,
+                        mname_tok.col,
+                    )
+                member = self._lookup_member(
+                    self._struct_obj_type(typ), mname, mname_tok.line, mname_tok.col
+                )
+                self._emit_load_scalar(name)
+                self._emit_ptr_member_addr_bx(member)
+                self._emit_load_member_at_bx(member)
+                return
             if self._at(T_LBRACKET):
                 self.last_primary_type = typ
                 if self._is_local(name):
                     self.gen.emit(f"    lea ax, [bp{off:+d}]")
                 else:
-                    self.gen.emit(f"    lea ax, [{name}]")
+                    self.gen.emit(f"    lea ax, [{self._label_for(name)}]")
             else:
                 # Array names decay to pointers (address); scalars load value.
                 if name in self.arrays:
                     if self._is_local(name):
                         self.gen.emit(f"    lea ax, [bp{off:+d}]")
                     else:
-                        self.gen.emit(f"    lea ax, [{name}]")
+                        self.gen.emit(f"    lea ax, [{self._label_for(name)}]")
+                    self.last_primary_type = typ
+                elif self._is_struct_type(typ):
+                    raise CompileError(
+                        "struct values are not supported (use member access)",
+                        self.cur_token.line,
+                        self.cur_token.col,
+                    )
                 elif self._is_local(name):
                     self.gen.emit(f"    mov ax, [bp{off:+d}]")
+                    self.last_primary_type = typ
                 else:
-                    self.gen.emit(f"    mov ax, [{name}]")
+                    self.gen.emit(f"    mov ax, [{self._label_for(name)}]")
+                    self.last_primary_type = typ
             return
         if self._at(T_LPAREN):
             self._advance()

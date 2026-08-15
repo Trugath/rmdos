@@ -18,9 +18,11 @@ rmdos/
 |-- emulator/k8086/     # Git submodule: XT emulator + default ROMs/floppy
 |-- firmware/
 |   |-- bios/           # XT system BIOS → u18.bin / u19.bin
-|   |-- src/boot/       # Floppy boot sector
-|   |-- src/kernel/     # KERNEL.SYS (INT 20h/21h, FAT12/FAT16, loader)
-|   |-- src/dos/        # COMMAND.COM and userland tools
+|   |-- src/main/       # Shipped OS sources
+|   |   |-- boot/       # Floppy boot sector
+|   |   |-- kernel/     # KERNEL.SYS (INT 20h/21h, FAT12/FAT16, loader)
+|   |   |-- dos/        # COMMAND.COM and product userland
+|   |-- src/test/       # Harness-only programs (HELLO, COMPAT, …)
 |   |-- linker/         # OS link scripts
 |   |-- build/          # Generated ROMs, images, logs
 |-- fixtures/          # boot/config/testdata/batch + elite/wolf3d drop-ins
@@ -152,19 +154,19 @@ DOS 3.3-ish real-mode kernel and shell, aimed at programs that run on an
 
 | Layer | Location | Role |
 |-------|----------|------|
-| Boot | `firmware/src/boot/` | Sector 0 + RFAT1 chain to `KERNEL.SYS` |
-| Kernel | `firmware/src/kernel/` | INT 20h/21h, FAT12/FAT16 (≤128 MB), MCB memory, streaming `.COM` / MZ `.EXE` loader |
-| Shell / tools | `firmware/src/dos/` | `COMMAND.COM` and userland tools (see C vs asm below) |
+| Boot | `firmware/src/main/boot/` | Sector 0 + RFAT1 chain to `KERNEL.SYS` |
+| Kernel | `firmware/src/main/kernel/` | INT 20h/21h, FAT12/FAT16 (≤128 MB), MCB memory, streaming `.COM` / MZ `.EXE` loader |
+| Shell / tools | `firmware/src/main/dos/` | `COMMAND.COM` and userland tools (see C vs asm below) |
 
 ### C vs assembly in userland
 
 Most COM utilities are written in C and compiled with the in-tree **wcc**
 Small-C compiler (`scripts/wcc.py` → GAS → `com.ld`). Shared INT 21h helpers
-live in [`firmware/src/dos/inc/dos.h`](../firmware/src/dos/inc/dos.h).
+live in [`firmware/src/main/dos/inc/dos.h`](../firmware/src/main/dos/inc/dos.h).
 
 | Built with wcc (C) | Left as assembly |
 |--------------------|------------------|
-| `COMMAND.COM`, DIR, TYPE, COPY, DEL, ATTRIB, LABEL, MOVE, XCOPY, CHKDSK, FIND, CHOICE, MORE, MEM, FC, TREE, SORT, EDIT, DEBUG, MODE, SUBST, COMP, ASSIGN, DEMO/STAR | Boot, kernel, BIOS; FORMAT, PARTEDIT, SYS; PING, DHCP, TELNET, NET; GZIP, GUNZIP; HELLO, COMPAT; MOUSE, MOUSETST; CLOCK |
+| `COMMAND.COM`, DIR, TYPE, COPY, DEL, ATTRIB, LABEL, MOVE, XCOPY, CHKDSK, FIND, CHOICE, MORE, MEM, FC, TREE, SORT, EDIT, DEBUG, MODE, SUBST, COMP, ASSIGN, DEMO/STAR | Boot, kernel, BIOS; FORMAT, PARTEDIT, SYS; PING, DHCP, TELNET, NET; GZIP, GUNZIP; MOUSE, CLOCK; harness under `src/test/dos/` (HELLO, COMPAT, …) |
 
 Keep assembly where fixed layout, interrupt ABI, or dense hardware I/O dominate
 (boot sector, kernel IVT/`iret`/EXEC, NE2000, INT 13h format/partition tools).
@@ -310,12 +312,12 @@ member (RFC 1952, DEFLATE method 8). Zero args use stdin→stdout; one arg reads
 file to stdout. Status lines are omitted when writing to stdout so pipes and
 redirects stay binary-clean. Compression emits stored DEFLATE blocks;
 decompression accepts stored, fixed, and dynamic Huffman blocks. Source files are
-kept. Shared codec includes live under [`firmware/src/dos/inc/`](../firmware/src/dos/inc/)
+kept. Shared codec includes live under [`firmware/src/main/dos/inc/`](../firmware/src/main/dos/inc/)
 (`crc32.inc`, `deflate.inc`, `inflate.inc`).
 
 Network tools (`PING`, `DHCP`, `TELNET`) talk to the k8086 DE-220 NE2000-class
 card on the virtual NAT network (typical gateway `10.0.2.2`). Shared assembly
-lives under [`firmware/src/dos/inc/`](../firmware/src/dos/inc/) (`ne2000.inc`,
+lives under [`firmware/src/main/dos/inc/`](../firmware/src/main/dos/inc/) (`ne2000.inc`,
 `netlease*.inc`, `nettsr.inc`, `netutil.inc`, `dns.inc`).
 
 **Standalone (default):** each COM owns the card while it runs. Lease is

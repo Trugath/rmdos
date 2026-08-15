@@ -1,7 +1,7 @@
 """
 Unit tests for starfield demo algorithms (CGA mode 4 grid, Bresenham, border circle).
 
-Mirrors the logic in firmware/src/dos/starfield.c so we can test without the emulator.
+Mirrors the logic in firmware/src/main/dos/starfield.c so we can test without the emulator.
 """
 
 from __future__ import annotations

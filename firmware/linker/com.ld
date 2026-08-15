@@ -8,6 +8,8 @@ SECTIONS
 
   .text : AT(0)
   {
+    /* Keep COM/EXE entry even when --gc-sections is used. */
+    KEEP(*(.text._start))
     *(.text*)
     *(.rodata*)
     *(.data*)
