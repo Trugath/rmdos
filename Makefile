@@ -44,7 +44,6 @@ ANSI_SYS := $(BUILD_DIR)/ansi.sys
 MOUSE_COM := $(BUILD_DIR)/mouse.com
 MOUSETST_COM := $(BUILD_DIR)/mousetst.com
 CLOCK_COM := $(BUILD_DIR)/clock.com
-DESKSUP_COM := $(BUILD_DIR)/desksup.com
 ANSITST_COM := $(BUILD_DIR)/ansitst.com
 EMM_SYS := $(BUILD_DIR)/emm.sys
 EMSTST_COM := $(BUILD_DIR)/emstst.com
@@ -279,7 +278,7 @@ $(BUILD_DIR)/$(1).elf: $(BUILD_DIR)/$(1).o $(LINK_DIR)/com.ld
 $(BUILD_DIR)/$(1).com: $(BUILD_DIR)/$(1).elf
 	$$(OBJCOPY) -O binary $$< $$@
 endef
-$(foreach t,sys partedit format compat int21x ping dhcp telnet net nettest gzip gunzip ansitst emstst clock mouse mousetst desksup,$(eval $(call DOS_ASM_COM_RULE,$(t))))
+$(foreach t,sys partedit format compat int21x ping dhcp telnet net nettest gzip gunzip ansitst emstst clock mouse mousetst,$(eval $(call DOS_ASM_COM_RULE,$(t))))
 
 # ANSI.SYS (device driver — linked at offset 0)
 $(BUILD_DIR)/ansi.o: $(SRC_DIR)/dos/ansi.sys.s | $(BUILD_DIR)
@@ -388,7 +387,7 @@ OS_IMAGE_DEPS := $(BOOT_BIN) $(KERNEL_BIN) \
 	$(EDIT_COM) $(DEBUG_COM) $(DISKCOPY_COM) $(DISKCOMP_COM) $(MODE_COM) $(SUBST_COM) \
 	$(COMP_COM) $(ASSIGN_COM) \
 	$(PING_COM) $(DHCP_COM) $(TELNET_COM) $(NET_COM) $(GZIP_COM) $(GUNZIP_COM) \
-	$(ANSI_SYS) $(EMM_SYS) $(MOUSE_COM) $(CLOCK_COM) $(DESKSUP_COM) \
+	$(ANSI_SYS) $(EMM_SYS) $(MOUSE_COM) $(CLOCK_COM) \
 	$(STAR_COM) $(INSTALL_BAT) \
 	$(EMPTY_AUTOEXEC) scripts/mkfs_fat12.py scripts/fat12.py scripts/disk.py
 
