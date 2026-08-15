@@ -68,13 +68,19 @@ def main() -> int:
     )
     args = ap.parse_args()
 
-    boot = bytearray(args.boot.read_bytes())
+    try:
+        boot = bytearray(args.boot.read_bytes())
+    except FileNotFoundError:
+        raise SystemExit(f"source file not found: {args.boot}")
     if len(boot) != fat12.SECTOR_SIZE:
         raise SystemExit(f"boot sector must be {fat12.SECTOR_SIZE} bytes, got {len(boot)}")
     if boot[-2:] != b"\x55\xaa":
         raise SystemExit("boot missing 0x55AA signature")
 
-    kernel = args.kernel.read_bytes()
+    try:
+        kernel = args.kernel.read_bytes()
+    except FileNotFoundError:
+        raise SystemExit(f"source file not found: {args.kernel}")
     if not kernel:
         raise SystemExit("kernel is empty")
 

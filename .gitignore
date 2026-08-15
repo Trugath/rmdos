@@ -25,6 +25,9 @@ firmware/build/*.lst
 firmware/build/as8086.*.s
 firmware/build/bios_tests/
 
+# Local agent harness metadata
+harness/
+
 # Local host toolchains
 tools/host/
 .tools/

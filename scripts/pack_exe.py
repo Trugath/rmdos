@@ -137,10 +137,23 @@ def main() -> int:
         help="Entry IP within code segment (default 0 = _start)",
     )
     args = ap.parse_args()
-    const = args.const.read_bytes() if args.const else b""
+    const = b""
+    if args.const:
+        try:
+            const = args.const.read_bytes()
+        except FileNotFoundError:
+            raise SystemExit(f"source file not found: {args.const}")
+    try:
+        code_data = args.code.read_bytes()
+    except FileNotFoundError:
+        raise SystemExit(f"source file not found: {args.code}")
+    try:
+        data_data = args.data.read_bytes()
+    except FileNotFoundError:
+        raise SystemExit(f"source file not found: {args.data}")
     mz = pack_exe(
-        args.code.read_bytes(),
-        args.data.read_bytes(),
+        code_data,
+        data_data,
         const=const,
         bss_bytes=args.bss_bytes,
         bss_end=args.bss_end,

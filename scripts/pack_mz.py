@@ -65,8 +65,12 @@ def main() -> int:
         help="MZ maxalloc paragraphs (default 0xFFFF = take all free RAM)",
     )
     args = ap.parse_args()
+    try:
+        com_data = args.com.read_bytes()
+    except FileNotFoundError:
+        raise SystemExit(f"source file not found: {args.com}")
     data = pack_mz(
-        args.com.read_bytes(),
+        com_data,
         min_size=args.min_size,
         minalloc=args.minalloc,
         maxalloc=args.maxalloc,

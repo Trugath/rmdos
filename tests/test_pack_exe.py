@@ -187,10 +187,10 @@ class TestPackExeBSS(unittest.TestCase):
 
     def test_minalloc_from_bss_bytes(self):
         """minalloc should account for BSS bytes."""
-        bss_bytes = 0x100  # 256 bytes = 16 paras
+        bss_bytes = 0x100  # 256 bytes; default stack 0x1000
         mz = pack_exe(b"\x90", b"", bss_bytes=bss_bytes)
         hdr = _parse_mz_header(mz)
-        # minalloc = ceil(256/16) = 16 paras
+        # minalloc = ceil((256 + 4096) / 16) = 272 paras
         self.assertEqual(hdr["minalloc"], 272)
 
     def test_minalloc_with_stack(self):
@@ -208,7 +208,7 @@ class TestPackExeBSS(unittest.TestCase):
         minalloc_extra = 0x10
         mz = pack_exe(b"\x90", b"", bss_bytes=bss_bytes, minalloc_extra=minalloc_extra)
         hdr = _parse_mz_header(mz)
-        # minalloc = ceil(256/16) + 16 = 16 + 16 = 32 paras
+        # minalloc = ceil((256 + 4096) / 16) + 16 = 288 paras
         self.assertEqual(hdr["minalloc"], 288)
 
     def test_minalloc_minimum_one(self):
@@ -245,13 +245,11 @@ class TestPackExeMaxalloc(unittest.TestCase):
 
     def test_maxalloc_adjusted_up(self):
         """maxalloc should be raised to minalloc if smaller."""
-        bss_bytes = 0x200  # 32 paras
-        # Default maxalloc is 0x100, but minalloc will be 32
-        # So maxalloc should be raised to 32 (0x20)
+        bss_bytes = 0x200  # 512 bytes; default stack 0x1000 → minalloc 288
         mz = pack_exe(b"\x90", b"", bss_bytes=bss_bytes, maxalloc=0x10)
         hdr = _parse_mz_header(mz)
-        # minalloc = ceil(512/16) = 32, maxalloc should be at least 32
-        self.assertGreaterEqual(hdr["maxalloc"], hdr["minalloc"])
+        self.assertEqual(hdr["minalloc"], 288)
+        self.assertEqual(hdr["maxalloc"], hdr["minalloc"])
 
     def test_maxalloc_masked(self):
         """maxalloc should be masked to 16 bits."""
@@ -275,12 +273,11 @@ class TestPackExeOverflow(unittest.TestCase):
         self.assertIn("exceeds 64K", str(ctx.exception))
 
     def test_sp_clamped_to_zero(self):
-        """SP should be clamped to at least 2."""
-        # With minimal data_span and stack, SP should be valid
+        """Minimal stack of 2 bytes yields header SP 0 after the dummy word."""
         mz = pack_exe(b"\x90", b"", bss_bytes=0, stack=2)
         hdr = _parse_mz_header(mz)
-        # SP = (0 + 2 - 2) & 0xFFFF = 0, but clamped to 2
-        self.assertGreaterEqual(hdr["sp"], 0)
+        # data_span + stack == 2 is accepted, then SP stores (sp - 2) → 0
+        self.assertEqual(hdr["sp"], 0)
 
     def test_large_data_span(self):
         """Large data span should compute SP correctly."""
