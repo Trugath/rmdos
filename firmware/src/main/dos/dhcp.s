@@ -764,9 +764,7 @@ msg_help:
     .ascii "\r\n"
     .ascii "Acquire an IPv4 lease and write LEASE.DAT for PING.\r\n$"
 msg_mode_tsr:
-    .ascii "DHCP via TSR
-
-$"
+    .ascii "DHCP via TSR\r\n$"
 msg_mode_solo:
     .ascii "DHCP solo\r\n$"
 msg_start:
