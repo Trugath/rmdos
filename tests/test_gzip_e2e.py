@@ -79,6 +79,12 @@ def test_gzip_e2e() -> None:
         assert pipe_out == sample, f"pipe round-trip mismatch: {pipe_out!r} vs {sample!r}"
         gz = fat12.read_file(raw, "SAMPLE.GZ")
         assert gzip.decompress(gz) == sample
+        big = fat12.read_file(raw, "TEST\\BIG.TXT")
+        assert len(big) > 256
+        big_out = fat12.read_file(raw, "BIGOUT.TXT")
+        assert big_out == big, "BIG.TXT round-trip mismatch"
+        big_gz = fat12.read_file(raw, "BIG.GZ")
+        assert gzip.decompress(big_gz) == big
     finally:
         unlink_retry(image)
 

@@ -174,15 +174,17 @@ deflate_stream:
     stc
     ret
 
-/* One final stored block; input must fit in 256 bytes (guest tools use small files). */
+/* Stored blocks (BTYPE=00). Loop until EOF; BFINAL only on the last block. */
 def_stored_stream:
+    mov byte ptr [def_saw_eof], 0
+.dss_block:
     mov word ptr [def_blklen], 0
 .dss_read:
     cmp word ptr [def_blklen], 256
     jae .dss_emit
     call def_get
     jc .dss_fail
-    jz .dss_emit
+    jz .dss_eof
     mov bx, word ptr [def_blklen]
     mov byte ptr [def_blkbuf + bx], al
     inc bx
@@ -191,9 +193,15 @@ def_stored_stream:
     add word ptr [isize_lo], 1
     adc word ptr [isize_hi], 0
     jmp .dss_read
+.dss_eof:
+    mov byte ptr [def_saw_eof], 1
 .dss_emit:
-    mov ax, 1
-    mov cx, 3
+    xor ax, ax
+    cmp byte ptr [def_saw_eof], 0
+    je .dss_hdr
+    mov ax, 1                    /* BFINAL */
+.dss_hdr:
+    mov cx, 3                    /* BFINAL + BTYPE=00 */
     call def_putbits
     jc .dss_fail
     call def_align_byte
@@ -210,7 +218,7 @@ def_stored_stream:
     xor bx, bx
 .dss_out:
     cmp bx, word ptr [def_blklen]
-    jae .dss_done
+    jae .dss_block_done
     mov al, byte ptr [def_blkbuf + bx]
     push bx
     xor ah, ah
@@ -220,7 +228,9 @@ def_stored_stream:
     jc .dss_fail
     inc bx
     jmp .dss_out
-.dss_done:
+.dss_block_done:
+    cmp byte ptr [def_saw_eof], 0
+    je .dss_block
     call def_align_byte
     jc .dss_fail
     call def_flush_buf
@@ -237,6 +247,7 @@ def_outlen:  .word 0
 def_inpos:   .word 0
 def_inlen:   .word 0
 def_blklen:  .word 0
+def_saw_eof: .byte 0
 isize_lo:    .word 0
 isize_hi:    .word 0
 
