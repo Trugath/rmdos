@@ -55,7 +55,8 @@ CGA, FAT12/FAT16 volumes **≤128 MiB**. Developed/tested on
 - HD: DOS primaries `01h`/`04h`/`06h` and extended logicals `05h`/`0Fh`; whole-disk FAT VBR at LBA 0.
 - Partition start LBA may be **≥65536**; boot uses dword HiddenSectors.
 - Malformed BPBs fail mount with serial `fat fail` (no divide-by-zero).
-- `PARTEDIT` create paths are still oriented at typical small XT images; pre-seeded high-LBA MBRs are supported by kernel/FORMAT/boot.
+- `PARTEDIT /CREATE` (and `/CREATEEXT` `/CREATELOG` `/SIZE`) uses 32-bit disk
+  size and partition start/length, matching kernel/FORMAT/boot.
 
 ## Known false-success / emulator notes
 

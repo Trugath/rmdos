@@ -375,7 +375,9 @@ BIOS unit (`80h`, `81h`, …). A whole-disk FAT VBR (no DOS partition) still get
 one letter at LBA 0. `PARTEDIT` lists HD addresses and volumes (with letters),
 and supports scriptable `/CREATE` `/CREATEEXT` `/CREATELOG` `/LIST` (optional
 `/SIZE`). `PARTEDIT /CREATE` creates an active primary (leaving track zero for
-an MBR) and picks type by size (`01`/`04`/`06`); `FORMAT` rewrites that type to
+an MBR) and picks type by size (`01`/`04`/`06`); disk geometry and partition
+start/length are 32-bit so create works on volumes whose size or start
+crosses 64K sectors. `FORMAT` rewrites that type to
 match the filesystem it built. Hard disks are limited to **128 MB** by design;
 partition start LBAs and BPB HiddenSectors are 32-bit (bases past 64K sectors
 are supported). Larger geometries are rejected. The kernel uses a windowed FAT
