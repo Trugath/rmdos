@@ -1432,11 +1432,9 @@ _start:
     mov ax, 0x6602
     int 0x21
 
-    /* BUFFERS= exposes a non-null LoL buffer-chain pointer */
+    /* BUFFERS= exposes a non-null LoL buffer-chain pointer (offset 0 is valid). */
     mov ah, 0x52
     int 0x21
-    cmp word ptr es:[bx + 0x12], 0
-    je .x_stub_fail
     cmp word ptr es:[bx + 0x14], 0
     je .x_stub_fail
     /* Walk first buffer header next-link is either next or FFFF */
@@ -1450,6 +1448,17 @@ _start:
     cmp word ptr [si + 2], 0
     je .x_stub_fail_buf
 .x_buf_term:
+    /* After prior INT 21h I/O, at least one cached sector should be occupied. */
+    xor ax, ax
+.x_buf_occ:
+    cmp byte ptr [si + 4], 0xFF
+    jne .x_buf_got
+    mov ax, word ptr [si]
+    cmp ax, 0xFFFF
+    je .x_stub_fail_buf
+    mov si, ax
+    jmp .x_buf_occ
+.x_buf_got:
     pop si
     pop ds
     /* SFT table has entries after header */
@@ -1465,6 +1474,7 @@ _start:
     pop ds
     jmp .x_stub_lol_ok
 .x_stub_fail_buf:
+    pop si
     pop ds
     jmp .x_stub_fail
 .x_stub_lol_ok:

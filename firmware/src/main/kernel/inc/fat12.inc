@@ -253,6 +253,62 @@ fat12_read_lba:
     push dx
     push di
     push si
+    push es
+    cmp word ptr cs:[buf_arena_seg], 0
+    je .frl_disk
+    /* Hits into CS: would clobber kernel working buffers (sector_buf vs cache). */
+    mov di, es
+    mov cx, cs
+    cmp di, cx
+    je .frl_disk
+    call buf_lba_is_fat
+    jc .frl_disk
+    call buf_lookup
+    jnc .frl_hit
+    call buf_claim
+    jc .frl_disk
+    call fat12_read_lba_disk
+    jc .frl_miss_fail
+    call buf_copy_in
+    clc
+    jmp .frl_done
+.frl_miss_fail:
+    push es
+    mov es, word ptr cs:[buf_arena_seg]
+    mov byte ptr es:[si + 4], 0xFF
+    pop es
+    jmp .frl_fail
+.frl_hit:
+    call buf_copy_out
+    clc
+    jmp .frl_done
+.frl_disk:
+    call fat12_read_lba_disk
+    jnc .frl_done
+.frl_fail:
+    stc
+.frl_done:
+    pop es
+    pop si
+    pop di
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+/*
+ * Read one sector from disk (no cache).
+ * IN:  DX:AX = LBA, ES:BX = buffer; CS:boot_drive = BIOS drive
+ * OUT: CF set on error. DX:AX/BX/ES preserved.
+ */
+fat12_read_lba_disk:
+    push ax
+    push bx
+    push cx
+    push dx
+    push di
+    push si
 
     mov di, bx
     mov cx, cs:[bpb_spt]
@@ -274,25 +330,25 @@ fat12_read_lba:
     mov ah, 0x02
     mov al, 0x01
     int 0x13
-    jnc .frl_ok
+    jnc .frld_ok
     push bx
     xor bh, bh                   /* read */
     call invoke_int24_disk
     pop bx
     cmp al, 0                    /* Ignore */
-    je .frl_ok
+    je .frld_ok
     cmp al, 1                    /* Retry */
-    je fat12_read_lba
+    je fat12_read_lba_disk
     cmp al, 2                    /* Abort */
-    jne .frl_fail
+    jne .frld_fail
     mov al, 0x42
     jmp dos_terminate
-.frl_fail:
+.frld_fail:
     stc
-    jmp .frl_done
-.frl_ok:
+    jmp .frld_done
+.frld_ok:
     clc
-.frl_done:
+.frld_done:
     pop si
     pop di
     pop dx
@@ -307,6 +363,47 @@ fat12_read_lba:
  * OUT: CF set on error. DX:AX/BX preserved.
  */
 fat12_write_lba:
+    push ax
+    push bx
+    push cx
+    push dx
+    push di
+    push si
+    push es
+    cmp word ptr cs:[buf_arena_seg], 0
+    je .fwl_disk
+    call buf_lba_is_fat
+    jc .fwl_disk
+    call buf_lookup
+    jnc .fwl_cached
+    call buf_claim
+    jc .fwl_disk
+.fwl_cached:
+    /* Must not clobber AX: disk write below uses live DX:AX as LBA. */
+    call buf_copy_in
+.fwl_disk:
+    call fat12_write_lba_disk
+    jnc .fwl_okc
+    stc
+    jmp .fwl_donew
+.fwl_okc:
+    clc
+.fwl_donew:
+    pop es
+    pop si
+    pop di
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+/*
+ * Write one sector to disk (no cache).
+ * IN:  DX:AX = LBA (DX high), ES:BX = buffer; CS:boot_drive = BIOS drive
+ * OUT: CF set on error. DX:AX/BX preserved.
+ */
+fat12_write_lba_disk:
     push ax
     push bx
     push cx
@@ -334,35 +431,35 @@ fat12_write_lba:
     mov ah, 0x03
     mov al, 0x01
     int 0x13
-    jnc .fwl_wrote
+    jnc .fwld_wrote
     push bx
     mov bh, 1                    /* write */
     call invoke_int24_disk
     pop bx
     cmp al, 0                    /* Ignore */
-    je .fwl_ok
+    je .fwld_ok
     cmp al, 1                    /* Retry */
-    je fat12_write_lba
+    je fat12_write_lba_disk
     cmp al, 2                    /* Abort */
-    jne .fwl_fail
+    jne .fwld_fail
     mov al, 0x42
     jmp dos_terminate
-.fwl_fail:
+.fwld_fail:
     stc
-    jmp .fwl_done
-.fwl_wrote:
+    jmp .fwld_done
+.fwld_wrote:
     /* VERIFY ON → INT 13h AH=04 with same CHS (BIOS preserves BX/CX/DX/ES). */
     cmp byte ptr cs:[dos_verify_flag], 0
-    je .fwl_ok
+    je .fwld_ok
     mov ah, 0x04
     mov al, 0x01
     int 0x13
-    jnc .fwl_ok
+    jnc .fwld_ok
     stc
-    jmp .fwl_done
-.fwl_ok:
+    jmp .fwld_done
+.fwld_ok:
     clc
-.fwl_done:
+.fwld_done:
     pop si
     pop di
     pop dx
@@ -1465,5 +1562,184 @@ fat12_create_dirent_attr:
     pop si
     pop cx
     pop bx
+    pop ax
+    ret
+
+/*
+ * Cache helpers. Arena at CS:buf_arena_seg; SI = header offset.
+ * Lookup/claim: IN DX:AX = LBA. Lookup CF=0 hit. Claim CF=0 SI=header.
+ */
+buf_lba_is_fat:
+    /* CF=1 if DX:AX is in the on-disk FAT (owned by the FAT window). */
+    push bx
+    push cx
+    push si
+    mov bx, ax
+    mov cx, dx
+    mov ax, word ptr cs:[bpb_fat1_lba]
+    mov dx, word ptr cs:[bpb_fat1_lba + 2]
+    cmp cx, dx
+    jb .blf_no
+    ja .blf_end
+    cmp bx, ax
+    jb .blf_no
+.blf_end:
+    mov al, byte ptr cs:[bpb_fats]
+    xor ah, ah
+    mul word ptr cs:[bpb_spf]
+    add ax, word ptr cs:[bpb_fat1_lba]
+    adc dx, word ptr cs:[bpb_fat1_lba + 2]
+    cmp cx, dx
+    ja .blf_no
+    jb .blf_yes
+    cmp bx, ax
+    jae .blf_no
+.blf_yes:
+    stc
+    jmp .blf_done
+.blf_no:
+    clc
+.blf_done:
+    mov ax, bx
+    mov dx, cx
+    pop si
+    pop cx
+    pop bx
+    ret
+
+buf_lookup:
+    push ax
+    push bx
+    push cx
+    push dx
+    push di
+    push es
+    mov di, ax
+    mov cx, dx
+    mov es, word ptr cs:[buf_arena_seg]
+    xor si, si
+.blu_walk:
+    mov al, byte ptr es:[si + 4]
+    cmp al, byte ptr cs:[boot_drive]
+    jne .blu_next
+    cmp word ptr es:[si + 6], di
+    jne .blu_next
+    cmp word ptr es:[si + 8], cx
+    jne .blu_next
+    clc
+    jmp .blu_done
+.blu_next:
+    mov ax, word ptr es:[si]
+    cmp ax, 0xFFFF
+    je .blu_miss
+    mov si, ax
+    jmp .blu_walk
+.blu_miss:
+    stc
+.blu_done:
+    pop es
+    pop di
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+buf_claim:
+    push ax
+    push bx
+    push cx
+    push dx
+    push di
+    push es
+    mov di, ax
+    mov cx, dx
+    mov es, word ptr cs:[buf_arena_seg]
+    xor si, si
+.bc_free:
+    cmp byte ptr es:[si + 4], 0xFF
+    je .bc_take
+    mov ax, word ptr es:[si]
+    cmp ax, 0xFFFF
+    je .bc_clean
+    mov si, ax
+    jmp .bc_free
+.bc_clean:
+    xor si, si
+.bc_cl:
+    test byte ptr es:[si + 5], 1
+    jz .bc_take
+    mov ax, word ptr es:[si]
+    cmp ax, 0xFFFF
+    je .bc_victim
+    mov si, ax
+    jmp .bc_cl
+.bc_victim:
+    xor si, si
+    test byte ptr es:[si + 5], 1
+    jz .bc_take
+    mov ax, word ptr es:[si + 6]
+    mov dx, word ptr es:[si + 8]
+    lea bx, [si + DOS_BUF_HDR_SIZE]
+    call fat12_write_lba_disk
+    and byte ptr es:[si + 5], 0xFE
+.bc_take:
+    mov word ptr es:[si + 6], di
+    mov word ptr es:[si + 8], cx
+    mov al, byte ptr cs:[boot_drive]
+    mov byte ptr es:[si + 4], al
+    mov byte ptr es:[si + 5], 0
+    pop es
+    pop di
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    clc
+    ret
+
+buf_copy_out:
+    push ax
+    push cx
+    push di
+    push si
+    push ds
+    push es
+    mov di, bx
+    mov ax, word ptr cs:[buf_arena_seg]
+    mov ds, ax
+    add si, DOS_BUF_HDR_SIZE
+    mov cx, 512
+    cld
+    rep movsb
+    pop es
+    pop ds
+    pop si
+    pop di
+    pop cx
+    pop ax
+    ret
+
+buf_copy_in:
+    push ax
+    push cx
+    push di
+    push si
+    push ds
+    push es
+    mov di, si
+    add di, DOS_BUF_HDR_SIZE
+    mov si, bx
+    mov ax, es
+    mov ds, ax
+    mov es, word ptr cs:[buf_arena_seg]
+    mov cx, 512
+    cld
+    rep movsb
+    pop es
+    pop ds
+    pop si
+    pop di
+    pop cx
     pop ax
     ret

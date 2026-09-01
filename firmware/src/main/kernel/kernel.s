@@ -10,7 +10,9 @@
 .equ SFT_ENTRY_SIZE, 0x35
 .equ SFT_TABLE_CAP, 64
 .equ DOS_BUF_HDR_SIZE, 16
-.equ DOS_BUF_CAP, 99
+.equ DOS_BUF_DATA, 512
+.equ DOS_BUF_SIZE, 528
+.equ DOS_BUF_CAP, 16
 
 /*
  * rmDOS KERNEL.SYS — INT 21h + writable FAT12/FAT16 + tools.
@@ -468,9 +470,14 @@ dos_sft_table:
 sft_names:
     .space (SFT_TABLE_CAP * 11), 0x20
 
-/* Minimal DOS buffer-chain headers for LoL walkers (not a full sector cache). */
+/* DOS buffer arena (header+512) is allocated from the MCB pool. */
+buf_arena_seg:
+    .word 0
+buf_clock:
+    .word 0
+/* Fallback LoL header if MCB alloc fails (no sector payload). */
 dos_buf_table:
-    .space (DOS_BUF_CAP * DOS_BUF_HDR_SIZE), 0
+    .space DOS_BUF_HDR_SIZE, 0
 
 dos_cds:
     .space (CDS_COUNT * CDS_ENTRY_SIZE), 0

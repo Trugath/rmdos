@@ -374,6 +374,14 @@ cfg_match_buffers:
     inc si
     call cfg_skip_ws
     call cfg_parse_u16
+    cmp ax, 1
+    jae .cfg_mb_lo
+    mov ax, 1
+.cfg_mb_lo:
+    cmp ax, DOS_BUF_CAP
+    jbe .cfg_mb_hi
+    mov ax, DOS_BUF_CAP
+.cfg_mb_hi:
     mov word ptr [cfg_buffers], ax
     clc
     jmp .cfg_mb_done

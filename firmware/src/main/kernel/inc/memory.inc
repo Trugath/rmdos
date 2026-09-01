@@ -440,3 +440,78 @@ mem_coalesce:
     pop bx
     pop ax
     ret
+
+/*
+ * First-fit kernel alloc. IN: BX = paragraphs. OUT: CF=0 AX=user seg;
+ * CF=1 on failure. Owner 8 (DOS-owned) so process exit does not free it.
+ */
+mem_kernel_alloc:
+    push bx
+    push cx
+    push dx
+    push si
+    push es
+    mov dx, bx
+    mov ax, word ptr cs:[first_mcb]
+.mka_scan:
+    mov es, ax
+    mov bl, es:[0]
+    cmp bl, 'M'
+    je .mka_try
+    cmp bl, 'Z'
+    je .mka_try
+    jmp .mka_fail
+.mka_try:
+    cmp word ptr es:[1], 0
+    jne .mka_adv
+    cmp word ptr es:[3], dx
+    jb .mka_adv
+    mov si, ax
+    jmp .mka_found
+.mka_adv:
+    cmp byte ptr es:[0], 'Z'
+    je .mka_fail
+    mov bx, es:[3]
+    inc bx
+    add ax, bx
+    jmp .mka_scan
+.mka_found:
+    mov es, si
+    mov cx, es:[3]
+    cmp cx, dx
+    je .mka_take
+    mov bl, byte ptr es:[0]
+    mov ax, si
+    inc ax
+    add ax, dx
+    push es
+    mov es, ax
+    mov byte ptr es:[0], bl
+    mov word ptr es:[1], 0
+    mov bx, cx
+    sub bx, dx
+    dec bx
+    mov word ptr es:[3], bx
+    pop es
+    mov byte ptr es:[0], 'M'
+.mka_take:
+    mov es, si
+    mov word ptr es:[3], dx
+    mov word ptr es:[1], 8
+    mov ax, si
+    inc ax
+    pop es
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    clc
+    ret
+.mka_fail:
+    pop es
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    stc
+    ret

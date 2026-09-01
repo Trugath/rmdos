@@ -206,7 +206,7 @@ AH=30h reports DOS 3.31. Gate:
 `AUXPRN OK`, `BREAK23 OK`, `STUB OK`; INT21X also probes IOCTL AL=02–05/0Dh/06,
 DPB device ptr, last-fit AH=58, AH=46/57, INT 25h boot signature, honest AH=5Ch,
 unsupported AH=5Dh/5Eh/5Fh/65h AL=03, AH=66 get/set CP 437, VERIFY flag get/set,
-non-null BUFFERS + SFTE LoL walk, and LoL LASTDRIVE).
+BUFFERS LoL (seg non-null; offset 0 valid) + occupied cache walk + SFTE, and LoL LASTDRIVE).
 
 ### Stub vs real (INT 21h / CONFIG)
 
@@ -220,7 +220,7 @@ non-null BUFFERS + SFTE LoL walk, and LoL LASTDRIVE).
 | PSP JFT (`18h`/`32h`/`34h`) | Sized to `FILES=` / AH=67 (`max_handles`, 5..64); ≤20 entries inline at PSP:18h, larger tables in an AH=48 block; resized on handle growth; inherited from parent when present |
 | INT 25h/26h `CX=FFFFh` | DOS 3.31 packet (`DWORD` sector, `WORD` count, far buffer); classic register form remains supported |
 | Network/server `AH=5Dh`/`5Eh`/`5Fh` | CF + AX=1 (redirector not installed) |
-| `BUFFERS=` | Parsed; LoL +12/+14 points at free buffer-header chain (FAT I/O still windowed) |
+| `BUFFERS=` | Parsed (clamped 1..16); LoL +12/+14 → header+512 MCB arena; directory/data cached write-through; FAT LBAs skipped (FAT window); kernel CS dests skip read hits; AH=0Dh flushes |
 | `STACKS=` / `FCBS=` / `DRIVPARM=` | Accepted as advisory no-ops (not printed as ignored) |
 | `COUNTRY=` | `COUNTRY=nnn[,codepage]` updates country id + AH=66 code pages |
 | `SHELL=` | Path only — CONFIG discards `/P` `/E:`; COMMAND itself honors `/E:n` on its argv |
@@ -247,7 +247,8 @@ arguments in the child PSP command tail), `DEVICE=` (character `.SYS` only via
 the SYS ABI — INIT + INPUT + OUTPUT; block drivers print
 `CONFIG: DEVICE is not a character driver` and continue — intentional OOS),
 `FILES=` / `BUFFERS=` (`FILES=` clamps 5..64 into the handle table and current
-PSP JFT after CONFIG; default 20; AH=67 grows both), `LASTDRIVE=` (letter or
+PSP JFT after CONFIG; default 20; AH=67 grows both. `BUFFERS=` allocates a
+header+512 arena from the MCB pool, cap 16; default 8), `LASTDRIVE=` (letter or
 count, max 16), `BREAK=`,
 `SHELL=` (path only in CONFIG — `/P`/`/E:` discarded there; `COMMAND` honors
 `/E:n` on its own argv), `COUNTRY=nnn[,codepage]` (updates

@@ -350,6 +350,7 @@ dos_ah00:
 
 /* AH=0Dh — disk reset / flush buffers */
 dos_ah0d:
+    call dos_buffers_flush
     call fat12_flush_fat
     call dos_rebuild_drivemap
     clc
@@ -1346,8 +1347,8 @@ dos_sysvars_refresh:
     ret
 
 /*
- * Link cfg_buffers DOS buffer headers and point LoL +12 at the first.
- * Headers are free sentinels (drive=FFh); FAT I/O stays on the windowed cache.
+ * Allocate header+512 buffers from the MCB pool and point LoL +12 at them.
+ * Cap is DOS_BUF_CAP. Drive=FFh means free. Data lives at header+16.
  */
 dos_buffers_refresh:
     push ax
@@ -1356,6 +1357,7 @@ dos_buffers_refresh:
     push dx
     push si
     push di
+    push es
     push ds
     push cs
     pop ds
@@ -1369,19 +1371,30 @@ dos_buffers_refresh:
     jbe .db_hi
     mov cx, DOS_BUF_CAP
 .db_hi:
-    lea di, [dos_buf_table]
-    mov word ptr [dos_sysvars + 0x12], di
-    mov word ptr [dos_sysvars + 0x14], cs
+    cmp word ptr [buf_arena_seg], 0
+    jne .db_point
+    push cx
+    mov ax, DOS_BUF_SIZE
+    mul cx
+    add ax, 15
+    mov cl, 4
+    shr ax, cl
+    mov bx, ax
+    pop cx
+    push cx
+    call mem_kernel_alloc
+    pop cx
+    jc .db_fallback
+    mov word ptr [buf_arena_seg], ax
+    mov es, ax
+    xor di, di
     xor bx, bx
 .db_loop:
     cmp bx, cx
-    jae .db_done
-    mov ax, bx
-    mov dl, DOS_BUF_HDR_SIZE
-    mul dl
-    lea di, [dos_buf_table]
-    add di, ax
-    /* clear */
+    jae .db_point
+    mov ax, DOS_BUF_SIZE
+    mul bx
+    mov di, ax
     push cx
     push di
     mov cx, DOS_BUF_HDR_SIZE
@@ -1389,27 +1402,77 @@ dos_buffers_refresh:
     rep stosb
     pop di
     pop cx
-    mov byte ptr [di + 4], 0xFF  /* free */
+    mov byte ptr es:[di + 4], 0xFF
     mov ax, bx
     inc ax
     cmp ax, cx
     jae .db_term
-    mov dl, DOS_BUF_HDR_SIZE
-    mul dl
-    lea si, [dos_buf_table]
-    add ax, si
-    mov word ptr [di], ax
-    mov word ptr [di + 2], cs
+    mov dx, DOS_BUF_SIZE
+    mul dx
+    mov word ptr es:[di], ax
+    mov word ptr es:[di + 2], es
     jmp .db_next
 .db_term:
-    mov word ptr [di], 0xFFFF
-    mov word ptr [di + 2], 0xFFFF
+    mov word ptr es:[di], 0xFFFF
+    mov word ptr es:[di + 2], 0xFFFF
 .db_next:
     inc bx
     jmp .db_loop
+.db_point:
+    mov ax, word ptr [buf_arena_seg]
+    mov word ptr [dos_sysvars + 0x14], ax
+    mov word ptr [dos_sysvars + 0x12], 0
+    jmp .db_done
+.db_fallback:
+    lea di, [dos_buf_table]
+    mov word ptr [dos_sysvars + 0x12], di
+    mov word ptr [dos_sysvars + 0x14], cs
+    mov word ptr [di], 0xFFFF
+    mov word ptr [di + 2], 0xFFFF
+    mov byte ptr [di + 4], 0xFF
 .db_done:
     pop ds
+    pop es
     pop di
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+/* Write dirty cached sectors. */
+dos_buffers_flush:
+    push ax
+    push bx
+    push cx
+    push dx
+    push si
+    push es
+    mov ax, word ptr cs:[buf_arena_seg]
+    test ax, ax
+    jz .dbf_done
+    mov es, ax
+    xor si, si
+.dbf_walk:
+    cmp byte ptr es:[si + 4], 0xFF
+    je .dbf_next
+    test byte ptr es:[si + 5], 1
+    jz .dbf_next
+    mov ax, word ptr es:[si + 6]
+    mov dx, word ptr es:[si + 8]
+    lea bx, [si + DOS_BUF_HDR_SIZE]
+    call fat12_write_lba_disk
+    jc .dbf_next
+    and byte ptr es:[si + 5], 0xFE
+.dbf_next:
+    mov ax, word ptr es:[si]
+    cmp ax, 0xFFFF
+    je .dbf_done
+    mov si, ax
+    jmp .dbf_walk
+.dbf_done:
+    pop es
     pop si
     pop dx
     pop cx
