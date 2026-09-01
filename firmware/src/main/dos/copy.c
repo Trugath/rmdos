@@ -15,21 +15,20 @@ static char msg_ok[12] = "COPYV OK\r\n$";
 static char msg_copied[10] = "copied\r\n$";
 static char msg_err[15] = "COPY failed\r\n$";
 static char msg_u[35] = "COPY [/V][/A][/B] src[+src] dst\r\n$";
-static int opt_v;
-static int opt_a;
-static int opt_b;
-static int verify_saved;
-static int destination_is_dir;
-static int source_has_plus;
-static int source_has_wild;
+static int opt_v = 0;
+static int opt_a = 0;
+static int opt_b = 1;
+static int verify_saved = 0;
+static int destination_is_dir = 0;
+static int source_has_plus = 0;
+static int source_has_wild = 0;
 static int output_handle;
-static int copied_count;
+static int copied_count = 0;
 
 static void str_copy_limit(char *out, char *in, int max)
 {
-    int i;
+    int i = 0;
     int c;
-    i = 0;
     while (i < max - 1) {
         c = buf_get(in, i);
         buf_set(out, i, c);
@@ -41,17 +40,15 @@ static void str_copy_limit(char *out, char *in, int max)
 
 static int str_length(char *s)
 {
-    int i;
-    i = 0;
+    int i = 0;
     while (buf_get(s, i) != 0) i = i + 1;
     return i;
 }
 
 static int has_wildcard(char *s)
 {
-    int i;
+    int i = 0;
     int c;
-    i = 0;
     while (1) {
         c = buf_get(s, i);
         if (c == 0) return 0;
@@ -62,8 +59,7 @@ static int has_wildcard(char *s)
 
 static int has_plus(char *s)
 {
-    int i;
-    i = 0;
+    int i = 0;
     while (buf_get(s, i) != 0) {
         if (buf_get(s, i) == '+') return 1;
         i = i + 1;
@@ -74,8 +70,7 @@ static int has_plus(char *s)
 static int eat_switch(void)
 {
     int c;
-    int seen;
-    seen = 0;
+    int seen = 0;
     while (1) {
         c = peek_byte(arg_ptr);
         if (c == ' ' || c == 9 || c == 13 || c == 0) break;
@@ -126,19 +121,16 @@ static void verify_end(void)
 
 static int copy_basename(char *path, char *name)
 {
-    int i;
-    int last;
+    int i = 0;
+    int last = 0;
     int c;
-    int o;
-    i = 0;
-    last = 0;
+    int o = 0;
     while (1) {
         c = buf_get(path, i);
         if (c == 0) break;
         if (c == '\\' || c == '/' || c == ':') last = i + 1;
         i = i + 1;
     }
-    o = 0;
     while (last < i && o < 15) {
         buf_set(name, o, buf_get(path, last));
         o = o + 1;
@@ -151,12 +143,10 @@ static int copy_basename(char *path, char *name)
 
 static int build_source_path(char *pattern, char *name)
 {
-    int i;
-    int prefix;
+    int i = 0;
+    int prefix = 0;
     int c;
     int j;
-    i = 0;
-    prefix = 0;
     while (1) {
         c = buf_get(pattern, i);
         if (c == 0) break;
@@ -214,11 +204,10 @@ static int copy_actual_source(char *path, char *name)
     int hout;
     int n;
     int i;
-    int done;
-    int own_output;
+    int done = 0;
+    int own_output = 0;
     hin = dos_open(path, 0);
     if (hin == -1) return 0;
-    own_output = 0;
     hout = output_handle;
     if (destination_is_dir && source_has_wild && !source_has_plus) {
         if (!build_destination(name)) {
@@ -239,7 +228,6 @@ static int copy_actual_source(char *path, char *name)
         dos_close(hin);
         return 0;
     }
-    done = 0;
     while (!done) {
         n = dos_read(hin, buf, sizeof(buf));
         if (n == -1) {
@@ -274,7 +262,7 @@ static int copy_actual_source(char *path, char *name)
 static int copy_source_part(void)
 {
     int attr;
-    int found;
+    int found = 0;
     int i;
     int c;
     if (!has_wildcard(src_part)) {
@@ -284,7 +272,6 @@ static int copy_source_part(void)
     }
     dos_set_dta(dta);
     if (dos_find_first(src_part, FA_FILES) == -1) return 0;
-    found = 0;
     while (1) {
         attr = buf_get(dta, 0x15);
         if (!(attr & FA_DIRENT)) {
@@ -307,10 +294,9 @@ static int copy_source_part(void)
 
 static int copy_all_sources(void)
 {
-    int i;
+    int i = 0;
     int o;
     int c;
-    i = 0;
     while (1) {
         o = 0;
         while (1) {
@@ -336,9 +322,6 @@ int main(void)
     int c;
     int attr;
     int ok;
-    opt_v = 0;
-    opt_a = 0;
-    opt_b = 1;
     buf_set(src, 0, 0);
     buf_set(dst, 0, 0);
     args_init();
@@ -362,7 +345,6 @@ int main(void)
         print_dollar(msg_u);
         return 1;
     }
-    destination_is_dir = 0;
     c = str_length(dst);
     if (c > 0 && (buf_get(dst, c - 1) == '\\' || buf_get(dst, c - 1) == '/')) {
         destination_is_dir = 1;
@@ -373,7 +355,6 @@ int main(void)
     source_has_plus = has_plus(src);
     source_has_wild = has_wildcard(src);
     output_handle = -1;
-    copied_count = 0;
     if (opt_v) verify_begin();
     ok = copy_all_sources();
     if (output_handle != -1) dos_close(output_handle);

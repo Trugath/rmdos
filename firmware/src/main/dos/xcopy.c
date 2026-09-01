@@ -20,19 +20,19 @@ static char msg_e[16] = "XCOPY failed\r\n$";
 static char msg_u[44] = "XCOPY src dst [/S][/E][/P][/V][/A][/D]\r\n$";
 static char msg_prompt[10] = " (Y/N)? $";
 
-static int opt_s;
-static int opt_e;
-static int opt_p;
-static int opt_v;
-static int opt_a;
-static int opt_d;
-static int opt_d_date;           /* nonzero = compare against fixed date */
-static int d_date_val;           /* DOS date word */
-static int verify_saved;
-static int source_is_dir;
-static int source_has_wild;
-static int destination_is_dir;
-static int copied_count;
+static int opt_s = 0;
+static int opt_e = 0;
+static int opt_p = 0;
+static int opt_v = 0;
+static int opt_a = 0;
+static int opt_d = 0;
+static int opt_d_date = 0;           /* nonzero = compare against fixed date */
+static int d_date_val = 0;           /* DOS date word */
+static int verify_saved = 0;
+static int source_is_dir = 0;
+static int source_has_wild = 0;
+static int destination_is_dir = 0;
+static int copied_count = 0;
 
 static int xcopy_mkdir(char *path)
 {
@@ -90,9 +90,8 @@ static int read_yn(void)
 
 static void str_copy_limit(char *out, char *in, int max)
 {
-    int i;
+    int i = 0;
     int c;
-    i = 0;
     while (i < max - 1) {
         c = buf_get(in, i);
         buf_set(out, i, c);
@@ -104,17 +103,15 @@ static void str_copy_limit(char *out, char *in, int max)
 
 static int str_length(char *s)
 {
-    int i;
-    i = 0;
+    int i = 0;
     while (buf_get(s, i) != 0) i = i + 1;
     return i;
 }
 
 static int path_has_wildcard(char *path)
 {
-    int i;
+    int i = 0;
     int c;
-    i = 0;
     while (1) {
         c = buf_get(path, i);
         if (c == 0) return 0;
@@ -147,10 +144,9 @@ static void trim_separator(char *path)
 
 static int join_path(char *out, char *base, char *name)
 {
-    int i;
+    int i = 0;
     int j;
     int c;
-    i = 0;
     while (buf_get(base, i) != 0) {
         if (i >= PATH_MAX - 1) return 0;
         buf_set(out, i, buf_get(base, i));
@@ -177,9 +173,8 @@ static int join_path(char *out, char *base, char *name)
 
 static int copy_entry_name(char *dta)
 {
-    int i;
+    int i = 0;
     int c;
-    i = 0;
     while (i < 15) {
         c = buf_get(dta, 0x1E + i);
         buf_set(entry_name, i, c);
@@ -220,9 +215,9 @@ static int dta_time(char *dta)
     return buf_get(dta, 0x16) | (buf_get(dta, 0x17) << 8);
 }
 
-static int da_handle;
-static int da_date;
-static int da_time;
+static int da_handle = 0;
+static int da_date = 0;
+static int da_time = 0;
 
 /* Return 1 if source should be copied under /D rules. */
 static int date_allows(char *dta, char *dest_path)
@@ -313,7 +308,7 @@ static int copy_files_at_depth(int depth)
 {
     char *dta;
     int attr;
-    int count;
+    int count = 0;
     char *src_dir;
     char *dst_dir;
     dta = buf_addr(dta_frames, depth * 128);
@@ -322,7 +317,6 @@ static int copy_files_at_depth(int depth)
     if (!join_path(search_pattern, src_dir, file_pattern)) return -1;
     dos_set_dta(dta);
     if (dos_find_first(search_pattern, FA_FILES) == -1) return 0;
-    count = 0;
     do {
         attr = buf_get(dta, 0x15);
         if (!(attr & FA_DIRENT)) {
@@ -395,11 +389,9 @@ static int walk_tree(int depth)
 
 static int parse_u8(void)
 {
-    int v;
+    int v = 0;
     int c;
-    int digits;
-    v = 0;
-    digits = 0;
+    int digits = 0;
     while (1) {
         c = peek_byte(arg_ptr);
         if (c < '0' || c > '9') break;
@@ -442,8 +434,7 @@ static int parse_d_date(void)
 static int parse_switch(void)
 {
     int c;
-    int seen;
-    seen = 0;
+    int seen = 0;
     while (1) {
         c = peek_byte(arg_ptr);
         if (c == ' ' || c == 9 || c == 13 || c == 0) break;
@@ -486,10 +477,10 @@ static int parse_switch(void)
 static int prepare_source(void)
 {
     int attr;
-    int i;
-    int last;
+    int i = 0;
+    int last = -1;
     int c;
-    int o;
+    int o = 0;
     char *root;
     root = buf_addr(source_dirs, 0);
     str_copy_limit(root, src, PATH_MAX);
@@ -506,15 +497,12 @@ static int prepare_source(void)
         source_has_wild = 1;
         return 1;
     }
-    i = 0;
-    last = -1;
     while (1) {
         c = buf_get(src, i);
         if (c == 0) break;
         if (c == '\\' || c == '/' || c == ':') last = i;
         i = i + 1;
     }
-    o = 0;
     i = last + 1;
     while (buf_get(src, i) != 0) {
         buf_set(file_pattern, o, buf_get(src, i));
@@ -539,15 +527,6 @@ int main(void)
     int attr;
     char *root_dst;
     int ok;
-    opt_s = 0;
-    opt_e = 0;
-    opt_p = 0;
-    opt_v = 0;
-    opt_a = 0;
-    opt_d = 0;
-    opt_d_date = 0;
-    d_date_val = 0;
-    copied_count = 0;
     buf_set(src, 0, 0);
     buf_set(dst, 0, 0);
     args_init();
@@ -573,7 +552,6 @@ int main(void)
     }
     root_dst = buf_addr(destination_dirs, 0);
     str_copy_limit(root_dst, dst, PATH_MAX);
-    destination_is_dir = 0;
     if (path_ends_separator(root_dst)) {
         destination_is_dir = 1;
         trim_separator(root_dst);

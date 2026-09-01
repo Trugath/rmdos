@@ -14,12 +14,12 @@ static char sec[512];
 static char fatsec[512];
 static char wrk[512];
 static char bitmap[BITMAP_BYTES];
-static int drive;
-static int hard_err;
-static int warn_fix;
-static int want_fix;
-static int fixing;
-static int fixes_applied;
+static int drive = 0;
+static int hard_err = 0;
+static int warn_fix = 0;
+static int want_fix = 0;
+static int fixing = 0;
+static int fixes_applied = 0;
 
 static int bpb_spc;
 static int bpb_reserved;
@@ -58,8 +58,8 @@ static int dir_skip;
 static int bad_dot;
 static int vol_label[12];
 static int has_label;
-static int chk_num;
-static int recovered;
+static int chk_num = 0;
+static int recovered = 0;
 
 static int dirstk[DIR_STACK_MAX];
 static int dirstk_par[DIR_STACK_MAX];
@@ -177,8 +177,7 @@ static int bit_get(int c)
 
 static void bit_clear_all(void)
 {
-    int i;
-    i = 0;
+    int i = 0;
     while (i < BITMAP_BYTES) {
         buf_set(bitmap, i, 0);
         i = i + 1;
@@ -531,8 +530,8 @@ static void walk_chain(int start, int need_clust)
 {
     int c;
     int next;
-    int prev;
-    int steps;
+    int prev = 0;
+    int steps = 0;
     int is_dir;
 
     walk_ok = 1;
@@ -551,8 +550,6 @@ static void walk_chain(int start, int need_clust)
         return;
     }
     c = start;
-    prev = 0;
-    steps = 0;
     while (steps < max_clust) {
         if (c < 2 || c >= max_clust) {
             walk_ok = 0;
@@ -641,7 +638,7 @@ static void save_label(int ent)
 }
 
 static int dir_sec_lba;
-static int dir_sec_dirty;
+static int dir_sec_dirty = 0;
 
 static void dir_sec_writeback(void)
 {
@@ -1243,18 +1240,7 @@ int main(void)
 {
     int c;
     int i;
-    int did_fix;
-
-    drive = 0;
-    hard_err = 0;
-    warn_fix = 0;
-    want_fix = 0;
-    fixing = 0;
-    fixes_applied = 0;
-    did_fix = 0;
-    chk_num = 0;
-    recovered = 0;
-    dir_sec_dirty = 0;
+    int did_fix = 0;
 
     reset_counters();
 

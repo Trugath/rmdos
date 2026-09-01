@@ -141,6 +141,11 @@ STAR_IMAGE := $(BUILD_DIR)/os-star.img
 STAR_AUTOEXEC := fixtures/boot/AUTOEXEC.STAR.BAT
 DIR_IMAGE := $(BUILD_DIR)/os-dir.img
 DIR_AUTOEXEC := fixtures/boot/AUTOEXEC.DIR.BAT
+MANY_DIR := $(BUILD_DIR)/many
+MANY_STAMP := $(BUILD_DIR)/many.stamp
+# 90 files so /O sort exceeds the old 80-entry cap (plus . / ..).
+MANY_IDS := $(shell seq -w 89 -1 0)
+MANY_PACK := $(foreach i,$(MANY_IDS),--file MANY/F$(i).TXT=$(MANY_DIR)/F$(i).TXT)
 FORMAT_IMAGE := $(BUILD_DIR)/os-format.img
 FORMAT_AUTOEXEC := fixtures/boot/AUTOEXEC.FORMAT.BAT
 FORMAT_HD_IMAGE := $(BUILD_DIR)/os-format-hd.img
@@ -566,8 +571,18 @@ $(TELNET_IMAGE): $(TEST_IMAGE_DEPS) $(TELNET_AUTOEXEC)
 $(STAR_IMAGE): $(TEST_IMAGE_DEPS) $(STAR_AUTOEXEC)
 	$(call PACK_TEST_IMAGE,$@,$(STAR_AUTOEXEC))
 
-$(DIR_IMAGE): $(TEST_IMAGE_DEPS) $(DIR_AUTOEXEC)
-	$(call PACK_TEST_IMAGE,$@,$(DIR_AUTOEXEC))
+$(MANY_STAMP):
+	mkdir -p $(MANY_DIR)
+	$(PYTHON) -c "from pathlib import Path; d=Path(r'$(MANY_DIR)'); d.mkdir(parents=True, exist_ok=True); \
+[ (d / ('F%02d.TXT' % i)).write_bytes(b'x') for i in range(90) ]"
+	touch $@
+
+$(DIR_IMAGE): $(TEST_IMAGE_DEPS) $(DIR_AUTOEXEC) $(MANY_STAMP)
+	$(PYTHON) -m scripts.mkfs_fat12 --output $@ --boot $(BOOT_BIN) --kernel $(KERNEL_BIN) \
+		$(PACK_OS_IMAGE_FILES) \
+		$(PACK_TEST_HARNESS_FILES) \
+		$(MANY_PACK) \
+		--file AUTOEXEC.BAT=$(DIR_AUTOEXEC)
 
 $(FORMAT_IMAGE): $(TEST_IMAGE_DEPS) $(FORMAT_AUTOEXEC)
 	$(call PACK_TEST_IMAGE,$@,$(FORMAT_AUTOEXEC))
