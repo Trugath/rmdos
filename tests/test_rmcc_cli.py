@@ -1,4 +1,4 @@
-"""Regression tests for wcc.py CLI error handling."""
+"""Regression tests for rmcc.py CLI error handling."""
 
 from __future__ import annotations
 
@@ -9,16 +9,16 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-WCC = ROOT / "scripts" / "wcc.py"
+RMCC = ROOT / "scripts" / "rmcc.py"
 
 
-class TestWccCli(unittest.TestCase):
+class TestRmccCli(unittest.TestCase):
     def test_missing_input_source_reports_concise_error(self) -> None:
         """When the input .c path does not exist, script exits with concise error, not traceback."""
         result = subprocess.run(
             [
                 sys.executable,
-                str(WCC),
+                str(RMCC),
                 "nonexistent/path/hello.c",
                 "-o",
                 "/tmp/out.s",

@@ -1,6 +1,6 @@
 /*
  * COMMAND.COM for rmDOS, built with the in-tree Small-C compiler.
- * Keep this file within the intentionally small wcc language subset.
+ * Keep this file within the intentionally small rmcc language subset.
  */
 #include "dos.h"
 #include "dirlist.h"
@@ -312,9 +312,8 @@ void str_clear(char *s)
 
 void str_copy(char *dst, char *src, int max)
 {
-    int i;
+    int i = 0;
     int c;
-    i = 0;
     while (i < max - 1) {
         c = buf_get(src, i);
         buf_set(dst, i, c);
@@ -328,8 +327,7 @@ void str_copy(char *dst, char *src, int max)
 
 int str_len(char *s)
 {
-    int i;
-    i = 0;
+    int i = 0;
     while (buf_get(s, i) != 0) {
         i = i + 1;
     }
@@ -338,10 +336,9 @@ int str_len(char *s)
 
 int str_eq(char *a, char *b)
 {
-    int i;
+    int i = 0;
     int x;
     int y;
-    i = 0;
     while (1) {
         x = toupper_ch(buf_get(a, i));
         y = toupper_ch(buf_get(b, i));
@@ -357,8 +354,7 @@ int str_eq(char *a, char *b)
 
 int str_has(char *s, int c)
 {
-    int i;
-    i = 0;
+    int i = 0;
     while (buf_get(s, i) != 0) {
         if (buf_get(s, i) == c) {
             return 1;
@@ -377,10 +373,9 @@ void skip_spaces(void)
 
 int next_token(char *out, int max)
 {
-    int i;
+    int i = 0;
     int c;
     skip_spaces();
-    i = 0;
     while (1) {
         c = peek_byte(cursor);
         if (c == 0 || c == ' ' || c == 9) {
@@ -534,21 +529,13 @@ void print_two_digits(int n)
 
 void print_dta_datetime(void)
 {
-    int date;
-    int time;
-    int month;
-    int day;
-    int year;
-    int hour;
-    int minute;
-
-    time = peek_word(buf_addr(dir_dta, 0x16));
-    date = peek_word(buf_addr(dir_dta, 0x18));
-    day = date & 31;
-    month = (date >> 5) & 15;
-    year = ((date >> 9) & 127) + 1980;
-    hour = (time >> 11) & 31;
-    minute = (time >> 5) & 63;
+    int time = peek_word(buf_addr(dir_dta, 0x16));
+    int date = peek_word(buf_addr(dir_dta, 0x18));
+    int day = date & 31;
+    int month = (date >> 5) & 15;
+    int year = ((date >> 9) & 127) + 1980;
+    int hour = (time >> 11) & 31;
+    int minute = (time >> 5) & 63;
 
     print_dollar("  $");
     print_two_digits(month);
@@ -564,11 +551,9 @@ void print_dta_datetime(void)
 
 int is_all_files_pattern(char *spec)
 {
-    int i;
-    int base;
+    int i = 0;
+    int base = 0;
     int c;
-    i = 0;
-    base = 0;
     while (1) {
         c = buf_get(spec, i);
         if (c == 0) {
@@ -713,18 +698,14 @@ void do_dir(void)
     int size;
     int size_hi;
     int old_size;
-    int opt_w;
-    int opt_p;
-    int opt_o;
-    int wide_col;
-    int page_lines;
+    int opt_w = 0;
+    int opt_p = 0;
+    int opt_o = 0;
+    int wide_col = 0;
+    int page_lines = 1;
     int namelen;
-    int have_pat;
+    int have_pat = 0;
 
-    opt_w = 0;
-    opt_p = 0;
-    opt_o = 0;
-    have_pat = 0;
     dir_nent = 0;
     dir_nkeys = 0;
     buf_set(pattern, 0, 0);
@@ -787,8 +768,6 @@ void do_dir(void)
     dir_count = 0;
     dir_bytes = 0;
     dir_bytes_hi = 0;
-    wide_col = 0;
-    page_lines = 1;
     if (dos_find_first(pattern, FA_DIRENT) == -1) {
         print_dollar("File not found\r\n$");
         last_errorlevel = 1;

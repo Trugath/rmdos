@@ -1,6 +1,6 @@
-/* Minimal DOS INT 21h helpers for wcc-built .COM programs.
+/* Minimal DOS INT 21h helpers for rmcc-built .COM programs.
  *
- * Calling convention: wcc pushes args left-to-right, so for f(a,b,c):
+ * Calling convention: rmcc pushes args left-to-right, so for f(a,b,c):
  *   [bp+8]=a, [bp+6]=b, [bp+4]=c.
  * After BIOS calls that may clobber DS, call reload_ds().
  * Implementations live in dos.c (linked into each C .COM).

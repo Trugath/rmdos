@@ -2,10 +2,10 @@
 #define DIRLIST_H
 
 #define DIR_ENT_SIZE 24
-#define DIR_MAX_ENTS 80
+#define DIR_MAX_ENTS 256
 
 extern char dir_dta[128];
-extern char dir_pool[1920];
+extern char dir_pool[6144];
 extern char dir_keys[4];
 extern char dir_revs[4];
 extern int dir_nent;

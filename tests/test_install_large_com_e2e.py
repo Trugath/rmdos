@@ -55,7 +55,7 @@ def _build_tiny_com(dest: Path) -> bytes:
             [
                 "python3",
                 "-m",
-                "scripts.wcc",
+                "scripts.rmcc",
                 str(src),
                 "-o",
                 str(asm),

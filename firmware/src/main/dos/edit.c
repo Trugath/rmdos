@@ -25,17 +25,17 @@ static char msg_crlf[4] = "\r\n$";
 
 static int text_seg;
 static int buf_cap;
-static int text_len;
-static int cursor;
-static int dirty;
-static int quiet;
-static int have_path;
-static int view_row;
+static int text_len = 0;
+static int cursor = 0;
+static int dirty = 0;
+static int quiet = 0;
+static int have_path = 0;
+static int view_row = 0;
 static int key_ax;
 static int v_off;
 static int v_ch;
 static int v_at;
-static int find_len;
+static int find_len = 0;
 static int t_tmp;
 
 static int text_get(int i)
@@ -141,10 +141,8 @@ static int next_line(int pos)
 
 static int nth_line_start(int n)
 {
-    int pos;
-    int i;
-    pos = 0;
-    i = 0;
+    int pos = 0;
+    int i = 0;
     while (i < n && pos < text_len) {
         pos = next_line(pos);
         i = i + 1;
@@ -154,13 +152,11 @@ static int nth_line_start(int n)
 
 static int count_lines(void)
 {
-    int pos;
-    int n;
+    int pos = 0;
+    int n = 0;
     if (text_len == 0) {
         return 1;
     }
-    pos = 0;
-    n = 0;
     while (pos < text_len) {
         pos = next_line(pos);
         n = n + 1;
@@ -535,8 +531,7 @@ static void do_find(int prompt)
     if (prompt) {
         set_cursor(STATUS_ROW, 0);
         {
-            int c;
-            c = 0;
+            int c = 0;
             while (c < COLS) {
                 put_xy(STATUS_ROW, c, ' ', 0x70);
                 c = c + 1;
@@ -619,13 +614,6 @@ int main(void)
     int ascii;
     int scan;
 
-    quiet = 0;
-    have_path = 0;
-    text_len = 0;
-    cursor = 0;
-    dirty = 0;
-    view_row = 0;
-    find_len = 0;
     init_buffer();
 
     args_init();

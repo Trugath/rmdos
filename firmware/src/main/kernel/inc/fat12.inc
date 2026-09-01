@@ -254,15 +254,17 @@ fat12_read_lba:
     push di
     push si
     push es
-    cmp word ptr cs:[buf_arena_seg], 0
+    /* Cache only when arena is an MCB segment (not CS fallback / empty). */
+    mov cx, word ptr cs:[buf_arena_seg]
+    test cx, cx
+    jz .frl_disk
+    mov di, cs
+    cmp cx, di
     je .frl_disk
-    /* Hits into CS: would clobber kernel working buffers (sector_buf vs cache). */
+    /* Copy onto the arena itself would corrupt the slot. */
     mov di, es
-    mov cx, cs
     cmp di, cx
     je .frl_disk
-    call buf_lba_is_fat
-    jc .frl_disk
     call buf_lookup
     jnc .frl_hit
     call buf_claim
@@ -370,10 +372,15 @@ fat12_write_lba:
     push di
     push si
     push es
-    cmp word ptr cs:[buf_arena_seg], 0
+    mov cx, word ptr cs:[buf_arena_seg]
+    test cx, cx
+    jz .fwl_disk
+    mov di, cs
+    cmp cx, di
     je .fwl_disk
-    call buf_lba_is_fat
-    jc .fwl_disk
+    mov di, es
+    cmp di, cx
+    je .fwl_disk
     call buf_lookup
     jnc .fwl_cached
     call buf_claim
@@ -582,12 +589,14 @@ fat12_find_root:
 
 /*
  * Invalidate FAT window (call after mount). Window loads on demand.
+ * Also drops BUFFERS= headers so a new BPB cannot reuse stale sectors.
  */
 fat12_load_fat:
     push ax
     call fat12_flush_fat
     mov word ptr cs:[fat_win_sec], 0xFFFF
     mov byte ptr cs:[fat_dirty], 0
+    call buf_invalidate
     clc
     pop ax
     ret
@@ -1568,43 +1577,38 @@ fat12_create_dirent_attr:
 /*
  * Cache helpers. Arena at CS:buf_arena_seg; SI = header offset.
  * Lookup/claim: IN DX:AX = LBA. Lookup CF=0 hit. Claim CF=0 SI=header.
+ * Directory, data, and FAT LBAs all share the write-through arena.
+ * fat_buf remains a separate 1 KiB decode window for FAT12/16 get/put.
  */
-buf_lba_is_fat:
-    /* CF=1 if DX:AX is in the on-disk FAT (owned by the FAT window). */
-    push bx
-    push cx
+
+/*
+ * Mark every buffer free (drive=FFh, dirty=0). Used on remount.
+ */
+buf_invalidate:
+    push ax
     push si
-    mov bx, ax
-    mov cx, dx
-    mov ax, word ptr cs:[bpb_fat1_lba]
-    mov dx, word ptr cs:[bpb_fat1_lba + 2]
-    cmp cx, dx
-    jb .blf_no
-    ja .blf_end
-    cmp bx, ax
-    jb .blf_no
-.blf_end:
-    mov al, byte ptr cs:[bpb_fats]
-    xor ah, ah
-    mul word ptr cs:[bpb_spf]
-    add ax, word ptr cs:[bpb_fat1_lba]
-    adc dx, word ptr cs:[bpb_fat1_lba + 2]
-    cmp cx, dx
-    ja .blf_no
-    jb .blf_yes
-    cmp bx, ax
-    jae .blf_no
-.blf_yes:
-    stc
-    jmp .blf_done
-.blf_no:
-    clc
-.blf_done:
-    mov ax, bx
-    mov dx, cx
+    push es
+    mov ax, word ptr cs:[buf_arena_seg]
+    test ax, ax
+    jz .bi_done
+    mov es, ax
+    mov ax, cs
+    mov si, es
+    cmp si, ax
+    je .bi_done                  /* CS fallback has no sector payload */
+    xor si, si
+.bi_walk:
+    mov byte ptr es:[si + 4], 0xFF
+    mov byte ptr es:[si + 5], 0
+    mov ax, word ptr es:[si]
+    cmp ax, 0xFFFF
+    je .bi_done
+    mov si, ax
+    jmp .bi_walk
+.bi_done:
+    pop es
     pop si
-    pop cx
-    pop bx
+    pop ax
     ret
 
 buf_lookup:

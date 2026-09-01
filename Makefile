@@ -50,7 +50,7 @@ ANSITST_COM := $(BUILD_DIR)/ansitst.com
 EMM_SYS := $(BUILD_DIR)/emm.sys
 EMSTST_COM := $(BUILD_DIR)/emstst.com
 
-# wcc C COM tools (same basename: foo.c -> foo.com), plus starfield.c -> star.com
+# rmcc C COM tools (same basename: foo.c -> foo.com), plus starfield.c -> star.com
 DOS_C_TOOLS := command dir type copy del attrib label move xcopy chkdsk find choice more mem fc tree sort edit debug diskcopy diskcomp mode subst comp assign
 COMMAND_COM := $(BUILD_DIR)/command.com
 DIR_COM := $(BUILD_DIR)/dir.com
@@ -91,8 +91,8 @@ DIRLIST_H := $(DOS_INC)/dirlist.h
 DIRLIST_C := $(DOS_INC)/dirlist.c
 DIRLIST_ASM := $(BUILD_DIR)/dirlist.s
 DIRLIST_OBJ := $(BUILD_DIR)/dirlist.o
-WCC := $(PYTHON) -m scripts.wcc
-WCC_DEPS := $(DOS_INC)/dos.h $(DOS_RT_C) scripts/wcc.py scripts/wcc_preprocess.py
+RMCC := $(PYTHON) -m scripts.rmcc
+RMCC_DEPS := $(DOS_INC)/dos.h $(DOS_RT_C) scripts/rmcc.py scripts/rmcc_preprocess.py
 DOS_C_LINK_EXTRA :=
 
 
@@ -308,22 +308,22 @@ $(EMM_SYS): $(BUILD_DIR)/emm.elf
 	$(OBJCOPY) -O binary $< $@
 
 # Shared DOS runtime (declarations in dos.h, bodies in dos.c)
-$(DOS_RT_ASM): $(DOS_RT_C) $(DOS_INC)/dos.h scripts/wcc.py scripts/wcc_preprocess.py | $(BUILD_DIR)
-	$(WCC) $< -o $@ -I $(DOS_INC)
+$(DOS_RT_ASM): $(DOS_RT_C) $(DOS_INC)/dos.h scripts/rmcc.py scripts/rmcc_preprocess.py | $(BUILD_DIR)
+	$(RMCC) $< -o $@ -I $(DOS_INC)
 
 $(DOS_RT_OBJ): $(DOS_RT_ASM) | $(BUILD_DIR)
 	$(AS8086) --32 -o $@ $<
 
-$(DIRLIST_ASM): $(DIRLIST_C) $(DOS_INC)/dos.h $(DIRLIST_H) scripts/wcc.py scripts/wcc_preprocess.py | $(BUILD_DIR)
-	$(WCC) $< -o $@ -I $(DOS_INC)
+$(DIRLIST_ASM): $(DIRLIST_C) $(DOS_INC)/dos.h $(DIRLIST_H) scripts/rmcc.py scripts/rmcc_preprocess.py | $(BUILD_DIR)
+	$(RMCC) $< -o $@ -I $(DOS_INC)
 
 $(DIRLIST_OBJ): $(DIRLIST_ASM) | $(BUILD_DIR)
 	$(AS8086) --32 -o $@ $<
 
 # C COM pattern: foo.c -> build/foo.s -> .o -> .elf -> .com
 define DOS_C_COM_RULE
-$(BUILD_DIR)/$(1).s: $(MAIN_SRC)/dos/$(1).c $$(WCC_DEPS) | $(BUILD_DIR)
-	$$(WCC) $$< -o $$@ --com -I $$(DOS_INC)
+$(BUILD_DIR)/$(1).s: $(MAIN_SRC)/dos/$(1).c $$(RMCC_DEPS) | $(BUILD_DIR)
+	$$(RMCC) $$< -o $$@ --com -I $$(DOS_INC)
 $(BUILD_DIR)/$(1).o: $(BUILD_DIR)/$(1).s | $(BUILD_DIR)
 	$$(AS8086) --32 -o $$@ $$<
 $(BUILD_DIR)/$(1).elf: $(BUILD_DIR)/$(1).o $$(DOS_RT_OBJ) $$(DOS_C_LINK_EXTRA) $(LINK_DIR)/com.ld
@@ -340,8 +340,8 @@ $(BUILD_DIR)/dir.elf: $(DIRLIST_OBJ)
 $(BUILD_DIR)/command.elf: DOS_C_LINK_EXTRA = $(DIRLIST_OBJ)
 $(BUILD_DIR)/dir.elf: DOS_C_LINK_EXTRA = $(DIRLIST_OBJ)
 
-$(STAR_ASM): $(STAR_C) $(WCC_DEPS) | $(BUILD_DIR)
-	$(WCC) $< -o $@ --com -I $(DOS_INC)
+$(STAR_ASM): $(STAR_C) $(RMCC_DEPS) | $(BUILD_DIR)
+	$(RMCC) $< -o $@ --com -I $(DOS_INC)
 
 $(STAR_OBJ): $(STAR_ASM) | $(BUILD_DIR)
 	$(AS8086) --32 -o $@ $(STAR_ASM)
@@ -688,7 +688,7 @@ test-cli:
 	$(PYTHON) -m unittest discover -s tests -p 'test_*_cli.py' -v
 
 test: all bios-tests $(TEST_IMAGE) $(COMPAT_IMAGE) $(PING_IMAGE) $(DHCP_IMAGE) $(TELNET_IMAGE) $(NET_IMAGE) $(STAR_IMAGE) $(BIGEXE_IMAGE) $(DIR_IMAGE) $(FORMAT_IMAGE) $(FORMAT_HD_IMAGE) $(FAT16_HD_IMAGE) $(PARTEDIT_HD_IMAGE) $(MULTILET_HD_IMAGE) $(EXTPART_HD_IMAGE) $(SUBST_IMAGE) $(BATCH_IMAGE) $(DISK_IMAGE) $(GZIP_IMAGE) $(UTILS_IMAGE) $(DISKCOPY_IMAGE) $(DISKCOMP_IMAGE) $(ANSI_IMAGE) $(EMS_IMAGE) $(STUBCFG_IMAGE) $(MOUSE_IMAGE) $(INSTALL_IMAGE)
-	$(PYTHON) -m tests.test_wcc
+	$(PYTHON) -m tests.test_rmcc
 	$(PYTHON) -m tests.test_com_stack
 	$(PYTHON) -m tests.test_pack_mz
 	$(PYTHON) -m tests.test_pack_exe

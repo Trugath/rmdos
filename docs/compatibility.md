@@ -17,9 +17,10 @@ CGA, FAT12/FAT16 volumes **≤128 MiB**. Developed/tested on
 | Memory | Conventional RAM; optional UMB (`mem-expansion`); LIM EMS 3.2 (`EMM.SYS` + `ems-window`) |
 | Filesystem | FAT12/FAT16; 8.3 names; partition bases and HiddenSectors are **32-bit** |
 | DOS API | Broad INT 21h / FCB / handles / MCB / EXEC (COM + MZ stream) / batch shell |
-| `BUFFERS=` | Real sector cache (MCB arena, cap 16); AH=0Dh flush; FAT window stays separate |
+| `BUFFERS=` | Real sector cache (MCB arena, cap 16); directory/data/FAT write-through; AH=0Dh flush; `fat_buf` decode window separate |
 | Drivers | Character `DEVICE=` `.SYS` (≤8 KiB), e.g. `ANSI.SYS`, `EMM.SYS` |
 | Net tools | `PING` / `DHCP` / `TELNET` / optional `NET.COM` (rmDOS INT 60h mux, DE-220) |
+| `SHELL=` | Path + argv into shell PSP tail (`/P` `/E:n` reach COMMAND) |
 
 ## Honest stubs (accepted; not full DOS)
 
@@ -30,7 +31,6 @@ CGA, FAT12/FAT16 volumes **≤128 MiB**. Developed/tested on
 | Network `AH=5Dh`/`5Eh`/`5Fh` | CF, AX=1 (redirector not installed) |
 | INT 2Fh SHARE/PRINT/APPEND/XMS | Install-check stubs only |
 | IOCTL AL=04/05/0Dh | Unsupported control channels |
-| `SHELL=` in CONFIG | Path only (`/P` `/E:` discarded there; COMMAND honors `/E:n`) |
 | Pipes | Sequential temp files, not concurrent DOS pipes |
 | INT 17h floating LPT | Status forced ready/selected |
 | GZIP compress | Fixed-Huffman DEFLATE (LZ77); inflate accepts stored/fixed/dynamic |

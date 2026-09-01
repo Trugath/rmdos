@@ -25,24 +25,24 @@ static char hexdig[17] = "0123456789ABCDEF";
 
 static int dbg_seg;
 static int dbg_paras;
-static int default_addr;
-static int load_len;
-static int have_path;
-static int did_dump;
-static int did_g;
+static int default_addr = 0x100;
+static int load_len = 0;
+static int have_path = 0;
+static int did_dump = 0;
+static int did_g = 0;
 static int parse_hex_val;
-static enum GoMode go_mode;
+static enum GoMode go_mode = 0;
 
-static int reg_ax;
-static int reg_bx;
-static int reg_cx;
-static int reg_dx;
-static int reg_si;
-static int reg_di;
-static int reg_bp;
-static int reg_sp;
-static int reg_ip;
-static int reg_fl;
+static int reg_ax = 0;
+static int reg_bx = 0;
+static int reg_cx = 0;
+static int reg_dx = 0;
+static int reg_si = 0;
+static int reg_di = 0;
+static int reg_bp = 0;
+static int reg_sp = 0xFFFE;
+static int reg_ip = 0x100;
+static int reg_fl = 0x0202;
 static int saved_ss;
 static int saved_sp;
 static int saved_bp;
@@ -77,12 +77,10 @@ static void print_hex4(int v)
 
 static int parse_hex(char *s)
 {
-    int i;
-    int v;
+    int i = 0;
+    int v = 0;
     int d;
     int c;
-    i = 0;
-    v = 0;
     if (buf_get(s, 0) == 0) {
         return 0;
     }
@@ -153,11 +151,10 @@ static void mem_set(int addr, int val)
 
 static int read_line(void)
 {
-    int i;
+    int i = 0;
     int n;
     int c;
     char one[2];
-    i = 0;
     while (i < LINE_MAX - 1) {
         n = dos_read(0, one, 1);
         if (n == 0 || n == -1) {
@@ -183,10 +180,9 @@ static int read_line(void)
 
 static int streq_tok(char *a, char *b)
 {
-    int i;
+    int i = 0;
     int ca;
     int cb;
-    i = 0;
     while (1) {
         ca = toupper_ch(buf_get(a, i));
         cb = toupper_ch(buf_get(b, i));
@@ -202,11 +198,10 @@ static int streq_tok(char *a, char *b)
 
 static void cmd_dump(int addr, int len)
 {
-    int i;
+    int i = 0;
     if (len < 1) {
         len = 128;
     }
-    i = 0;
     while (i < len) {
         if ((i & 15) == 0) {
             if (i != 0) {
@@ -803,28 +798,12 @@ int main(void)
     int addr;
     int len;
     char rest[LINE_MAX];
-    int j;
+    int j = 0;
 
     if (!init_arena()) {
         print_dollar(msg_nomem);
         return 1;
     }
-    default_addr = 0x100;
-    load_len = 0;
-    have_path = 0;
-    did_dump = 0;
-    did_g = 0;
-    reg_ax = 0;
-    reg_bx = 0;
-    reg_cx = 0;
-    reg_dx = 0;
-    reg_si = 0;
-    reg_di = 0;
-    reg_bp = 0;
-    reg_sp = 0xFFFE;
-    reg_ip = 0x100;
-    reg_fl = 0x0202;
-    go_mode = GO_IDLE;
 
     print_dollar(msg_banner);
 

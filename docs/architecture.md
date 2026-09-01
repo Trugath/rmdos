@@ -26,7 +26,7 @@ rmdos/
 |   |-- linker/         # OS link scripts
 |   |-- build/          # Generated ROMs, images, logs
 |-- fixtures/          # boot/config/testdata/batch + elite/wolf3d drop-ins
-|-- scripts/            # as8086, mkimg, pack_roms, run-k8086, wcc
+|-- scripts/            # as8086, mkimg, pack_roms, run-k8086, rmcc
 |-- tests/              # Host-side / E2E gates
 |-- Makefile
 ```
@@ -160,11 +160,12 @@ DOS 3.3-ish real-mode kernel and shell, aimed at programs that run on an
 
 ### C vs assembly in userland
 
-Most COM utilities are written in C and compiled with the in-tree **wcc**
-Small-C compiler (`scripts/wcc.py` → GAS → `com.ld`). Shared INT 21h helpers
+Most COM utilities are written in C and compiled with the in-tree **rmcc**
+Small-C compiler (`scripts/rmcc.py` → GAS → `com.ld`). rmcc accepts local
+initializers, `void *`, and struct object assignment (`s = t`). Shared INT 21h helpers
 live in [`firmware/src/main/dos/inc/dos.h`](../firmware/src/main/dos/inc/dos.h).
 
-| Built with wcc (C) | Left as assembly |
+| Built with rmcc (C) | Left as assembly |
 |--------------------|------------------|
 | `COMMAND.COM`, DIR, TYPE, COPY, DEL, ATTRIB, LABEL, MOVE, XCOPY, CHKDSK, FIND, CHOICE, MORE, MEM, FC, TREE, SORT, EDIT, DEBUG, MODE, SUBST, COMP, ASSIGN, DEMO/STAR | Boot, kernel, BIOS; FORMAT, PARTEDIT, SYS; PING, DHCP, TELNET, NET; GZIP, GUNZIP; MOUSE, CLOCK; harness under `src/test/dos/` (HELLO, COMPAT, …) |
 
@@ -220,10 +221,10 @@ BUFFERS LoL (seg non-null; offset 0 valid) + occupied cache walk + SFTE, and LoL
 | PSP JFT (`18h`/`32h`/`34h`) | Sized to `FILES=` / AH=67 (`max_handles`, 5..64); ≤20 entries inline at PSP:18h, larger tables in an AH=48 block; resized on handle growth; inherited from parent when present |
 | INT 25h/26h `CX=FFFFh` | DOS 3.31 packet (`DWORD` sector, `WORD` count, far buffer); classic register form remains supported |
 | Network/server `AH=5Dh`/`5Eh`/`5Fh` | CF + AX=1 (redirector not installed) |
-| `BUFFERS=` | Parsed (clamped 1..16); LoL +12/+14 → header+512 MCB arena; directory/data cached write-through; FAT LBAs skipped (FAT window); kernel CS dests skip read hits; AH=0Dh flushes |
+| `BUFFERS=` | Parsed (clamped 1..16); LoL +12/+14 → header+512 MCB arena; directory/data/FAT cached write-through; FAT decode window (`fat_buf`) stays separate; remount invalidates; AH=0Dh flushes |
 | `STACKS=` / `FCBS=` / `DRIVPARM=` | Accepted as advisory no-ops (not printed as ignored) |
 | `COUNTRY=` | `COUNTRY=nnn[,codepage]` updates country id + AH=66 code pages |
-| `SHELL=` | Path only — CONFIG discards `/P` `/E:`; COMMAND itself honors `/E:n` on its argv |
+| `SHELL=` | Path + argv into shell PSP tail (`/P` `/E:n` reach COMMAND); bare path leaves empty tail |
 | `DEVICE=` | Character `.SYS` only (≤8 KiB); **block drivers intentional OOS** (reject + clear CONFIG text; follow-on) |
 | `LASTDRIVE=` | Raises CDS count (compile max 16; default 8) |
 | Unknown `CONFIG.SYS` lines | Printed as `CONFIG: ignored …` |
@@ -248,10 +249,12 @@ the SYS ABI — INIT + INPUT + OUTPUT; block drivers print
 `CONFIG: DEVICE is not a character driver` and continue — intentional OOS),
 `FILES=` / `BUFFERS=` (`FILES=` clamps 5..64 into the handle table and current
 PSP JFT after CONFIG; default 20; AH=67 grows both. `BUFFERS=` allocates a
-header+512 arena from the MCB pool, cap 16; default 8), `LASTDRIVE=` (letter or
+header+512 arena from the MCB pool, cap 16; default 8; directory/data/FAT
+sectors share write-through slots; the 1 KiB `fat_buf` window remains the
+FAT12/16 decode workspace and is invalidated with the arena on remount), `LASTDRIVE=` (letter or
 count, max 16), `BREAK=`,
-`SHELL=` (path only in CONFIG — `/P`/`/E:` discarded there; `COMMAND` honors
-`/E:n` on its own argv), `COUNTRY=nnn[,codepage]` (updates
+`SHELL=` (path + optional `/P` `/E:n` and other argv copied into the shell
+PSP command tail; `COMMAND` honors `/P` and `/E:n` on that tail), `COUNTRY=nnn[,codepage]` (updates
 country id + active/system code page), and advisory no-ops `STACKS=` /
 `FCBS=` / `DRIVPARM=`. Unknown directives print
 `CONFIG: ignored …`. Comments (`;`) and blank lines are skipped. Builtin
@@ -284,7 +287,7 @@ nest to depth 8. Pipes use sequential unique temps on the current drive
 semantics). `ERRORLEVEL` is updated for external EXEC and for CD/MD/RD/DEL/REN/
 TYPE/DIR/CTTY failures and Bad command. `DIR` supports classic `/W` and `/P` plus
 date/time columns; optional `/O` (`N`/`E`/`D`/`S`/`G`, optional `-` reverse) sorts
-a buffered listing (default remains on-disk FindFirst order; cap 80 entries). `DEL`/`ERASE` accept wildcards. `FOR` nests to batch
+a buffered listing (default remains on-disk FindFirst order; cap 256 entries). `DEL`/`ERASE` accept wildcards. `FOR` nests to batch
 depth. `CTTY CON`/`NUL` with one-level restore of handles 0/1/2.
 `PATH=A:\BIN` is set in the kernel environment. Internals present:
 `FOR`, `PROMPT` (`$e` ESC, `$h` backspace, `$v` version), `DATE`/`TIME`

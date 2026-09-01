@@ -1,10 +1,10 @@
-"""Host-side checks for the in-tree wcc Small-C compiler."""
+"""Host-side checks for the in-tree rmcc Small-C compiler."""
 
 from __future__ import annotations
 
 import re
 
-from scripts.wcc import Compiler
+from scripts.rmcc import Compiler
 
 
 def _compile(src: str, *, com: bool = False) -> str:
@@ -216,7 +216,7 @@ int main(void) {
 
 
 def test_function_like_requires_paren_to_expand() -> None:
-    from scripts.wcc import CompileError
+    from scripts.rmcc import CompileError
 
     try:
         _compile(
@@ -294,7 +294,7 @@ void main(void) {
 
 
 def test_extern_with_initializer_rejected() -> None:
-    from scripts.wcc import CompileError
+    from scripts.rmcc import CompileError
 
     try:
         _compile("extern int x = 1;\nvoid main(void) { }\n")
@@ -395,7 +395,7 @@ void main(void) { }
 
 
 def _expect_compile_error(src: str, substr: str) -> None:
-    from scripts.wcc import CompileError
+    from scripts.rmcc import CompileError
 
     try:
         _compile(src)
@@ -405,7 +405,7 @@ def _expect_compile_error(src: str, substr: str) -> None:
 
 
 def test_struct_layout_and_global_storage() -> None:
-    from scripts.wcc import Compiler
+    from scripts.rmcc import Compiler
 
     src = """
 struct S {
@@ -938,6 +938,202 @@ void main(void) { }
     )
 
 
+def test_local_scalar_initializer() -> None:
+    asm = _compile(
+        """
+int main(void) {
+    int x = 42;
+    int y = x + 1;
+    return y;
+}
+"""
+    )
+    assert "sub sp, 2" in asm
+    assert "mov ax, 42" in asm
+    assert re.search(r"mov \[bp-?\d+\], ax", asm)
+    assert "mov ax, 1" in asm
+
+
+def test_local_comma_initializers() -> None:
+    asm = _compile(
+        """
+void main(void) {
+    int a = 1, b = 2;
+}
+"""
+    )
+    assert "mov ax, 1" in asm
+    assert "mov ax, 2" in asm
+    assert asm.count("sub sp, 2") >= 2
+
+
+def test_local_array_and_string_initializer() -> None:
+    asm = _compile(
+        """
+int main(void) {
+    int a[3] = {1, 2, 3};
+    char buf[8] = "hi";
+    return a[0];
+}
+"""
+    )
+    assert "sub sp, 6" in asm  # int[3]
+    assert "sub sp, 8" in asm  # char[8]
+    assert "rep stosb" in asm
+    assert "mov ax, 1" in asm
+    assert "mov ax, 2" in asm
+    assert "mov ax, 3" in asm
+    assert "mov al, 104" in asm  # 'h'
+    assert "mov al, 105" in asm  # 'i'
+
+
+def test_void_pointer_sizeof_cast_and_assign() -> None:
+    asm = _compile(
+        """
+void *id(void *p) {
+    return p;
+}
+int main(void) {
+    int n;
+    void *p;
+    char *c;
+    n = 7;
+    p = (void *)0;
+    p = &n;
+    c = (char *)p;
+    n = sizeof(void *);
+    return id(p) == 0;
+}
+"""
+    )
+    assert "mov ax, 2" in asm  # sizeof(void *)
+    assert "mov ax, 0" in asm
+    assert "lea ax, [bp" in asm
+    assert "call id" in asm
+
+
+def test_void_pointer_diagnostics() -> None:
+    _expect_compile_error(
+        "void x; void main(void) { }\n",
+        "void variables",
+    )
+    _expect_compile_error(
+        """
+void main(void) {
+    void *p;
+    int n;
+    p = 0;
+    n = *p;
+}
+""",
+        "dereference void pointer",
+    )
+    _expect_compile_error(
+        """
+int main(void) {
+    int n;
+    n = sizeof(void);
+    return n;
+}
+""",
+        "sizeof(void)",
+    )
+    _expect_compile_error(
+        """
+int main(void) {
+    int n;
+    n = (void)n;
+    return n;
+}
+""",
+        "cast to void",
+    )
+
+
+def test_struct_assignment_copy() -> None:
+    asm = _compile(
+        """
+struct S { int x; char c; };
+void main(void) {
+    struct S a;
+    struct S b;
+    a.x = 1;
+    a.c = 2;
+    b = a;
+}
+"""
+    )
+    assert "rep movsb" in asm
+    assert "mov cx, 3" in asm
+
+
+def test_struct_assignment_size_and_chain() -> None:
+    asm = _compile(
+        """
+struct S { int x; int y; };
+void main(void) {
+    struct S a;
+    struct S b;
+    struct S c;
+    a.x = 1;
+    a.y = 2;
+    c = b = a;
+}
+"""
+    )
+    assert "mov cx, 4" in asm
+    assert asm.count("rep movsb") >= 2
+
+
+def test_struct_local_init_from_object() -> None:
+    asm = _compile(
+        """
+struct S { int x; };
+void main(void) {
+    struct S a;
+    a.x = 9;
+    struct S b = a;
+}
+"""
+    )
+    assert "rep movsb" in asm
+    assert "sub sp, 2" in asm
+
+
+def test_struct_assignment_diagnostics() -> None:
+    _expect_compile_error(
+        """
+struct A { int x; };
+struct B { int y; };
+void main(void) {
+    struct A a;
+    struct B b;
+    a = b;
+}
+""",
+        "type mismatch",
+    )
+    _expect_compile_error(
+        """
+struct S { int x; };
+void main(void) {
+    struct S s;
+    s = 1;
+}
+""",
+        "struct object",
+    )
+    _expect_compile_error(
+        """
+struct S { int x; };
+void main(void) {
+    struct S s = { 1 };
+}
+""",
+        "struct initializers",
+    )
+
+
 if __name__ == "__main__":
     test_for_increment_after_body()
     test_for_empty_clauses()
@@ -980,4 +1176,13 @@ if __name__ == "__main__":
     test_casts()
     test_do_while()
     test_enum_cast_do_diagnostics()
-    print("test_wcc: OK")
+    test_local_scalar_initializer()
+    test_local_comma_initializers()
+    test_local_array_and_string_initializer()
+    test_void_pointer_sizeof_cast_and_assign()
+    test_void_pointer_diagnostics()
+    test_struct_assignment_copy()
+    test_struct_assignment_size_and_chain()
+    test_struct_local_init_from_object()
+    test_struct_assignment_diagnostics()
+    print("test_rmcc: OK")

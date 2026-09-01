@@ -128,7 +128,14 @@ _start:
     call dos_rebuild_drivemap
     call dos_sysvars_refresh
 
-    /* Drop into the shell (path_command may be set by SHELL=) */
+    /* Drop into the shell (path_command may be set by SHELL=). */
+    cmp byte ptr [cfg_shell_valid], 0
+    je .shell_go
+    mov word ptr [exec_pb_seg], cs
+    lea ax, [cfg_shell_pb]
+    mov word ptr [exec_pb_off], ax
+    mov byte ptr [exec_pb_valid], 1
+.shell_go:
     lea dx, [path_command]
     call load_and_run_com
     jc .com_fail
@@ -291,6 +298,8 @@ cfg_lastdrive:
 cfg_handle:
     .word 0
 exec_pb_valid:
+    .byte 0
+cfg_shell_valid:
     .byte 0
 find_attr:
     .byte 0
@@ -687,6 +696,14 @@ cfg_install_fcb1:
 cfg_install_fcb2:
     .space 16, 0
 cfg_install_pb:
+    .space 14, 0
+cfg_shell_tail:
+    .space 129, 0
+cfg_shell_fcb1:
+    .space 16, 0
+cfg_shell_fcb2:
+    .space 16, 0
+cfg_shell_pb:
     .space 14, 0
 
 /* Device ABI state + builtin NUL/CON headers */

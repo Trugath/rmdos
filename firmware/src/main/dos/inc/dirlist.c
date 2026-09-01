@@ -2,7 +2,7 @@
 #include "dirlist.h"
 
 char dir_dta[128];
-char dir_pool[1920];
+char dir_pool[6144];
 char dir_keys[4];
 char dir_revs[4];
 int dir_nent;

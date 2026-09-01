@@ -4,9 +4,9 @@
 
 static char dirpat[64];
 static char cwd_tmp[64];
-static int dir_count;
-static int dir_bytes_lo;
-static int dir_bytes_hi;
+static int dir_count = 0;
+static int dir_bytes_lo = 0;
+static int dir_bytes_hi = 0;
 static int opt_w;
 static int opt_p;
 static int opt_o;
@@ -15,8 +15,8 @@ static int free_mul_b;
 static int free_mul_c;
 static int free_mul_lo;
 static int free_mul_hi;
-static int wide_col;
-static int page_lines;
+static int wide_col = 0;
+static int page_lines = 1;
 static char msg_hdr[16] = " Directory of $";
 static char msg_tag[7] = "<DIR>$";
 static char msg_fs1[10] = "        $";
@@ -38,21 +38,13 @@ static void print_two_digits(int n)
 
 static void print_dta_datetime(void)
 {
-    int date;
-    int time;
-    int month;
-    int day;
-    int year;
-    int hour;
-    int minute;
-
-    time = peek_word(buf_addr(dir_dta, 0x16));
-    date = peek_word(buf_addr(dir_dta, 0x18));
-    day = date & 31;
-    month = (date >> 5) & 15;
-    year = ((date >> 9) & 127) + 1980;
-    hour = (time >> 11) & 31;
-    minute = (time >> 5) & 63;
+    int time = peek_word(buf_addr(dir_dta, 0x16));
+    int date = peek_word(buf_addr(dir_dta, 0x18));
+    int day = date & 31;
+    int month = (date >> 5) & 15;
+    int year = ((date >> 9) & 127) + 1980;
+    int hour = (time >> 11) & 31;
+    int minute = (time >> 5) & 63;
 
     print_dollar("  $");
     print_two_digits(month);
@@ -108,12 +100,11 @@ static int parse_args(void)
     int c;
     int di;
     int has_wild;
-    int have_pat;
+    int have_pat = 0;
 
     opt_w = 0;
     opt_p = 0;
     opt_o = 0;
-    have_pat = 0;
     dir_nent = 0;
     dir_nkeys = 0;
     buf_set(dirpat, 0, 0);
@@ -376,11 +367,6 @@ int main(void)
 {
     int i;
 
-    dir_count = 0;
-    dir_bytes_lo = 0;
-    dir_bytes_hi = 0;
-    wide_col = 0;
-    page_lines = 1;
     if (parse_args() == -1) {
         return 1;
     }

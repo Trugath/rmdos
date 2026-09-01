@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-WCC: Small-C compiler for rmDOS.
+rmcc: Small-C compiler for rmDOS.
 Compiles a C subset to 8088 GAS assembly.
-Usage: python3 -m scripts.wcc [options] input.c -o output.s
+Usage: python3 -m scripts.rmcc [options] input.c -o output.s
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from scripts.wcc_preprocess import default_include_dirs, preprocess_includes
+from scripts.rmcc_preprocess import default_include_dirs, preprocess_includes
 
 # --- Token types ---
 T_INT, T_CHAR, T_VOID = "INT", "CHAR", "VOID"
@@ -607,6 +607,17 @@ class Compiler:
             return st.size
         return 0
 
+    def _apply_pointer_star(self, t: str) -> str:
+        """Consume one trailing '*' (including void*)."""
+        if self._at(T_STAR):
+            self._advance()
+            t = t + "*"
+        return t
+
+    def _reject_void_object(self, t: str, line: int, col: int) -> None:
+        if t == "void":
+            raise CompileError("void variables are not allowed", line, col)
+
     def _is_enum_type(self, typ: str) -> bool:
         return typ.startswith("enum ")
 
@@ -977,6 +988,198 @@ class Compiler:
             self._emit_member_addr_bx(base_name, member)
             self._emit_store_member_at_bx(member)
 
+    def _emit_lea(self, reg: str, name: str) -> None:
+        """Load address of named object into reg (si/di/ax/bx)."""
+        _typ, off = self._lookup(name)
+        if self._is_local(name):
+            self.gen.emit(f"    lea {reg}, [bp{off:+d}]")
+        else:
+            self.gen.emit(f"    lea {reg}, [{self._label_for(name)}]")
+
+    def _emit_struct_copy(self, dest_name: str, src_name: str, line: int, col: int) -> None:
+        """Copy a struct object src_name into dest_name (same type)."""
+        dt, _ = self._lookup(dest_name)
+        if dt is None:
+            raise CompileError(f"undefined identifier '{dest_name}'", line, col)
+        styp, _ = self._lookup(src_name)
+        if styp is None:
+            raise CompileError(f"undefined identifier '{src_name}'", line, col)
+        if not self._is_struct_type(dt) or not self._is_struct_type(styp):
+            raise CompileError("struct assignment requires struct objects", line, col)
+        if dt != styp:
+            raise CompileError(
+                f"struct assignment type mismatch ('{dt}' vs '{styp}')", line, col
+            )
+        if dest_name == src_name:
+            return
+        st = self._require_complete_struct(dt, line, col)
+        nbytes = st.size
+        if nbytes <= 0:
+            return
+        self._emit_lea("si", src_name)
+        self._emit_lea("di", dest_name)
+        self.gen.emit("    push ds")
+        self.gen.emit("    pop es")
+        self.gen.emit(f"    mov cx, {nbytes}")
+        self.gen.emit("    cld")
+        self.gen.emit("    rep movsb")
+
+    def _parse_struct_copy_from_rhs(self, dest_name: str) -> None:
+        """Consume RHS of struct assignment ('=' already eaten) and copy into dest."""
+        if not self._at(T_IDENT):
+            raise CompileError(
+                "struct assignment requires a struct object",
+                self.cur_token.line,
+                self.cur_token.col,
+            )
+        src_tok = self.cur_token
+        src = src_tok.value
+        self._advance()
+        if self._at(T_ASSIGN):
+            self._advance()
+            self._parse_struct_copy_from_rhs(src)
+            self._emit_struct_copy(dest_name, src, src_tok.line, src_tok.col)
+            return
+        if self._at(T_LBRACKET) or self._at(T_DOT) or self._at(T_ARROW):
+            raise CompileError(
+                "struct assignment requires a struct object",
+                self.cur_token.line,
+                self.cur_token.col,
+            )
+        self._emit_struct_copy(dest_name, src, src_tok.line, src_tok.col)
+
+    def _alloc_local(self, name: str, t: str, size: int, line: int, col: int) -> None:
+        """Reserve stack space for a local and record it in self.locals."""
+        if size > 0:
+            if self._is_struct_type(t):
+                st = self._require_complete_struct(t, line, col)
+                self._align_local(2)
+                nbytes = size * st.size
+            else:
+                elem = self._type_size(t)
+                if elem <= 0:
+                    raise CompileError(f"cannot declare array of '{t}'", line, col)
+                if elem >= 2:
+                    self._align_local(2)
+                nbytes = size * elem
+            if nbytes > 0:
+                self.gen.emit(f"    sub sp, {nbytes}")
+                self.local_offset += nbytes
+            self.locals[name] = (t, -self.local_offset)
+            self.arrays.add(name)
+            self.array_lengths[name] = size
+        elif self._is_struct_type(t):
+            st = self._require_complete_struct(t, line, col)
+            self._align_local(2)
+            sz = st.size
+            if sz > 0:
+                self.gen.emit(f"    sub sp, {sz}")
+                self.local_offset += sz
+            self.locals[name] = (t, -self.local_offset)
+        elif t.endswith("*") or t == "int" or self._is_enum_type(t):
+            if self._is_struct_ptr(t):
+                self._require_complete_struct(self._struct_obj_type(t), line, col)
+            self.gen.emit("    sub sp, 2")
+            self.local_offset += 2
+            self.locals[name] = (t, -self.local_offset)
+        else:
+            self._reject_void_object(t, line, col)
+            sz = 1
+            self.gen.emit(f"    sub sp, {sz}")
+            self.local_offset += sz
+            self.locals[name] = (t, -self.local_offset)
+
+    def _store_local_scalar(self, name: str) -> None:
+        """Store AX into a scalar/pointer local (or global static alias)."""
+        typ, off = self._lookup(name)
+        if self._is_local(name):
+            if typ == "char":
+                self.gen.emit(f"    mov [bp{off:+d}], al")
+            else:
+                self.gen.emit(f"    mov [bp{off:+d}], ax")
+        else:
+            self.gen.emit(f"    mov [{self._label_for(name)}], ax")
+
+    def _zero_local_bytes(self, off: int, nbytes: int) -> None:
+        if nbytes <= 0:
+            return
+        self.gen.emit(f"    lea di, [bp{off:+d}]")
+        self.gen.emit("    push ds")
+        self.gen.emit("    pop es")
+        self.gen.emit(f"    mov cx, {nbytes}")
+        self.gen.emit("    xor al, al")
+        self.gen.emit("    cld")
+        self.gen.emit("    rep stosb")
+
+    def _emit_local_initializer(self, name: str, t: str, size: int) -> None:
+        """Consume '= ...' after a local has been allocated."""
+        self._expect(T_ASSIGN)
+        if size > 0:
+            _, off = self.locals[name]
+            elem = self._type_size(t)
+            nbytes = size * elem
+            self._zero_local_bytes(off, nbytes)
+            if self._at(T_STRING):
+                if t != "char":
+                    raise CompileError(
+                        "string initializer only for char array",
+                        self.cur_token.line,
+                        self.cur_token.col,
+                    )
+                s = self.cur_token.value
+                self._advance()
+                data = list(s.encode("latin-1"))
+                if len(data) + 1 <= size:
+                    data = data + [0]
+                else:
+                    data = data[: size - 1] + [0]
+                for i, b in enumerate(data[:size]):
+                    self.gen.emit(f"    mov al, {b}")
+                    self.gen.emit(f"    mov [bp{off + i:+d}], al")
+            elif self._at(T_LBRACE):
+                self._advance()
+                idx = 0
+                while not self._at(T_RBRACE) and not self._at(T_EOF):
+                    if idx >= size:
+                        raise CompileError(
+                            f"too many initializers (array size {size})",
+                            self.cur_token.line,
+                            self.cur_token.col,
+                        )
+                    self._expr_assign()
+                    elem_off = off + idx * elem
+                    if t == "char":
+                        self.gen.emit(f"    mov [bp{elem_off:+d}], al")
+                    else:
+                        self.gen.emit(f"    mov [bp{elem_off:+d}], ax")
+                    idx += 1
+                    if not self._at(T_RBRACE):
+                        self._expect(T_COMMA)
+                self._expect(T_RBRACE)
+            else:
+                raise CompileError(
+                    "array initializer must be string or { values }",
+                    self.cur_token.line,
+                    self.cur_token.col,
+                )
+            return
+        if self._is_struct_type(t):
+            if self._at(T_LBRACE):
+                raise CompileError(
+                    "struct initializers are not supported",
+                    self.cur_token.line,
+                    self.cur_token.col,
+                )
+            self._parse_struct_copy_from_rhs(name)
+            return
+        if self._at(T_LBRACE):
+            self._advance()
+            self._expr_assign()
+            self._expect(T_RBRACE)
+        else:
+            self._expr_assign()
+        self._store_local_scalar(name)
+
     def _lookup_member(self, struct_typ: str, member_name: str, line: int, col: int) -> StructMember:
         st = self._require_complete_struct(struct_typ, line, col)
         m = st.members.get(member_name)
@@ -1025,7 +1228,7 @@ class Compiler:
 
     def _emit_cast(self, typ: str) -> None:
         """Apply a cast to the value in AX and update last_primary_type."""
-        if typ == "void" or typ == "void*":
+        if typ == "void":
             raise CompileError("cast to void is not supported", self.cur_token.line, self.cur_token.col)
         if typ == "char":
             self.gen.emit("    and ax, 255")
@@ -1036,7 +1239,7 @@ class Compiler:
             self.last_primary_type = typ
 
     def _sizeof_value(self, typ: str, line: int, col: int) -> int:
-        if typ == "void" or typ == "void*":
+        if typ == "void":
             raise CompileError("sizeof(void) is not supported", line, col)
         if self._is_struct_type(typ):
             self._require_complete_struct(typ, line, col)
@@ -1316,20 +1519,13 @@ class Compiler:
                     self.cur_token.line,
                     self.cur_token.col,
                 )
-            if self._at(T_STAR):
-                if t == "void":
-                    raise CompileError(
-                        "void pointers are not supported",
-                        self.cur_token.line,
-                        self.cur_token.col,
-                    )
-                self._advance()
-                t = t + "*"
+            t = self._apply_pointer_star(t)
             if not self._at(T_IDENT):
                 raise CompileError("expected identifier", self.cur_token.line, self.cur_token.col)
             next_t = self._peek_next()
             if next_t.kind != T_LPAREN:
                 # Global variable (scalar, struct, pointer, or array), optional initializer
+                self._reject_void_object(t, self.cur_token.line, self.cur_token.col)
                 name = self.cur_token.value
                 self._advance()
                 size = 0
@@ -1394,15 +1590,8 @@ class Compiler:
                     break
                 if pt == "void" and self._at(T_RPAREN):
                     break
-                if self._at(T_STAR):
-                    if pt == "void":
-                        raise CompileError(
-                            "void pointers are not supported",
-                            self.cur_token.line,
-                            self.cur_token.col,
-                        )
-                    self._advance()
-                    pt = pt + "*"
+                pt = self._apply_pointer_star(pt)
+                self._reject_void_object(pt, self.cur_token.line, self.cur_token.col)
                 if self._is_struct_type(pt):
                     raise CompileError(
                         "struct parameters are not supported (use struct pointers)",
@@ -1490,16 +1679,10 @@ class Compiler:
                     self.cur_token.line,
                     self.cur_token.col,
                 )
-            if self._at(T_STAR):
-                if t == "void":
-                    raise CompileError(
-                        "void pointers are not supported",
-                        self.cur_token.line,
-                        self.cur_token.col,
-                    )
-                self._advance()
-                t = t + "*"
+            t = self._apply_pointer_star(t)
+            self._reject_void_object(t, self.cur_token.line, self.cur_token.col)
             while True:
+                name_tok = self.cur_token
                 name = self._expect(T_IDENT).value
                 size = 0
                 if self._at(T_LBRACKET):
@@ -1559,55 +1742,15 @@ class Compiler:
                     self.gen.emit(f".section .text.{self.current_func}")
                     return
 
-                if self._at(T_ASSIGN):
+                if name in self.locals or name in self.static_locals:
                     raise CompileError(
-                        "local initializers are not supported"
-                        if not self._is_struct_type(t)
-                        else "struct initializers are not supported",
-                        self.cur_token.line,
-                        self.cur_token.col,
+                        f"redefinition of '{name}'",
+                        name_tok.line,
+                        name_tok.col,
                     )
-                if size > 0:
-                    if self._is_struct_type(t):
-                        st = self._require_complete_struct(
-                            t, self.cur_token.line, self.cur_token.col
-                        )
-                        self._align_local(2)
-                        nbytes = size * st.size
-                        if nbytes > 0:
-                            self.gen.emit(f"    sub sp, {nbytes}")
-                            self.local_offset += nbytes
-                    else:
-                        self.gen.emit(f"    sub sp, {size}")
-                        self.local_offset += size
-                    self.locals[name] = (t, -self.local_offset)
-                    self.arrays.add(name)
-                    self.array_lengths[name] = size
-                elif self._is_struct_type(t):
-                    st = self._require_complete_struct(
-                        t, self.cur_token.line, self.cur_token.col
-                    )
-                    self._align_local(2)
-                    sz = st.size
-                    if sz > 0:
-                        self.gen.emit(f"    sub sp, {sz}")
-                        self.local_offset += sz
-                    self.locals[name] = (t, -self.local_offset)
-                elif t.endswith("*") or t == "int" or self._is_enum_type(t):
-                    if self._is_struct_ptr(t):
-                        self._require_complete_struct(
-                            self._struct_obj_type(t),
-                            self.cur_token.line,
-                            self.cur_token.col,
-                        )
-                    self.gen.emit("    sub sp, 2")
-                    self.local_offset += 2
-                    self.locals[name] = (t, -self.local_offset)
-                else:
-                    sz = 1
-                    self.gen.emit(f"    sub sp, {sz}")
-                    self.local_offset += sz
-                    self.locals[name] = (t, -self.local_offset)
+                self._alloc_local(name, t, size, name_tok.line, name_tok.col)
+                if self._at(T_ASSIGN):
+                    self._emit_local_initializer(name, t, size)
                 if not self._at(T_COMMA):
                     break
                 self._advance()
@@ -1862,18 +2005,18 @@ class Compiler:
                 name = self.cur_token.value
                 self._advance()
                 self._advance()
-                self._expr_assign()
                 typ, off = self._lookup(name)
                 if typ is None:
                     raise CompileError(f"undefined identifier '{name}'", self.cur_token.line, self.cur_token.col)
                 if self._is_struct_type(typ):
-                    raise CompileError(
-                        "struct assignment is not supported",
-                        self.cur_token.line,
-                        self.cur_token.col,
-                    )
+                    self._parse_struct_copy_from_rhs(name)
+                    return
+                self._expr_assign()
                 if self._is_local(name):
-                    self.gen.emit(f"    mov [bp{off:+d}], ax")
+                    if typ == "char":
+                        self.gen.emit(f"    mov [bp{off:+d}], al")
+                    else:
+                        self.gen.emit(f"    mov [bp{off:+d}], ax")
                 else:
                     self.gen.emit(f"    mov [{self._label_for(name)}], ax")
                 return
@@ -2392,6 +2535,12 @@ class Compiler:
         if self._at(T_STAR):
             self._advance()
             self._expr_unary()
+            if self.last_primary_type == "void*":
+                raise CompileError(
+                    "cannot dereference void pointer",
+                    self.cur_token.line,
+                    self.cur_token.col,
+                )
             if self._is_struct_ptr(self.last_primary_type):
                 raise CompileError(
                     "cannot dereference struct pointer (use ->)",
@@ -2680,7 +2829,7 @@ class Compiler:
 
 
 def main():
-    ap = argparse.ArgumentParser(description="WCC: Small-C compiler for rmDOS")
+    ap = argparse.ArgumentParser(description="rmcc: Small-C compiler for rmDOS")
     ap.add_argument("input", type=Path, help="Input .c file")
     ap.add_argument("-o", "--output", type=Path, required=True, help="Output .s file")
     ap.add_argument("--module", type=str, default=None, help="Emit MOD0 module with this name (e.g. HALT)")

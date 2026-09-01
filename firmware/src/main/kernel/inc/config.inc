@@ -26,6 +26,7 @@ dos_process_config:
     mov word ptr [cfg_files], CFG_FILES_DEFAULT
     mov word ptr [cfg_buffers], CFG_BUFS_DEFAULT
     mov byte ptr [cfg_lastdrive], CFG_LASTDRIVE_DEFAULT
+    mov byte ptr [cfg_shell_valid], 0
 
     mov ah, 0x3D
     xor al, al
@@ -545,6 +546,8 @@ cfg_match_advisory:
 
 cfg_match_shell:
     push ax
+    push bx
+    push cx
     push di
     lea si, [cfg_line]
     call cfg_skip_ws
@@ -557,38 +560,85 @@ cfg_match_shell:
     inc si
     call cfg_skip_ws
     call cfg_trim_path
-    /* SHELL keeps only the executable path; /P and /E: are shell options. */
+    /* Split path vs args (INSTALL-style); keep /P /E: for COMMAND.COM. */
     mov di, si
-.cfg_ms_split:
+.cfg_ms_path:
     mov al, [di]
     test al, al
-    jz .cfg_ms_split_done
+    jz .cfg_ms_no_args
     cmp al, ' '
-    je .cfg_ms_cut
+    je .cfg_ms_split
     cmp al, 9
-    je .cfg_ms_cut
+    je .cfg_ms_split
     inc di
-    jmp .cfg_ms_split
-.cfg_ms_cut:
+    jmp .cfg_ms_path
+.cfg_ms_split:
     mov byte ptr [di], 0
-.cfg_ms_split_done:
-    /* copy path into path_command */
+    inc di
+.cfg_ms_skip:
+    cmp byte ptr [di], ' '
+    je .cfg_ms_skip_one
+    cmp byte ptr [di], 9
+    jne .cfg_ms_args
+.cfg_ms_skip_one:
+    inc di
+    jmp .cfg_ms_skip
+.cfg_ms_args:
+    cmp byte ptr [di], 0
+    je .cfg_ms_no_args
+    lea bx, [cfg_shell_tail]
+    mov byte ptr [bx + 1], ' '
+    add bx, 2
+    mov cx, 1
+.cfg_ms_copy_args:
+    mov al, [di]
+    test al, al
+    jz .cfg_ms_tail_done
+    cmp cx, 127
+    jae .cfg_ms_tail_done
+    mov [bx], al
+    inc bx
+    inc di
+    inc cx
+    jmp .cfg_ms_copy_args
+.cfg_ms_no_args:
+    xor cx, cx
+.cfg_ms_tail_done:
+    lea bx, [cfg_shell_tail]
+    mov byte ptr [bx], cl
+    add bx, cx
+    mov byte ptr [bx + 1], 0x0D
+    /* copy path into path_command (SI still at path start) */
     push es
     push cs
     pop es
     lea di, [path_command]
-.cfg_ms_copy:
+.cfg_ms_copy_path:
     lodsb
     stosb
     test al, al
-    jnz .cfg_ms_copy
+    jnz .cfg_ms_copy_path
     pop es
+    /* dedicated EXEC pb — INSTALL= must not clobber this */
+    mov word ptr [cfg_shell_pb], 0
+    lea ax, [cfg_shell_tail]
+    mov word ptr [cfg_shell_pb + 2], ax
+    mov word ptr [cfg_shell_pb + 4], cs
+    lea ax, [cfg_shell_fcb1]
+    mov word ptr [cfg_shell_pb + 6], ax
+    mov word ptr [cfg_shell_pb + 8], cs
+    lea ax, [cfg_shell_fcb2]
+    mov word ptr [cfg_shell_pb + 0x0A], ax
+    mov word ptr [cfg_shell_pb + 0x0C], cs
+    mov byte ptr [cfg_shell_valid], 1
     clc
     jmp .cfg_ms_done
 .cfg_ms_no:
     stc
 .cfg_ms_done:
     pop di
+    pop cx
+    pop bx
     pop ax
     ret
 

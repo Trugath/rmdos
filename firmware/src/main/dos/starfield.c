@@ -284,7 +284,7 @@ void cga_clear_screen(void)
 }
 
 /*
- * Fast mode-4 putpixel. wcc pushes args left-to-right so:
+ * Fast mode-4 putpixel. rmcc pushes args left-to-right so:
  *   [bp+8]=x, [bp+6]=y, [bp+4]=color.
  */
 void cga_put_pixel(int x, int y, int color)

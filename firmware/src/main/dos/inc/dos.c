@@ -1,4 +1,4 @@
-/* DOS INT 21h runtime for wcc-built .COM programs. */
+/* DOS INT 21h runtime for rmcc-built .COM programs. */
 #include "dos.h"
 
 int dos_tmp;
