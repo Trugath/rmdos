@@ -239,17 +239,25 @@ gunzip_member:
 
     mov ax, word ptr [trail]
     cmp ax, word ptr [crc32_lo]
-    jne .gm_fail
+    jne .gm_crc
     mov ax, word ptr [trail+2]
     cmp ax, word ptr [crc32_hi]
-    jne .gm_fail
+    jne .gm_crc
     mov ax, word ptr [trail+4]
     cmp ax, word ptr [isize_lo]
-    jne .gm_fail
+    jne .gm_sz
     mov ax, word ptr [trail+6]
     cmp ax, word ptr [isize_hi]
-    jne .gm_fail
+    jne .gm_sz
     clc
+    ret
+.gm_crc:
+    mov byte ptr [inf_err], 'C'
+    stc
+    ret
+.gm_sz:
+    mov byte ptr [inf_err], 'Z'
+    stc
     ret
 .gm_fail:
     stc

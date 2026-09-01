@@ -310,7 +310,7 @@ space report. `/F` repairs FAT copies and lost chains when possible. Prints
 `GZIP [src [dst]]` / `GUNZIP [src [dst]]` compress and decompress a single gzip
 member (RFC 1952, DEFLATE method 8). Zero args use stdin→stdout; one arg reads a
 file to stdout. Status lines are omitted when writing to stdout so pipes and
-redirects stay binary-clean. Compression emits stored DEFLATE blocks;
+redirects stay binary-clean. Compression emits fixed-Huffman DEFLATE blocks (LZ77 + BTYPE=01);
 decompression accepts stored, fixed, and dynamic Huffman blocks. Source files are
 kept. Shared codec includes live under [`firmware/src/main/dos/inc/`](../firmware/src/main/dos/inc/)
 (`crc32.inc`, `deflate.inc`, `inflate.inc`).

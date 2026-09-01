@@ -33,7 +33,7 @@ CGA, FAT12/FAT16 volumes **≤128 MiB**. Developed/tested on
 | `SHELL=` in CONFIG | Path only (`/P` `/E:` discarded there; COMMAND honors `/E:n`) |
 | Pipes | Sequential temp files, not concurrent DOS pipes |
 | INT 17h floating LPT | Status forced ready/selected |
-| GZIP compress | Stored DEFLATE blocks (inflate accepts fixed/dynamic) |
+| GZIP compress | Fixed-Huffman DEFLATE (LZ77); inflate accepts stored/fixed/dynamic |
 
 ## Intentional out of scope
 

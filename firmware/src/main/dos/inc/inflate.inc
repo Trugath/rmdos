@@ -19,18 +19,25 @@
 /* ---- bit input ---- */
 inf_bits:
     /* CX = n bits (1..15) → AX = value, CF on error */
+    push cs
+    pop ds
     push bx
     push dx
     push si
+    push di
     mov si, cx
     xor ax, ax
     mov dx, 1
 .inf_bits_loop:
     cmp word ptr [inf_bitcnt], 0
     jne .inf_have
+    /* inf_pull_byte returns the next source byte in AL; AX is the bit
+     * accumulator, so a refill mid-field would otherwise clobber extra bits. */
+    push ax
     call inf_pull_byte
-    jc .inf_bits_fail
+    jc .inf_bits_pull_fail
     mov byte ptr [inf_bitbuf], al
+    pop ax
     mov word ptr [inf_bitcnt], 8
 .inf_have:
     mov bl, byte ptr [inf_bitbuf]
@@ -44,12 +51,16 @@ inf_bits:
     dec si
     jnz .inf_bits_loop
     clc
+    pop di
     pop si
     pop dx
     pop bx
     ret
+.inf_bits_pull_fail:
+    pop ax
 .inf_bits_fail:
     stc
+    pop di
     pop si
     pop dx
     pop bx
@@ -81,6 +92,9 @@ inf_refill:
     push bx
     push cx
     push dx
+    push si
+    push di
+    push bp
     mov ah, 0x3F
     mov bx, word ptr [in_handle]
     mov cx, 256
@@ -91,6 +105,9 @@ inf_refill:
     jz .inf_refill_err
     mov word ptr [inf_inlen], ax
     mov word ptr [inf_inpos], 0
+    pop bp
+    pop di
+    pop si
     pop dx
     pop cx
     pop bx
@@ -98,6 +115,9 @@ inf_refill:
     clc
     ret
 .inf_refill_err:
+    pop bp
+    pop di
+    pop si
     pop dx
     pop cx
     pop bx
@@ -113,6 +133,8 @@ inf_byte_align:
 /* ---- output + window ---- */
 inf_put:
     /* AL = byte; CF on write error */
+    push cs
+    pop ds
     push ax
     push bx
     push cx
@@ -122,10 +144,12 @@ inf_put:
     call crc32_update
     add word ptr [isize_lo], 1
     adc word ptr [isize_hi], 0
-    /* window */
+    /* window (explicit ES: store; CLD so DF cannot reverse DI) */
+    cld
     mov es, word ptr [win_seg]
     mov di, word ptr [win_pos]
-    stosb
+    mov byte ptr es:[di], al
+    inc di
     and di, 0x7FFF
     mov word ptr [win_pos], di
     /* out buffer */
@@ -157,6 +181,8 @@ inf_put:
     ret
 
 inf_flush:
+    push cs
+    pop ds
     push ax
     push bx
     push cx
@@ -194,6 +220,7 @@ inf_copy:
     push si
     push di
     push es
+    cld
     mov es, word ptr [win_seg]
 .inf_copy_loop:
     test cx, cx
@@ -201,7 +228,7 @@ inf_copy:
     mov bx, word ptr [win_pos]
     sub bx, dx
     and bx, 0x7FFF
-    mov al, es:[bx]
+    mov al, byte ptr es:[bx]
     call inf_put
     jc .inf_copy_fail
     dec cx
@@ -347,40 +374,45 @@ inf_construct2:
     pop ax
     ret
 
-/* Decode one symbol. BX = huff base. → AX = symbol, CF=error */
+/* Decode one symbol. BX = huff base (COM offset). → AX = symbol, CF=error
+ * puff-style: state lives in memory so INT 21h / IRQs cannot clobber it. */
 inf_decode:
-    push bx
     push cx
     push dx
+    push si
+    push di
+    push bp
+    push cs
+    pop ds
     mov word ptr [inf_huff], bx
-    mov word ptr [inf_d_code], 0
-    mov word ptr [inf_d_first], 0
-    mov word ptr [inf_d_index], 0
+    xor ax, ax
+    mov word ptr [inf_d_code], ax
+    mov word ptr [inf_d_first], ax
+    mov word ptr [inf_d_index], ax
     mov word ptr [inf_d_len], 1
 .inf_dec_loop:
     cmp word ptr [inf_d_len], 15
     ja .inf_dec_fail
     mov cx, 1
     call inf_bits
-    jc .inf_dec_fail
+    jc .inf_dec_eof
+    and ax, 1                       /* one bit; ignore leftover AH */
+    shl word ptr [inf_d_code], 1
     or word ptr [inf_d_code], ax
-    /* count = h->count[len] */
+    /* count = table[len] — 16 count words, count[0] unused */
     mov bx, word ptr [inf_huff]
-    mov cx, word ptr [inf_d_len]
-    add bx, cx
-    add bx, cx
-    mov ax, word ptr [bx]           /* count */
-    /* hit if code < first + count (unsigned) */
+    mov ax, word ptr [inf_d_len]
+    add ax, ax
+    add bx, ax
+    sub bx, 2
+    mov ax, word ptr cs:[bx + 2]    /* count[len]; [bx+2] survives GAS [bx] fold */
     mov dx, word ptr [inf_d_first]
-    add dx, ax
+    add dx, ax                      /* first + count */
     cmp word ptr [inf_d_code], dx
     jb .inf_dec_hit
     add word ptr [inf_d_index], ax
-    mov bx, word ptr [inf_d_first]
-    add bx, ax
-    shl bx, 1
-    mov word ptr [inf_d_first], bx
-    shl word ptr [inf_d_code], 1
+    shl dx, 1
+    mov word ptr [inf_d_first], dx
     inc word ptr [inf_d_len]
     jmp .inf_dec_loop
 .inf_dec_hit:
@@ -390,15 +422,23 @@ inf_decode:
     add bx, bx
     add bx, word ptr [inf_huff]
     add bx, 32
-    mov ax, word ptr [bx]
+    sub bx, 2
+    mov ax, word ptr cs:[bx + 2]
     clc
     jmp .inf_dec_ret
+.inf_dec_eof:
+    mov byte ptr [inf_err], 'e'
+    stc
+    jmp .inf_dec_ret
 .inf_dec_fail:
+    mov byte ptr [inf_err], 'm'
     stc
 .inf_dec_ret:
+    pop bp
+    pop di
+    pop si
     pop dx
     pop cx
-    pop bx
     ret
 
 /* Build fixed Huffman tables into inf_lencode / inf_distcode */
@@ -430,6 +470,7 @@ inf_fixed:
     ret
 
 /* counts[16] then symbols[288] */
+    .align 2
 fixed_lit_tab:
     .word 0,0,0,0,0,0,0,24,152,112,0,0,0,0,0,0
     .word 256,257,258,259,260,261,262,263,264,265,266,267,268,269,270,271
@@ -451,6 +492,7 @@ fixed_lit_tab:
     .word 224,225,226,227,228,229,230,231,232,233,234,235,236,237,238,239
     .word 240,241,242,243,244,245,246,247,248,249,250,251,252,253,254,255
 
+    .align 2
 fixed_dist_tab:
     .word 0,0,0,0,0,30,0,0,0,0,0,0,0,0,0,0
     .word 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29
@@ -502,14 +544,9 @@ inf_stored:
 
 /* Decode lit/len and dist using current tables; until EOB */
 inf_codes:
-    /* sanity: fixed lit count[7] must be 24 */
-    mov bx, word ptr [inf_lit_ptr]
-    cmp word ptr [bx + 14], 24
-    je .inf_codes_loop
-    mov byte ptr [inf_err], 't'
-    stc
-    ret
 .inf_codes_loop:
+    push cs
+    pop ds
     mov bx, word ptr [inf_lit_ptr]
     call inf_decode
     jc .inf_codes_fail_dec
@@ -572,7 +609,10 @@ inf_codes:
 .inf_codes_fail2:
     pop dx
 .inf_codes_fail_dec:
+    cmp byte ptr [inf_err], '?'
+    jne .inf_codes_fail_dec_ret
     mov byte ptr [inf_err], 'd'
+.inf_codes_fail_dec_ret:
     stc
     ret
 .inf_codes_fail_len:
@@ -718,6 +758,9 @@ inf_dynamic:
 
 /* Main inflate: process blocks until BFINAL */
 inflate_stream:
+    push cs
+    pop ds
+    cld
     mov word ptr [inf_bitcnt], 0
     mov word ptr [inf_inpos], 0
     mov word ptr [inf_inlen], 0
@@ -747,7 +790,6 @@ inflate_stream:
     jc .inf_fail_stored
     jmp .inf_blk_next
 .inf_do_fixed:
-    /* use ROM tables directly — no copy */
     lea bx, [fixed_lit_tab]
     mov word ptr [inf_lit_ptr], bx
     lea bx, [fixed_dist_tab]
@@ -799,10 +841,12 @@ inflate_stream:
     ret
 
 /* ---- tables & state ---- */
+    .align 2
 inf_clen_order:
     .byte 16,17,18,0,8,7,9,6,10,5,11,4,12,3,13,2,14,1,15
 
 /* length base / extra bits for symbols 257..285 (index 0..28) */
+    .align 2
 inf_lensym:
     .word 3,4,5,6,7,8,9,10,11,13,15,17,19,23,27,31
     .word 35,43,51,59,67,83,99,115,131,163,195,227,258
@@ -810,6 +854,7 @@ inf_lenbits:
     .word 0,0,0,0,0,0,0,0,1,1,1,1,2,2,2,2
     .word 3,3,3,3,4,4,4,4,5,5,5,5,0
 
+    .align 2
 inf_distsym:
     .word 1,2,3,4,5,7,9,13,17,25,33,49,65,97,129,193
     .word 257,385,513,769,1025,1537,2049,3073,4097,6145,8193,12289,16385,24577
@@ -817,6 +862,7 @@ inf_distbits:
     .word 0,0,0,0,1,1,2,2,3,3,4,4,5,5,6,6
     .word 7,7,8,8,9,9,10,10,11,11,12,12,13,13
 
+    .align 2
 inf_bitbuf: .byte 0
             .byte 0
 inf_bitcnt: .word 0
@@ -844,12 +890,6 @@ inf_d_index:.word 0
 inf_d_len:  .word 0
 inf_lit_ptr:.word 0
 inf_dist_ptr:.word 0
-inf_dbg_len:.word 0
-inf_dbg_cx: .word 0
-inf_dbg_b0: .byte 0
-inf_dbg_b1: .byte 0
-inf_dbg_b2: .byte 0
-            .byte 0
 
 inf_offs:   .space 32, 0          /* 16 words */
 inf_inbuf:  .space 256, 0
@@ -857,5 +897,6 @@ inf_outbuf: .space 256, 0
 inf_lens:   .space 320, 0         /* code lengths scratch */
 
 /* huffman: 16 count words + up to 288 symbol words */
+    .align 2
 inf_lencode: .space 608, 0
 inf_distcode:.space 96, 0
