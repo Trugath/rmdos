@@ -1524,6 +1524,8 @@ dos_ah4b:
     mov bp, ax
     cmp ax, EXE_HDR_MAX
     ja .a4b_ovl_fail_cl
+    cmp ax, word ptr cs:[exe_hdr_len]
+    ja .a4b_ovl_fail_cl           /* short header read (relocs must fit) */
     mov ax, cs:[si + 4]
     mov bx, 512
     mul bx

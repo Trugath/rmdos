@@ -24,6 +24,8 @@ firmware/build/*.s
 firmware/build/*.lst
 firmware/build/as8086.*.s
 firmware/build/bios_tests/
+firmware/build/many/
+firmware/build/many.stamp
 
 # Local agent harness metadata
 harness/

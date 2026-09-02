@@ -16,7 +16,8 @@ CGA, FAT12/FAT16 volumes **≤128 MiB**. Developed/tested on
 | BIOS I/O | COM1/COM2, LPT1/LPT2 (BDA probe); timer; keyboard; INT 15h wait/config |
 | Memory | Conventional RAM; optional UMB (`mem-expansion`); LIM EMS 3.2 (`EMM.SYS` + `ems-window`) |
 | Filesystem | FAT12/FAT16; 8.3 names; partition bases and HiddenSectors are **32-bit** |
-| DOS API | Broad INT 21h / FCB / handles / MCB / EXEC (COM + MZ stream) / batch shell |
+| DOS API | Broad INT 21h / FCB / handles / MCB / EXEC (COM + MZ stream; overlays AL=03) / batch shell |
+| Toolchain | `rmcc --overlay` + `pack_mz --reloc` + `dos_exec_overlay` for classic overlays |
 | `BUFFERS=` | Real sector cache (MCB arena, cap 16); directory/data/FAT write-through; AH=0Dh flush; `fat_buf` decode window separate |
 | Drivers | Character `DEVICE=` `.SYS` (≤8 KiB), e.g. `ANSI.SYS`, `EMM.SYS` |
 | Net tools | `PING` / `DHCP` / `TELNET` / optional `NET.COM` (rmDOS INT 60h mux, DE-220) |

@@ -1218,8 +1218,102 @@ _start:
     mov ah, 0x09
     lea dx, [msg_exec1]
     int 0x21
-    jmp .x_55_start
+    jmp .x_exec3
 .x_e1f:
+    push cs
+    pop ds
+    mov ah, 0x09
+    lea dx, [msg_xf8]
+    int 0x21
+    jmp fail_exit
+.x_exec3:
+    /* AH=4B AL=03 overlay: missing path → CF + AX=2 */
+    lea bx, [exec3_epb]
+    mov word ptr [bx], 0x1000
+    mov word ptr [bx + 2], 0
+    push cs
+    pop es
+    lea dx, [exec3_miss]
+    mov ax, 0x4B03
+    int 0x21
+    push cs
+    pop ds
+    jnc .x_e3f
+    cmp ax, 2
+    jne .x_e3f
+
+    /* COM overlay: load DEMO\OVL.COM, far-call seg:0000, expect AX=0xA5 */
+    mov bx, 0x40
+    mov ah, 0x48
+    int 0x21
+    jc .x_e3f
+    mov word ptr [exec3_seg], ax
+    lea bx, [exec3_epb]
+    mov word ptr [bx], ax
+    mov word ptr [bx + 2], 0
+    push cs
+    pop es
+    lea dx, [exec3_com]
+    mov ax, 0x4B03
+    int 0x21
+    push cs
+    pop ds
+    jc .x_e3f_free
+    mov ax, word ptr [exec3_seg]
+    push ax
+    xor ax, ax
+    push ax
+    mov bx, sp
+    call dword ptr ss:[bx]
+    add sp, 4
+    push cs
+    pop ds
+    cmp ax, 0x00A5
+    jne .x_e3f_free
+    mov es, word ptr [exec3_seg]
+    mov ah, 0x49
+    int 0x21
+    push cs
+    pop ds
+
+    /* MZ overlay + reloc: word at load:0 becomes load_seg */
+    mov bx, 0x10
+    mov ah, 0x48
+    int 0x21
+    jc .x_e3f
+    mov word ptr [exec3_seg], ax
+    lea bx, [exec3_epb]
+    mov word ptr [bx], ax
+    mov word ptr [bx + 2], ax
+    push cs
+    pop es
+    lea dx, [exec3_exe]
+    mov ax, 0x4B03
+    int 0x21
+    push cs
+    pop ds
+    jc .x_e3f_free
+    mov es, word ptr [exec3_seg]
+    mov ax, word ptr es:[0]
+    mov bx, word ptr [exec3_seg]
+    cmp ax, bx
+    jne .x_e3f_free
+    mov ah, 0x49
+    int 0x21
+    push cs
+    pop ds
+
+    mov ah, 0x09
+    lea dx, [msg_exec3]
+    int 0x21
+    jmp .x_55_start
+.x_e3f_free:
+    push cs
+    pop ds
+    mov es, word ptr [exec3_seg]
+    mov ah, 0x49
+    int 0x21
+.x_e3f:
     push cs
     pop ds
     mov ah, 0x09
@@ -1551,6 +1645,8 @@ msg_files:
     .ascii "FILES OK\r\n$"
 msg_exec1:
     .ascii "EXEC1 OK\r\n$"
+msg_exec3:
+    .ascii "EXEC3 OK\r\n$"
 msg_auxprn:
     .ascii "AUXPRN OK\r\n$"
 msg_brk23:
@@ -1656,6 +1752,16 @@ exec1_epb:
     .word 0, 0                   /* fcb1 */
     .word 0, 0                   /* fcb2 */
     .word 0, 0, 0, 0             /* SP SS IP CS */
+exec3_miss:
+    .asciz "A:\\DEMO\\NOPE.OVL"
+exec3_com:
+    .asciz "A:\\DEMO\\OVL.COM"
+exec3_exe:
+    .asciz "A:\\DEMO\\OVL.EXE"
+exec3_epb:
+    .word 0, 0                   /* load seg, reloc factor */
+exec3_seg:
+    .word 0
 auxprn_ch:
     .byte '!'
 prn_name:

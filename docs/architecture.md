@@ -162,8 +162,12 @@ DOS 3.3-ish real-mode kernel and shell, aimed at programs that run on an
 
 Most COM utilities are written in C and compiled with the in-tree **rmcc**
 Small-C compiler (`scripts/rmcc.py` → GAS → `com.ld`). rmcc accepts local
-initializers, `void *`, and struct object assignment (`s = t`). Shared INT 21h helpers
-live in [`firmware/src/main/dos/inc/dos.h`](../firmware/src/main/dos/inc/dos.h).
+initializers, `void *`, and struct object assignment (`s = t`). Entry modes:
+`--com` (INT 21h/4Ch), `--exe` (small-model MZ), `--overlay` (tiny-model `retf`
+for INT 21h/4B03), `--module` (MOD0). `pack_mz.py` can emit MZ relocation
+entries. Shared INT 21h helpers live in
+[`firmware/src/main/dos/inc/dos.h`](../firmware/src/main/dos/inc/dos.h)
+(including `dos_exec_overlay` / `dos_far_call`).
 
 | Built with rmcc (C) | Left as assembly |
 |--------------------|------------------|
@@ -181,10 +185,11 @@ honors find attribute on AH=11h/12h), handle create/open/read/write/seek/delete,
 temp create (AH=5Ah/5Bh), file lock stub (AH=5Ch), truename (AH=60h),
 find-first/next (AH=4Eh/4Fh: classic H|S|D subset of search attr; volume-only
 path unchanged), MCB alloc/free/resize (including grow; AH=48h honors AH=58h
-first/best/last-fit strategy), EXEC (AH=4Bh AL=0
-load+run, AL=1 load-only, AL=3 overlay — streams from disk into the AH=48
-block with a small MZ header scratch, so EXEs larger than the old ~28 KiB
-`com_buf` work), handle dup (AH=45h/46h), file datetime
+first/best/last-fit strategy), EXEC (AH=4Bh AL=0 load+run, AL=1 load-only,
+AL=3 overlay at a caller-supplied load segment + relocation factor — COM/raw
+or MZ with fixups; AL=0/1 stream into an AH=48 block via a small MZ header
+scratch so EXEs larger than the old ~28 KiB `com_buf` work), handle dup
+(AH=45h/46h), file datetime
 (AH=57h), PSP create/get/set (AH=26h/50h/51h/55h/62h), get DTA (AH=2Fh),
 allocation info (AH=1Bh/1Ch; AH=1Ch honors DL), DPB get (AH=1Fh/32h from live
 BPB for any mapped drive; device-header pointer at DPB +13/+15 → NUL),
@@ -204,7 +209,7 @@ words), extended country (AH=65h AL=01 header+info / AL=02 case-map ptr), and
 global code page get/set (AH=66h), **AH=31h TSR**.
 AH=30h reports DOS 3.31. Gate:
 `DEMO\COMPAT.COM` + `DEMO\INT21X.COM` (markers include `FILES OK`, `EXEC1 OK`,
-`AUXPRN OK`, `BREAK23 OK`, `STUB OK`; INT21X also probes IOCTL AL=02–05/0Dh/06,
+`EXEC3 OK`, `AUXPRN OK`, `BREAK23 OK`, `STUB OK`; INT21X also probes IOCTL AL=02–05/0Dh/06,
 DPB device ptr, last-fit AH=58, AH=46/57, INT 25h boot signature, honest AH=5Ch,
 unsupported AH=5Dh/5Eh/5Fh/65h AL=03, AH=66 get/set CP 437, VERIFY flag get/set,
 BUFFERS LoL (seg non-null; offset 0 valid) + occupied cache walk + SFTE, and LoL LASTDRIVE).

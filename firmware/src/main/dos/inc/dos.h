@@ -72,5 +72,7 @@ int far_peek(int seg, int off);
 void far_poke(int seg, int off, int val);
 int env_seg(void);
 void env_set_seg(int seg);
+int dos_exec_overlay(char *path, int load_seg, int reloc);
+int dos_far_call(int seg, int off);
 
 #endif

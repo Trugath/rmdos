@@ -105,6 +105,9 @@ CALLTST2_BAT := fixtures/batch/CALLTST2.BAT
 EMPTY_AUTOEXEC := fixtures/boot/AUTOEXEC.BAT
 
 HELLO_EXE := $(BUILD_DIR)/hello.exe
+OVL_COM := $(BUILD_DIR)/ovl.com
+OVL_EXE := $(BUILD_DIR)/ovl.exe
+OVL_RELOC_BIN := $(BUILD_DIR)/ovl_reloc.bin
 BIGEXE_SRC := $(TEST_SRC)/dos/bigexe.s
 BIGEXE_OBJ := $(BUILD_DIR)/bigexe.o
 BIGEXE_ELF := $(BUILD_DIR)/bigexe.elf
@@ -360,6 +363,25 @@ $(STAR_COM): $(STAR_ELF)
 $(HELLO_EXE): $(HELLO_COM) scripts/pack_mz.py
 	$(PYTHON) scripts/pack_mz.py --com $(HELLO_COM) --out $@
 
+# Overlay body from C (rmcc --overlay) + MZ reloc proof fixture.
+$(BUILD_DIR)/ovl.s: $(TEST_SRC)/dos/ovl.c $(RMCC_DEPS) | $(BUILD_DIR)
+	$(RMCC) $< -o $@ --overlay
+
+$(BUILD_DIR)/ovl.o: $(BUILD_DIR)/ovl.s | $(BUILD_DIR)
+	$(AS8086) --32 -o $@ $<
+
+$(BUILD_DIR)/ovl.elf: $(BUILD_DIR)/ovl.o $(LINK_DIR)/com.ld
+	$(LD) -m elf_i386 -T $(LINK_DIR)/com.ld --gc-sections -o $@ $<
+
+$(OVL_COM): $(BUILD_DIR)/ovl.elf
+	$(OBJCOPY) -O binary $< $@
+
+$(OVL_RELOC_BIN): | $(BUILD_DIR)
+	printf '\0\0' > $@
+
+$(OVL_EXE): $(OVL_RELOC_BIN) scripts/pack_mz.py
+	$(PYTHON) scripts/pack_mz.py --com $(OVL_RELOC_BIN) --out $@ --reloc 0:0
+
 $(BIGEXE_OBJ): $(BIGEXE_SRC) | $(BUILD_DIR)
 	$(AS8086) --32 -o $@ $(BIGEXE_SRC)
 
@@ -430,6 +452,7 @@ OS_IMAGE_DEPS := $(BOOT_BIN) $(KERNEL_BIN) \
 # Test harness floppy: lean base + DEMO test programs + TEST fixtures.
 TEST_IMAGE_DEPS := $(OS_IMAGE_DEPS) $(HELLO_COM) $(HELLO_EXE) \
 	$(COMPAT_COM) $(INT21X_COM) $(ANSITST_COM) $(EMSTST_COM) $(MOUSETST_COM) \
+	$(OVL_COM) $(OVL_EXE) \
 	$(SAMPLE_TXT) $(DBG_SCR) $(BIG_TXT) $(SHIFT_BAT)
 
 define PACK_OS_IMAGE_FILES
@@ -483,6 +506,8 @@ define PACK_TEST_HARNESS_FILES
 		--file DEMO/ANSITST.COM=$(ANSITST_COM) \
 		--file DEMO/EMSTST.COM=$(EMSTST_COM) \
 		--file DEMO/MOUSETST.COM=$(MOUSETST_COM) \
+		--file DEMO/OVL.COM=$(OVL_COM) \
+		--file DEMO/OVL.EXE=$(OVL_EXE) \
 		--file TEST/SAMPLE.TXT=$(SAMPLE_TXT) \
 		--file TEST/DBG.SCR=$(DBG_SCR) \
 		--file TEST/BIG.TXT=$(BIG_TXT) \

@@ -547,3 +547,34 @@ void env_set_seg(int seg)
     far_poke(p, 0x2C, seg & 255);
     far_poke(p, 0x2D, (seg >> 8) & 255);
 }
+
+static int ovl_epb[2];
+
+/* AH=4B AL=03 — load overlay at load_seg with reloc factor. Returns 0 ok, -1 fail. */
+int dos_exec_overlay(char *path, int load_seg, int reloc)
+{
+    ovl_epb[0] = load_seg;
+    ovl_epb[1] = reloc;
+    asm("mov dx, [bp+8]");
+    asm("lea bx, [ovl_epb]");
+    asm("push ds");
+    asm("pop es");
+    asm("mov ax, 0x4B03");
+    asm("int 0x21");
+    asm("mov ax, 0");
+    asm("jnc Ldeo_ok");
+    asm("mov ax, 0xFFFF");
+    asm("Ldeo_ok:");
+    reload_ds();
+}
+
+/* Far-call seg:off; returns AX from callee. */
+int dos_far_call(int seg, int off)
+{
+    asm("push word ptr [bp+6]");
+    asm("push word ptr [bp+4]");
+    asm("mov bx, sp");
+    asm("call dword ptr ss:[bx]");
+    asm("add sp, 4");
+    reload_ds();
+}

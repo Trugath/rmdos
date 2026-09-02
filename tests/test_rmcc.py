@@ -7,8 +7,10 @@ import re
 from scripts.rmcc import Compiler
 
 
-def _compile(src: str, *, com: bool = False) -> str:
-    return Compiler(src, filename="<test>", com_entry=com).compile()
+def _compile(src: str, *, com: bool = False, overlay: bool = False) -> str:
+    return Compiler(
+        src, filename="<test>", com_entry=com, overlay_entry=overlay
+    ).compile()
 
 
 def test_for_increment_after_body() -> None:
@@ -1134,6 +1136,23 @@ void main(void) {
     )
 
 
+def test_overlay_entry_uses_retf() -> None:
+    """--overlay: tiny-model entry returns via retf, not INT 21h/4Ch."""
+    asm = _compile(
+        """
+int main(void) {
+    return 0xA5;
+}
+""",
+        overlay=True,
+    )
+    assert "retf" in asm
+    assert "call main" in asm
+    assert "mov ah, 0x4C" not in asm
+    assert "MOD0" not in asm
+    assert "mov ax, 165" in asm or "mov ax, 0xA5" in asm or "mov ax, 0xa5" in asm
+
+
 if __name__ == "__main__":
     test_for_increment_after_body()
     test_for_empty_clauses()
@@ -1185,4 +1204,5 @@ if __name__ == "__main__":
     test_struct_assignment_size_and_chain()
     test_struct_local_init_from_object()
     test_struct_assignment_diagnostics()
+    test_overlay_entry_uses_retf()
     print("test_rmcc: OK")

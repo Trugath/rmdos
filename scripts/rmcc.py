@@ -515,12 +515,14 @@ class Compiler:
         module_name: str | None = None,
         com_entry: bool = False,
         exe_entry: bool = False,
+        overlay_entry: bool = False,
     ):
         self.lexer = Lexer(source, filename)
         self.gen = CodeGen()
         self.module_name = module_name
         self.com_entry = com_entry
         self.exe_entry = exe_entry
+        self.overlay_entry = overlay_entry
         self.cur_token: Token | None = None
         self.globals: dict[str, tuple[str, int]] = {}  # name -> (type, size) size=0 for scalar
         self.locals: dict[str, tuple[str, int]] = {}  # name -> (type, bp_offset)
@@ -1434,6 +1436,17 @@ class Compiler:
             self.gen.emit("    call main")
             self.gen.emit("    mov ah, 0x4C")
             self.gen.emit("    int 0x21")
+        elif self.overlay_entry:
+            # DOS overlay body (INT 21h/4B03): tiny model, return via retf.
+            self.gen.emit(".section .text._start")
+            self.gen.emit(".global _start")
+            self.gen.emit("_start:")
+            self.gen.emit("    push cs")
+            self.gen.emit("    pop ds")
+            self.gen.emit("    push cs")
+            self.gen.emit("    pop es")
+            self.gen.emit("    call main")
+            self.gen.emit("    retf")
         elif self.exe_entry:
             # Small-model MZ: CS=code, SS=DS=data (set by loader SS); zero BSS.
             self.gen.emit(".section .text._start")
@@ -2835,6 +2848,11 @@ def main():
     ap.add_argument("--module", type=str, default=None, help="Emit MOD0 module with this name (e.g. HALT)")
     ap.add_argument("--com", action="store_true", help="Emit DOS .COM entry (_start + INT 21h/4Ch)")
     ap.add_argument(
+        "--overlay",
+        action="store_true",
+        help="Emit DOS overlay entry (_start + retf; for INT 21h/4B03)",
+    )
+    ap.add_argument(
         "--exe",
         action="store_true",
         help="Emit small-model MZ entry (DS=SS, zero BSS, INT 21h/4Ch)",
@@ -2842,9 +2860,9 @@ def main():
     ap.add_argument("-I", "--include", action="append", default=[], dest="include_dirs", help="Include path for #include")
     ap.add_argument("--target", choices=("gas", "wasm"), default="gas", help="Assembly target: gas (GNU as) or wasm (tools/asm/wasm)")
     args = ap.parse_args()
-    modes = sum(1 for f in (args.com, args.exe, bool(args.module)) if f)
+    modes = sum(1 for f in (args.com, args.exe, args.overlay, bool(args.module)) if f)
     if modes > 1:
-        ap.error("--com, --exe, and --module are mutually exclusive")
+        ap.error("--com, --exe, --overlay, and --module are mutually exclusive")
     try:
         src = args.input.read_text()
     except FileNotFoundError:
@@ -2863,6 +2881,7 @@ def main():
             module_name=args.module,
             com_entry=args.com,
             exe_entry=args.exe,
+            overlay_entry=args.overlay,
         )
         comp.include_paths = inc_dirs
         asm = comp.compile()
