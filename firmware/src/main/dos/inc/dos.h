@@ -25,6 +25,7 @@ struct DiskFree {
 };
 
 extern int dos_tmp;
+extern int overlay_ds;
 extern char *arg_ptr;
 
 void reload_ds(void);

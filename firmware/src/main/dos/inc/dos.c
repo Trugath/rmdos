@@ -2,9 +2,17 @@
 #include "dos.h"
 
 int dos_tmp;
+/* When nonzero, reload_ds restores this segment (small-model overlay body
+ * running with Hab SS but its own DS). */
+int overlay_ds = 0;
 
 void reload_ds(void)
 {
+    if (overlay_ds != 0) {
+        asm("mov ax, [overlay_ds]");
+        asm("mov ds, ax");
+        return;
+    }
     /* Small-model MZ: DS=SS (data). COM wrap: SS=CS, so this matches push cs. */
     asm("push ss");
     asm("pop ds");
@@ -568,13 +576,22 @@ int dos_exec_overlay(char *path, int load_seg, int reloc)
     reload_ds();
 }
 
-/* Far-call seg:off; returns AX from callee. */
+/* Far-call seg:off; returns AX from callee.
+ * Save caller DS across the call (FIELD overlay DS != Hab SS). Then
+ * reload_ds() so overlay_ds still applies when set. */
 int dos_far_call(int seg, int off)
 {
+    asm("push ds");
     asm("push word ptr [bp+6]");
     asm("push word ptr [bp+4]");
     asm("mov bx, sp");
     asm("call dword ptr ss:[bx]");
     asm("add sp, 4");
+    asm("push ax");
+    asm("mov bx, sp");
+    asm("mov ax, ss:[bx+2]");
+    asm("mov ds, ax");
+    asm("pop ax");
+    asm("add sp, 2");
     reload_ds();
 }
