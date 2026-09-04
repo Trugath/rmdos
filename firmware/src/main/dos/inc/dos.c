@@ -593,5 +593,8 @@ int dos_far_call(int seg, int off)
     asm("mov ds, ax");
     asm("pop ax");
     asm("add sp, 2");
+    /* reload_ds compares overlay_ds in AX and would eat the callee return. */
+    asm("mov [dos_tmp], ax");
     reload_ds();
+    return dos_tmp;
 }
