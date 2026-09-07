@@ -2029,8 +2029,13 @@ void do_batch(char *name)
         return;
     }
     slot = batch_depth;
-    body = slot * 80;
-    n = dos_read(h, buf_addr(batch_body, body), 80);
+    if (slot == 0) {
+        body = 0;
+        n = dos_read(h, buf_addr(batch_body, 0), 640);
+    } else {
+        body = slot * 80;
+        n = dos_read(h, buf_addr(batch_body, body), 80);
+    }
     dos_close(h);
     if (n < 0) {
         n = 0;
