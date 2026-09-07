@@ -26,6 +26,7 @@ load_and_run_com:
     push dx
     push si
     push di
+    push bp
     push es
     push ds
 
@@ -89,6 +90,7 @@ load_and_run_com:
     stc
     pop ds
     pop es
+    pop bp
     pop di
     pop si
     pop dx
@@ -1282,6 +1284,7 @@ com_resume_kernel:
     clc
     pop ds
     pop es
+    pop bp
     pop di
     pop si
     pop dx
@@ -1438,6 +1441,7 @@ com_tsr_kernel:
     clc
     pop ds
     pop es
+    pop bp
     pop di
     pop si
     pop dx
@@ -1631,7 +1635,10 @@ dos_ah4b:
     mov ax, word ptr cs:[dta_off]
     mov word ptr cs:[save_dta_off_tbl + bx], ax
     call load_and_run_com
-    jc .a4b_fail
+    /* Child terminate restores via com_resume_kernel; CF after that
+     * ret is not trustworthy. com_err is 0 iff the image ran. */
+    cmp byte ptr cs:[com_err], 0
+    jne .a4b_fail
     /* restore parent DTA */
     xor bh, bh
     mov bl, byte ptr cs:[com_depth]

@@ -384,7 +384,9 @@ dos_terminate:
     mov byte ptr cs:[child_exit_code], al
     mov byte ptr cs:[child_exit_type], 0
     cmp byte ptr cs:[com_active], 0
-    jne com_resume_kernel
+    je dos_term_halt
+    jmp com_resume_kernel
+dos_term_halt:
     mov al, 0x0D
     call putch
     mov al, 0x0A

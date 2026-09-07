@@ -598,3 +598,59 @@ int dos_far_call(int seg, int off)
     reload_ds();
     return dos_tmp;
 }
+
+static int exec_pb[7];
+static char exec_tail[128];
+static char exec_fcb1[16];
+static char exec_fcb2[16];
+
+/* AH=4B AL=00 — load-and-run. Copies the parent PSP tail so /T /C survive. */
+int dos_exec(char *path)
+{
+    int p;
+    int n;
+    int i;
+    int env;
+    p = dos_get_psp();
+    reload_ds();
+    n = far_peek(p, 0x80);
+    if (n < 0) {
+        n = 0;
+    }
+    if (n > 126) {
+        n = 126;
+    }
+    buf_set(exec_tail, 0, n);
+    i = 0;
+    while (i < n) {
+        buf_set(exec_tail, i + 1, far_peek(p, 0x81 + i));
+        i = i + 1;
+    }
+    buf_set(exec_tail, n + 1, 13);
+    i = 0;
+    while (i < 16) {
+        buf_set(exec_fcb1, i, 0);
+        buf_set(exec_fcb2, i, 0);
+        i = i + 1;
+    }
+    env = env_seg();
+    exec_pb[0] = env;
+    asm("mov word ptr exec_pb+2, offset exec_tail");
+    asm("mov ax, ds");
+    asm("mov word ptr exec_pb+4, ax");
+    asm("mov word ptr exec_pb+6, offset exec_fcb1");
+    asm("mov word ptr exec_pb+8, ax");
+    asm("mov word ptr exec_pb+10, offset exec_fcb2");
+    asm("mov word ptr exec_pb+12, ax");
+    asm("mov dx, [bp+4]");
+    asm("lea bx, [exec_pb]");
+    asm("push ds");
+    asm("pop es");
+    asm("mov ax, 0x4B00");
+    asm("int 0x21");
+    asm("mov ax, 0");
+    asm("jnc Ldex_ok");
+    asm("mov ax, 0xFFFF");
+    asm("Ldex_ok:");
+    reload_ds();
+}

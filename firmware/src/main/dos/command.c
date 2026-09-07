@@ -55,6 +55,9 @@ static char *cursor;
 static int last_errorlevel;
 static int batch_depth;
 static int batch_handles[8] = { 0 };
+static char batch_body[640] = { 0 };
+static int batch_len[8] = { 0 };
+static int batch_cur[8] = { 0 };
 static int goto_active;
 static enum RedirKind redir_in_kind;
 static enum RedirKind redir_out_kind;
@@ -178,6 +181,31 @@ int dos_seek_start(int handle)
     asm("jnc Lcmd_seek0_ok");
     asm("mov ax, 0xFFFF");
     asm("Lcmd_seek0_ok:");
+}
+
+int dos_tell(int handle)
+{
+    /* AH=42 AL=1: seek 0 from current; DX:AX is the position. */
+    asm("mov bx, [bp+4]");
+    asm("mov ax, 0x4201");
+    asm("xor cx, cx");
+    asm("xor dx, dx");
+    asm("int 0x21");
+    asm("jnc Lcmd_tell_ok");
+    asm("mov ax, 0xFFFF");
+    asm("Lcmd_tell_ok:");
+}
+
+int dos_seek_abs(int handle, int off)
+{
+    asm("mov bx, [bp+6]");
+    asm("mov dx, [bp+4]");
+    asm("xor cx, cx");
+    asm("mov ax, 0x4200");
+    asm("int 0x21");
+    asm("jnc Lcmd_seeka_ok");
+    asm("mov ax, 0xFFFF");
+    asm("Lcmd_seeka_ok:");
 }
 
 int dos_current_drive(void)
@@ -961,34 +989,51 @@ int has_dot(char *s)
     return str_has(s, '.');
 }
 
+int file_exists(char *path)
+{
+    int h;
+    h = dos_open(path, 0);
+    if (h < 0) {
+        return 0;
+    }
+    dos_close(h);
+    return 1;
+}
+
 int try_exec_name(void)
 {
     int i;
-    if (exec_program(prog) == 0) {
+    /* Do not EXEC a bare name: FAT 8.3 may open DELVE.EXE as DELVE,
+     * then the .EXE retry would run it twice. Also treat a present
+     * image as success even if 4B returns CF after the child exits. */
+    if (has_dot(prog)) {
+        if (!file_exists(prog)) {
+            return 0;
+        }
+        exec_program(prog);
         last_errorlevel = dos_exit_code();
         return 1;
     }
-    if (!has_dot(prog)) {
-        i = str_len(prog);
-        buf_set(prog, i, '.');
-        buf_set(prog, i + 1, 'C');
-        buf_set(prog, i + 2, 'O');
-        buf_set(prog, i + 3, 'M');
-        buf_set(prog, i + 4, 0);
-        if (exec_program(prog) == 0) {
-            last_errorlevel = dos_exit_code();
-            return 1;
-        }
-        buf_set(prog, i + 1, 'E');
-        buf_set(prog, i + 2, 'X');
-        buf_set(prog, i + 3, 'E');
-        if (exec_program(prog) == 0) {
-            last_errorlevel = dos_exit_code();
-            return 1;
-        }
-        /* Restore basename for .BAT try by caller */
-        buf_set(prog, i, 0);
+    i = str_len(prog);
+    buf_set(prog, i, '.');
+    buf_set(prog, i + 1, 'C');
+    buf_set(prog, i + 2, 'O');
+    buf_set(prog, i + 3, 'M');
+    buf_set(prog, i + 4, 0);
+    if (file_exists(prog)) {
+        exec_program(prog);
+        last_errorlevel = dos_exit_code();
+        return 1;
     }
+    buf_set(prog, i + 1, 'E');
+    buf_set(prog, i + 2, 'X');
+    buf_set(prog, i + 3, 'E');
+    if (file_exists(prog)) {
+        exec_program(prog);
+        last_errorlevel = dos_exit_code();
+        return 1;
+    }
+    buf_set(prog, i, 0);
     return 0;
 }
 
@@ -1972,8 +2017,10 @@ void do_batch(char *name)
     int c;
     int slot;
     int base;
+    int name_base;
     int label;
     int at_cmd;
+    int body;
     if (batch_depth >= BATCH_MAX) {
         return;
     }
@@ -1982,24 +2029,32 @@ void do_batch(char *name)
         return;
     }
     slot = batch_depth;
-    batch_handles[slot] = h;
-    base = slot * 32;
-    str_copy(buf_addr(batch_names, base), name, 32);
+    body = slot * 80;
+    n = dos_read(h, buf_addr(batch_body, body), 80);
+    dos_close(h);
+    if (n < 0) {
+        n = 0;
+    }
+    batch_len[slot] = n;
+    batch_cur[slot] = 0;
+    batch_handles[slot] = -1;
+    name_base = slot * 32;
+    str_copy(buf_addr(batch_names, name_base), name, 32);
     str_copy(batch_arg0, name, sizeof(batch_arg0));
     batch_depth = batch_depth + 1;
     batch_abort = 0;
-    n = 0;
     while (1) {
         if (batch_abort) {
             break;
         }
+        if (batch_cur[slot] >= batch_len[slot]) {
+            break;
+        }
         n = 0;
-        while (n < LINE_MAX) {
-            c = dos_read(h, copybuf, 1);
-            if (c <= 0) {
-                break;
-            }
-            c = buf_get(copybuf, 0);
+        c = 0;
+        while (batch_cur[slot] < batch_len[slot] && n < LINE_MAX) {
+            c = buf_get(batch_body, body + batch_cur[slot]);
+            batch_cur[slot] = batch_cur[slot] + 1;
             if (c == 13) {
                 break;
             }
@@ -2008,7 +2063,7 @@ void do_batch(char *name)
                 n = n + 1;
             }
         }
-        if (c <= 0 && n == 0) {
+        if (n == 0 && batch_cur[slot] >= batch_len[slot]) {
             break;
         }
         buf_set(cmd, n, 0);
@@ -2033,12 +2088,8 @@ void do_batch(char *name)
             }
             dispatch();
         }
-        if (c <= 0) {
-            break;
-        }
     }
     batch_depth = batch_depth - 1;
-    dos_close(h);
     if (batch_depth > 0) {
         str_copy(batch_arg0, buf_addr(batch_names, (batch_depth - 1) * 32), sizeof(batch_arg0));
     } else {
@@ -2505,7 +2556,7 @@ void dispatch_plain(void)
     }
     if (str_eq(prog, "GOTO")) {
         if (next_token(goto_name, sizeof(goto_name)) && batch_depth > 0) {
-            dos_seek_start(batch_handles[batch_depth - 1]);
+            batch_cur[batch_depth - 1] = 0;
             goto_active = 1;
         }
         return;
