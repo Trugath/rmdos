@@ -117,6 +117,16 @@ WOLFGO_ELF := $(BUILD_DIR)/wolfgo.elf
 WOLFGO_COM := $(BUILD_DIR)/wolfgo.com
 WOLF3D_IMAGE := $(BUILD_DIR)/os-wolf3d.img
 WOLF3D_HD := $(BUILD_DIR)/hd-wolf3d.img
+FE2_DIR := fixtures/fe2
+FE2_EXE := $(FE2_DIR)/FRONTIER.EXE
+FE2_AUTOEXEC := fixtures/boot/AUTOEXEC.FE2.BAT
+FE2_CONFIG := fixtures/boot/CONFIG.FE2.SYS
+FE2GO_SRC := $(SRC_DIR)/dos/fe2go.s
+FE2GO_OBJ := $(BUILD_DIR)/fe2go.o
+FE2GO_ELF := $(BUILD_DIR)/fe2go.elf
+FE2GO_COM := $(BUILD_DIR)/fe2go.com
+FE2_IMAGE := $(BUILD_DIR)/os-fe2.img
+FE2_HD := $(BUILD_DIR)/hd-fe2.img
 
 IMAGE := $(BUILD_DIR)/os.img
 TEST_IMAGE := $(BUILD_DIR)/test.img
@@ -197,7 +207,7 @@ FD_IMG := emulator/k8086/disks/fd.img
 
 K8086_ROMS_DIR := emulator/k8086/roms
 
-.PHONY: all bios os os-disk.img bios-tests clean run run-fd run-elite run-wolf3d setup test test-bios test-fd-img test-dos-compat test-ping test-dhcp test-telnet test-net test-star test-bigexe test-elite test-wolf3d test-dir test-format test-format-options test-sys test-format-hd test-fat16-hd test-lba32-hd test-bpb-mount test-partedit-hd test-multilet-hd test-extpart-hd test-subst test-batch test-disk test-gzip test-utils test-diskcopy test-diskcomp test-ansi test-ems test-stubcfg test-mouse test-install-hd install-roms install-floppy
+.PHONY: all bios os os-disk.img bios-tests clean run run-fd run-elite run-wolf3d run-fe2 setup test test-bios test-fd-img test-dos-compat test-ping test-dhcp test-telnet test-net test-star test-bigexe test-elite test-wolf3d test-dir test-format test-format-options test-sys test-format-hd test-fat16-hd test-lba32-hd test-bpb-mount test-partedit-hd test-multilet-hd test-extpart-hd test-subst test-batch test-disk test-gzip test-utils test-diskcopy test-diskcomp test-ansi test-ems test-stubcfg test-mouse test-install-hd install-roms install-floppy
 
 all: bios os
 
@@ -370,6 +380,28 @@ $(WOLF3D_IMAGE): $(BOOT_BIN) $(KERNEL_BIN) $(COMMAND_COM) $(WOLFGO_COM) $(WOLF3D
 # XT ~10MB HD with Wolf3D shareware on C: (MBR + FAT primary; requires WOLF3D.EXE).
 $(WOLF3D_HD): $(WOLF3D_EXE) scripts/mkfs_fat_hd.py
 	$(PYTHON) -m scripts.mkfs_fat_hd --output $@ --dir $(WOLF3D_DIR)
+
+$(FE2GO_OBJ): $(FE2GO_SRC) | $(BUILD_DIR)
+	$(AS8086) --32 -o $@ $(FE2GO_SRC)
+
+$(FE2GO_ELF): $(FE2GO_OBJ) $(LINK_DIR)/com.ld
+	$(LD) -m elf_i386 -T $(LINK_DIR)/com.ld -o $@ $<
+
+$(FE2GO_COM): $(FE2GO_ELF)
+	$(OBJCOPY) -O binary $< $@
+
+# Lean FE2 boot floppy — EMM.SYS + SHELL=FE2GO.COM execs C:\FRONTIER.EXE.
+$(FE2_IMAGE): $(BOOT_BIN) $(KERNEL_BIN) $(COMMAND_COM) $(FE2GO_COM) $(EMM_SYS) $(FE2_CONFIG) $(FE2_AUTOEXEC) scripts/mkfs_fat12.py
+	$(PYTHON) -m scripts.mkfs_fat12 --output $@ --boot $(BOOT_BIN) --kernel $(KERNEL_BIN) \
+		--file COMMAND.COM=$(COMMAND_COM) \
+		--file FE2GO.COM=$(FE2GO_COM) \
+		--file EMM.SYS=$(EMM_SYS) \
+		--file CONFIG.SYS=$(FE2_CONFIG) \
+		--file AUTOEXEC.BAT=$(FE2_AUTOEXEC)
+
+# XT ~10MB HD with Frontier Elite II on C: (MBR + FAT primary; requires FRONTIER.EXE).
+$(FE2_HD): $(FE2_EXE) scripts/mkfs_fat_hd.py
+	$(PYTHON) -m scripts.mkfs_fat_hd --output $@ --dir $(FE2_DIR)
 
 $(BOOT_OBJ): $(BOOT_SRC) | $(BUILD_DIR)
 	$(AS8086) --32 -o $@ $(BOOT_SRC)
@@ -646,6 +678,25 @@ run-wolf3d: bios $(WOLF3D_IMAGE) $(WOLF3D_HD)
 		--card "$$vga_rel,window=true" \
 		--card "$$adlib_rel" \
 		--image $(CURDIR)/$(WOLF3D_IMAGE) --hd $(CURDIR)/$(WOLF3D_HD)
+
+# 80386 @ 16 MHz + VGA + AdLib + EMS: lean floppy + Frontier on XT HD (requires FRONTIER.EXE).
+run-fe2: bios $(FE2_IMAGE) $(FE2_HD)
+	cd emulator/k8086 && ./gradlew :cards:vga:jar :cards:adlib:jar :cards:ems-window:jar :cards:gameport:jar :k8086-emulator:installDist -q
+	@vga=$$(ls -1 emulator/k8086/cards/vga/build/libs/vga-*.jar | tail -n 1); \
+	vga_rel=$${vga#emulator/k8086/}; \
+	adlib=$$(ls -1 emulator/k8086/cards/adlib/build/libs/adlib-*.jar | tail -n 1); \
+	adlib_rel=$${adlib#emulator/k8086/}; \
+	ems=$$(ls -1 emulator/k8086/cards/ems-window/build/libs/ems-window-*.jar | tail -n 1); \
+	ems_rel=$${ems#emulator/k8086/}; \
+	game=$$(ls -1 emulator/k8086/cards/gameport/build/libs/gameport-*.jar | tail -n 1); \
+	game_rel=$${game#emulator/k8086/}; \
+	./scripts/run-k8086.sh --display vga --turbo --floppy-int13-shim --hd-int13-bios \
+		--cpu 80386 --mhz 16 --no-cga --initial-video special \
+		--card "$$vga_rel,window=true" \
+		--card "$$adlib_rel" \
+		--card "$$ems_rel,pages=80" \
+		--card "$$game_rel" \
+		--image $(CURDIR)/$(FE2_IMAGE) --hd $(CURDIR)/$(FE2_HD)
 
 setup:
 	./setup.sh

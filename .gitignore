@@ -11,30 +11,30 @@ __pycache__/
 *.pyc
 *.pyo
 
-firmware/build/*.bin
-firmware/build/*.elf
-firmware/build/*.img
-firmware/build/*.log
-firmware/build/*.o
-firmware/build/*.com
-firmware/build/*.exe
-firmware/build/*.sys
-firmware/build/*.bat
-firmware/build/*.s
-firmware/build/*.lst
-firmware/build/as8086.*.s
-firmware/build/bios_tests/
+# Generated firmware, diagnostics, and emulator frame dumps
+/firmware/build/**
+!/firmware/build/.gitkeep
+
+# Local diagnostic disk images
+/EMM-HOOKED
+/EMS OK
 
 # Local host toolchains
 tools/host/
 .tools/
 
-# Elite / Wolf3D drop-in binaries (track README / local .gitignore only)
+# Game drop-in binaries (track README / local .gitignore only)
 fixtures/elite/**
 !fixtures/elite/README.md
 !fixtures/elite/.gitignore
 fixtures/wolf3d/**
 !fixtures/wolf3d/README.md
 !fixtures/wolf3d/.gitignore
+fixtures/fe2/**
+!fixtures/fe2/README.md
+!fixtures/fe2/.gitignore
+fixtures/guest/elite/**
+!fixtures/guest/elite/README.md
+!fixtures/guest/elite/.gitignore
 *.zip
 

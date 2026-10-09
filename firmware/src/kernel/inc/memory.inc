@@ -350,10 +350,25 @@ dos_ah4a:
 
 .a4a_ok:
     mov bx, es:[3]
-    pop es                       /* PSP */
+    pop es                       /* block segment (PSP or raw AH=48 block) */
     mov ax, es
-    add ax, bx
+    add ax, bx                   /* AX = first seg past block */
+    /*
+     * PSP:0002 holds the mem top. Character .SYS drivers are also AH=48
+     * blocks, but bytes +0/+2 are the next-device link — do not smash them.
+     * Only update when the MCB owner is this segment (a real PSP).
+     */
+    push es
+    mov dx, es
+    dec dx
+    mov es, dx
+    mov cx, es:[1]               /* MCB owner */
+    pop es
+    mov dx, es
+    cmp cx, dx
+    jne .a4a_ok_done
     mov word ptr es:[0x02], ax
+.a4a_ok_done:
     pop bp
     pop di
     pop si

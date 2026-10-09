@@ -1,11 +1,11 @@
 /*
- * INT 21h file + device handles (FAT12 + CON/NUL/AUX/PRN).
+ * INT 21h file + device handles (FAT12 + CON/NUL/AUX/PRN + DEVICE= chain).
  *
  * Entry (18 bytes):
- *   +0  used: 0 free, 1 file, 2 CON, 3 NUL, 4 AUX, 5 PRN
+ *   +0  used: 0 free, 1 file, 2 CON, 3 NUL, 4 AUX, 5 PRN, 6 char DEVICE=
  *   +1  mode: 0=R 1=W 2=RW
- *   +2  start_cluster
- *   +4  file_size_lo / +6 size_hi
+ *   +2  start_cluster  (H_CDEV: device header offset)
+ *   +4  file_size_lo / +6 size_hi  (H_CDEV: +4 = device header segment)
  *   +8  file_pos_lo  / +10 pos_hi
  *   +12 dir_lba_lo / +14 dir_lba_hi
  *   +16 dir_idx (byte) / +17 drive (0=A)
@@ -18,6 +18,7 @@
 .equ H_NUL, 3
 .equ H_AUX, 4
 .equ H_PRN, 5
+.equ H_CDEV, 6
 
 handle_index:
     cmp bx, word ptr cs:[max_handles]
@@ -161,6 +162,13 @@ dos_ah3d:
     jc .a3d_err
     mov byte ptr es:[di], dl
     mov byte ptr es:[di + 1], 2
+    cmp dl, H_CDEV
+    jne .a3d_dev_done
+    mov ax, word ptr cs:[cdev_off]
+    mov word ptr es:[di + 2], ax
+    mov ax, word ptr cs:[cdev_seg]
+    mov word ptr es:[di + 4], ax
+.a3d_dev_done:
     mov ax, bx
     jmp .a3d_ok
 
@@ -255,7 +263,96 @@ is_device_name:
     call is_device_name_aux_check
     jnc .idn_ok_ret
     call is_device_name_prn_check
+    jnc .idn_ok_ret
+    call is_device_name_chain
 .idn_ok_ret:
+    ret
+
+/*
+ * Match DS:SI ASCIZ name against the DEVICE= character-driver chain
+ * (8-char blank-padded names at header +0x0A). Sets DL=H_CDEV and
+ * cdev_off/cdev_seg on success.
+ */
+is_device_name_chain:
+    push ax
+    push bx
+    push cx
+    push di
+    push es
+    push si
+    mov ax, word ptr cs:[dev_chain_seg]
+    mov bx, word ptr cs:[dev_chain_off]
+.idn_ch_loop:
+    mov es, ax
+    /* End of chain: offset=FFFF or (FFFF:FFFF) */
+    cmp bx, 0xFFFF
+    jne .idn_ch_have
+    cmp ax, 0xFFFF
+    je .idn_ch_miss
+.idn_ch_have:
+    push si
+    lea di, [bx + 0x0A]
+    mov cx, 8
+.idn_ch_cmp:
+    mov al, [si]
+    test al, al
+    jz .idn_ch_pad
+    cmp al, ':'
+    je .idn_ch_pad
+    cmp al, 'a'
+    jb .idn_ch_up
+    cmp al, 'z'
+    ja .idn_ch_up
+    sub al, 0x20
+.idn_ch_up:
+    mov ah, es:[di]
+    cmp ah, 'a'
+    jb .idn_ch_up2
+    cmp ah, 'z'
+    ja .idn_ch_up2
+    sub ah, 0x20
+.idn_ch_up2:
+    cmp al, ah
+    jne .idn_ch_next
+    inc si
+    inc di
+    loop .idn_ch_cmp
+    jmp .idn_ch_hit
+.idn_ch_pad:
+    /* Remainder of driver name must be spaces (or already matched 8). */
+.idn_ch_pad_lp:
+    jcxz .idn_ch_hit
+    mov ah, es:[di]
+    cmp ah, ' '
+    jne .idn_ch_next
+    inc di
+    loop .idn_ch_pad_lp
+.idn_ch_hit:
+    pop si
+    mov word ptr cs:[cdev_off], bx
+    mov word ptr cs:[cdev_seg], es
+    mov dl, H_CDEV
+    pop si
+    pop es
+    pop di
+    pop cx
+    pop bx
+    pop ax
+    clc
+    ret
+.idn_ch_next:
+    pop si
+    mov ax, es:[bx + 2]
+    mov bx, es:[bx]
+    jmp .idn_ch_loop
+.idn_ch_miss:
+    pop si
+    pop es
+    pop di
+    pop cx
+    pop bx
+    pop ax
+    stc
     ret
 .idn_c:
     cmp byte ptr [si + 1], 'O'
@@ -1428,6 +1525,8 @@ dos_ah44:
     cmp bl, H_NUL
     je .a44_out_ready
     cmp bl, H_FILE
+    je .a44_out_ready
+    cmp bl, H_CDEV
     je .a44_out_ready
     cmp bl, H_AUX
     je .a44_out_aux

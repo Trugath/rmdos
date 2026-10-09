@@ -675,6 +675,11 @@ dev_chain_off:
     .word 0
 dev_chain_seg:
     .word 0
+/* Last DEVICE= chain match from is_device_name_chain (AH=3Dh). */
+cdev_off:
+    .word 0
+cdev_seg:
+    .word 0
 con_dev_off:
     .word 0
 con_dev_seg:

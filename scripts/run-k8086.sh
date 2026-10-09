@@ -34,25 +34,29 @@ Options:
   --serial-log PATH     Serial (COM1) output log file
   --emu-log PATH        Host emulator stdout/stderr log
   --display NAME        Open the video window (interactive). Headless is default.
-  --cpu MODEL           Motherboard CPU: 8088 (default), 8086, or 80286
-  --mhz N               Guest clock MHz (8088: 4.77; 286: 6/8/10/12.5)
+  --cpu MODEL           Motherboard CPU: 8088 (default), 8086, 80286, or 80386
+  --mhz N               Guest clock MHz (8088: 4.77; 286: 6/8/10/12.5; 386: 16/20/25/33)
   --no-cga              Disable built-in CGA (pair with a VGA ISA --card)
   --initial-video MODE  SW1 video: cga80 (default) or special (card BIOS)
   --card SPEC           ISA card jar[,k=v...] (repeatable)
   --turbo               Free-run CPU (fast boot; click toolbar to return to realtime)
-  --no-floppy-int13-shim  Guest BIOS owns floppy INT 13h (FDC); default is host shim
+  --floppy-int13-shim   Host floppy INT 13h shim (needed after DEVICE=EMM.SYS)
+  --no-floppy-int13-shim  Guest BIOS owns floppy INT 13h (FDC); default
+  --hd-int13-bios       Host FixedDiskBios owns HD INT 13h (needed for XT HD images)
   --u18 PATH            Override U18 system ROM
   --u19 PATH            Override U19 system ROM
   --help                Show this help message
 
 Also honors K8086_U18_ROM / K8086_U19_ROM if set in the environment before launch
-(the --u18/--u19 flags take precedence). K8086_FLOPPY_INT13_SHIM=0 disables the
-host floppy INT 13h shim (same as --no-floppy-int13-shim).
+(the --u18/--u19 flags take precedence). K8086_FLOPPY_INT13_SHIM=1 enables the
+host floppy INT 13h shim (same as --floppy-int13-shim).
 USAGE
 }
 
 TURBO=0
+FLOPPY_INT13_SHIM=0
 NO_FLOPPY_INT13_SHIM=0
+HD_INT13_BIOS=0
 HD_IMAGE=""
 CPU=""
 MHZ=""
@@ -73,7 +77,9 @@ while [[ $# -gt 0 ]]; do
         --initial-video) INITIAL_VIDEO="$2"; shift 2 ;;
         --card) CARDS+=("$2"); shift 2 ;;
         --turbo) TURBO=1; shift ;;
+        --floppy-int13-shim) FLOPPY_INT13_SHIM=1; shift ;;
         --no-floppy-int13-shim) NO_FLOPPY_INT13_SHIM=1; shift ;;
+        --hd-int13-bios) HD_INT13_BIOS=1; shift ;;
         --u18) U18_ROM="$2"; shift 2 ;;
         --u19) U19_ROM="$2"; shift 2 ;;
         *)
@@ -156,8 +162,14 @@ done
 if [[ $TURBO -eq 1 ]]; then
     ARGS+=(--turbo)
 fi
+if [[ $FLOPPY_INT13_SHIM -eq 1 ]]; then
+    ARGS+=(--floppy-int13-shim=true)
+fi
 if [[ $NO_FLOPPY_INT13_SHIM -eq 1 ]]; then
     ARGS+=(--no-floppy-int13-shim)
+fi
+if [[ $HD_INT13_BIOS -eq 1 ]]; then
+    ARGS+=(--hd-int13-bios)
 fi
 
 export K8086_U18_ROM="$U18_ROM"
