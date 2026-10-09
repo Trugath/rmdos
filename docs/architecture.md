@@ -18,13 +18,15 @@ rmdos/
 |-- emulator/k8086/     # Git submodule: XT emulator + default ROMs/floppy
 |-- firmware/
 |   |-- bios/           # XT system BIOS → u18.bin / u19.bin
-|   |-- src/boot/       # Floppy boot sector
-|   |-- src/kernel/     # KERNEL.SYS (INT 20h/21h, FAT12/FAT16, loader)
-|   |-- src/dos/        # COMMAND.COM and userland tools
+|   |-- src/main/       # Shipped OS sources
+|   |   |-- boot/       # Floppy boot sector
+|   |   |-- kernel/     # KERNEL.SYS (INT 20h/21h, FAT12/FAT16, loader)
+|   |   |-- dos/        # COMMAND.COM and product userland
+|   |-- src/test/       # Harness-only programs (HELLO, COMPAT, …)
 |   |-- linker/         # OS link scripts
 |   |-- build/          # Generated ROMs, images, logs
 |-- fixtures/          # boot/config/testdata/batch + elite/wolf3d drop-ins
-|-- scripts/            # as8086, mkimg, pack_roms, run-k8086, wcc
+|-- scripts/            # as8086, mkimg, pack_roms, run-k8086, rmcc
 |-- tests/              # Host-side / E2E gates
 |-- Makefile
 ```
@@ -152,19 +154,24 @@ DOS 3.3-ish real-mode kernel and shell, aimed at programs that run on an
 
 | Layer | Location | Role |
 |-------|----------|------|
-| Boot | `firmware/src/boot/` | Sector 0 + RFAT1 chain to `KERNEL.SYS` |
-| Kernel | `firmware/src/kernel/` | INT 20h/21h, FAT12/FAT16 (≤128 MB), MCB memory, streaming `.COM` / MZ `.EXE` loader |
-| Shell / tools | `firmware/src/dos/` | `COMMAND.COM` and userland tools (see C vs asm below) |
+| Boot | `firmware/src/main/boot/` | Sector 0 + RFAT1 chain to `KERNEL.SYS` |
+| Kernel | `firmware/src/main/kernel/` | INT 20h/21h, FAT12/FAT16 (≤128 MB), MCB memory, streaming `.COM` / MZ `.EXE` loader |
+| Shell / tools | `firmware/src/main/dos/` | `COMMAND.COM` and userland tools (see C vs asm below) |
 
 ### C vs assembly in userland
 
-Most COM utilities are written in C and compiled with the in-tree **wcc**
-Small-C compiler (`scripts/wcc.py` → GAS → `com.ld`). Shared INT 21h helpers
-live in [`firmware/src/dos/inc/dos.h`](../firmware/src/dos/inc/dos.h).
+Most COM utilities are written in C and compiled with the in-tree **rmcc**
+Small-C compiler (`scripts/rmcc.py` → GAS → `com.ld`). rmcc accepts local
+initializers, `void *`, and struct object assignment (`s = t`). Entry modes:
+`--com` (INT 21h/4Ch), `--exe` (small-model MZ), `--overlay` (tiny-model `retf`
+for INT 21h/4B03), `--module` (MOD0). `pack_mz.py` can emit MZ relocation
+entries. Shared INT 21h helpers live in
+[`firmware/src/main/dos/inc/dos.h`](../firmware/src/main/dos/inc/dos.h)
+(including `dos_exec_overlay` / `dos_far_call`).
 
-| Built with wcc (C) | Left as assembly |
+| Built with rmcc (C) | Left as assembly |
 |--------------------|------------------|
-| `COMMAND.COM`, DIR, TYPE, COPY, DEL, ATTRIB, LABEL, MOVE, XCOPY, CHKDSK, FIND, CHOICE, MORE, MEM, FC, TREE, SORT, EDIT, DEBUG, MODE, SUBST, COMP, ASSIGN, DEMO/STAR | Boot, kernel, BIOS; FORMAT, PARTEDIT, SYS; PING, DHCP, TELNET, NET; GZIP, GUNZIP; HELLO, COMPAT; MOUSE, MOUSETST; CLOCK |
+| `COMMAND.COM`, DIR, TYPE, COPY, DEL, ATTRIB, LABEL, MOVE, XCOPY, CHKDSK, FIND, CHOICE, MORE, MEM, FC, TREE, SORT, EDIT, DEBUG, MODE, SUBST, COMP, ASSIGN, DEMO/STAR | Boot, kernel, BIOS; FORMAT, PARTEDIT, SYS; PING, DHCP, TELNET, NET; GZIP, GUNZIP; MOUSE, CLOCK; harness under `src/test/dos/` (HELLO, COMPAT, …) |
 
 Keep assembly where fixed layout, interrupt ABI, or dense hardware I/O dominate
 (boot sector, kernel IVT/`iret`/EXEC, NE2000, INT 13h format/partition tools).
@@ -178,10 +185,11 @@ honors find attribute on AH=11h/12h), handle create/open/read/write/seek/delete,
 temp create (AH=5Ah/5Bh), file lock stub (AH=5Ch), truename (AH=60h),
 find-first/next (AH=4Eh/4Fh: classic H|S|D subset of search attr; volume-only
 path unchanged), MCB alloc/free/resize (including grow; AH=48h honors AH=58h
-first/best/last-fit strategy), EXEC (AH=4Bh AL=0
-load+run, AL=1 load-only, AL=3 overlay — streams from disk into the AH=48
-block with a small MZ header scratch, so EXEs larger than the old ~28 KiB
-`com_buf` work), handle dup (AH=45h/46h), file datetime
+first/best/last-fit strategy), EXEC (AH=4Bh AL=0 load+run, AL=1 load-only,
+AL=3 overlay at a caller-supplied load segment + relocation factor — COM/raw
+or MZ with fixups; AL=0/1 stream into an AH=48 block via a small MZ header
+scratch so EXEs larger than the old ~28 KiB `com_buf` work), handle dup
+(AH=45h/46h), file datetime
 (AH=57h), PSP create/get/set (AH=26h/50h/51h/55h/62h), get DTA (AH=2Fh),
 allocation info (AH=1Bh/1Ch; AH=1Ch honors DL), DPB get (AH=1Fh/32h from live
 BPB for any mapped drive; device-header pointer at DPB +13/+15 → NUL),
@@ -201,10 +209,10 @@ words), extended country (AH=65h AL=01 header+info / AL=02 case-map ptr), and
 global code page get/set (AH=66h), **AH=31h TSR**.
 AH=30h reports DOS 3.31. Gate:
 `DEMO\COMPAT.COM` + `DEMO\INT21X.COM` (markers include `FILES OK`, `EXEC1 OK`,
-`AUXPRN OK`, `BREAK23 OK`, `STUB OK`; INT21X also probes IOCTL AL=02–05/0Dh/06,
+`EXEC3 OK`, `AUXPRN OK`, `BREAK23 OK`, `STUB OK`; INT21X also probes IOCTL AL=02–05/0Dh/06,
 DPB device ptr, last-fit AH=58, AH=46/57, INT 25h boot signature, honest AH=5Ch,
 unsupported AH=5Dh/5Eh/5Fh/65h AL=03, AH=66 get/set CP 437, VERIFY flag get/set,
-non-null BUFFERS + SFTE LoL walk, and LoL LASTDRIVE).
+BUFFERS LoL (seg non-null; offset 0 valid) + occupied cache walk + SFTE, and LoL LASTDRIVE).
 
 ### Stub vs real (INT 21h / CONFIG)
 
@@ -218,10 +226,10 @@ non-null BUFFERS + SFTE LoL walk, and LoL LASTDRIVE).
 | PSP JFT (`18h`/`32h`/`34h`) | Sized to `FILES=` / AH=67 (`max_handles`, 5..64); ≤20 entries inline at PSP:18h, larger tables in an AH=48 block; resized on handle growth; inherited from parent when present |
 | INT 25h/26h `CX=FFFFh` | DOS 3.31 packet (`DWORD` sector, `WORD` count, far buffer); classic register form remains supported |
 | Network/server `AH=5Dh`/`5Eh`/`5Fh` | CF + AX=1 (redirector not installed) |
-| `BUFFERS=` | Parsed; LoL +12/+14 points at free buffer-header chain (FAT I/O still windowed) |
+| `BUFFERS=` | Parsed (clamped 1..16); LoL +12/+14 → header+512 MCB arena; directory/data/FAT cached write-through; FAT decode window (`fat_buf`) stays separate; remount invalidates; AH=0Dh flushes |
 | `STACKS=` / `FCBS=` / `DRIVPARM=` | Accepted as advisory no-ops (not printed as ignored) |
 | `COUNTRY=` | `COUNTRY=nnn[,codepage]` updates country id + AH=66 code pages |
-| `SHELL=` | Path only — CONFIG discards `/P` `/E:`; COMMAND itself honors `/E:n` on its argv |
+| `SHELL=` | Path + argv into shell PSP tail (`/P` `/E:n` reach COMMAND); bare path leaves empty tail |
 | `DEVICE=` | Character `.SYS` only (≤8 KiB); **block drivers intentional OOS** (reject + clear CONFIG text; follow-on) |
 | `LASTDRIVE=` | Raises CDS count (compile max 16; default 8) |
 | Unknown `CONFIG.SYS` lines | Printed as `CONFIG: ignored …` |
@@ -245,10 +253,13 @@ arguments in the child PSP command tail), `DEVICE=` (character `.SYS` only via
 the SYS ABI — INIT + INPUT + OUTPUT; block drivers print
 `CONFIG: DEVICE is not a character driver` and continue — intentional OOS),
 `FILES=` / `BUFFERS=` (`FILES=` clamps 5..64 into the handle table and current
-PSP JFT after CONFIG; default 20; AH=67 grows both), `LASTDRIVE=` (letter or
+PSP JFT after CONFIG; default 20; AH=67 grows both. `BUFFERS=` allocates a
+header+512 arena from the MCB pool, cap 16; default 8; directory/data/FAT
+sectors share write-through slots; the 1 KiB `fat_buf` window remains the
+FAT12/16 decode workspace and is invalidated with the arena on remount), `LASTDRIVE=` (letter or
 count, max 16), `BREAK=`,
-`SHELL=` (path only in CONFIG — `/P`/`/E:` discarded there; `COMMAND` honors
-`/E:n` on its own argv), `COUNTRY=nnn[,codepage]` (updates
+`SHELL=` (path + optional `/P` `/E:n` and other argv copied into the shell
+PSP command tail; `COMMAND` honors `/P` and `/E:n` on that tail), `COUNTRY=nnn[,codepage]` (updates
 country id + active/system code page), and advisory no-ops `STACKS=` /
 `FCBS=` / `DRIVPARM=`. Unknown directives print
 `CONFIG: ignored …`. Comments (`;`) and blank lines are skipped. Builtin
@@ -281,7 +292,7 @@ nest to depth 8. Pipes use sequential unique temps on the current drive
 semantics). `ERRORLEVEL` is updated for external EXEC and for CD/MD/RD/DEL/REN/
 TYPE/DIR/CTTY failures and Bad command. `DIR` supports classic `/W` and `/P` plus
 date/time columns; optional `/O` (`N`/`E`/`D`/`S`/`G`, optional `-` reverse) sorts
-a buffered listing (default remains on-disk FindFirst order; cap 80 entries). `DEL`/`ERASE` accept wildcards. `FOR` nests to batch
+a buffered listing (default remains on-disk FindFirst order; cap 256 entries). `DEL`/`ERASE` accept wildcards. `FOR` nests to batch
 depth. `CTTY CON`/`NUL` with one-level restore of handles 0/1/2.
 `PATH=A:\BIN` is set in the kernel environment. Internals present:
 `FOR`, `PROMPT` (`$e` ESC, `$h` backspace, `$v` version), `DATE`/`TIME`
@@ -308,14 +319,14 @@ space report. `/F` repairs FAT copies and lost chains when possible. Prints
 `GZIP [src [dst]]` / `GUNZIP [src [dst]]` compress and decompress a single gzip
 member (RFC 1952, DEFLATE method 8). Zero args use stdin→stdout; one arg reads a
 file to stdout. Status lines are omitted when writing to stdout so pipes and
-redirects stay binary-clean. Compression emits stored DEFLATE blocks;
+redirects stay binary-clean. Compression emits fixed-Huffman DEFLATE blocks (LZ77 + BTYPE=01);
 decompression accepts stored, fixed, and dynamic Huffman blocks. Source files are
-kept. Shared codec includes live under [`firmware/src/dos/inc/`](../firmware/src/dos/inc/)
+kept. Shared codec includes live under [`firmware/src/main/dos/inc/`](../firmware/src/main/dos/inc/)
 (`crc32.inc`, `deflate.inc`, `inflate.inc`).
 
 Network tools (`PING`, `DHCP`, `TELNET`) talk to the k8086 DE-220 NE2000-class
 card on the virtual NAT network (typical gateway `10.0.2.2`). Shared assembly
-lives under [`firmware/src/dos/inc/`](../firmware/src/dos/inc/) (`ne2000.inc`,
+lives under [`firmware/src/main/dos/inc/`](../firmware/src/main/dos/inc/) (`ne2000.inc`,
 `netlease*.inc`, `nettsr.inc`, `netutil.inc`, `dns.inc`).
 
 **Standalone (default):** each COM owns the card while it runs. Lease is
@@ -373,7 +384,9 @@ BIOS unit (`80h`, `81h`, …). A whole-disk FAT VBR (no DOS partition) still get
 one letter at LBA 0. `PARTEDIT` lists HD addresses and volumes (with letters),
 and supports scriptable `/CREATE` `/CREATEEXT` `/CREATELOG` `/LIST` (optional
 `/SIZE`). `PARTEDIT /CREATE` creates an active primary (leaving track zero for
-an MBR) and picks type by size (`01`/`04`/`06`); `FORMAT` rewrites that type to
+an MBR) and picks type by size (`01`/`04`/`06`); disk geometry and partition
+start/length are 32-bit so create works on volumes whose size or start
+crosses 64K sectors. `FORMAT` rewrites that type to
 match the filesystem it built. Hard disks are limited to **128 MB** by design;
 partition start LBAs and BPB HiddenSectors are 32-bit (bases past 64K sectors
 are supported). Larger geometries are rejected. The kernel uses a windowed FAT

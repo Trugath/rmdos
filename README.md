@@ -26,7 +26,7 @@ rmdos/
 |   |-- linker/         # OS link scripts
 |   |-- build/          # Generated ROMs, os.img, test.img, logs
 |-- fixtures/          # boot/config/testdata/batch + elite/wolf3d drop-ins
-|-- scripts/            # Assembler wrapper, mkimg, run-k8086, wcc
+|-- scripts/            # Assembler wrapper, mkimg, run-k8086, rmcc
 |-- docs/               # Architecture + compatibility matrix
 |-- tests/              # Host-side / E2E tests
 |-- setup.sh            # Init submodule + build k8086 CLI

@@ -12,7 +12,10 @@ def main() -> None:
     ap.add_argument("--output", required=True, type=Path)
     ap.add_argument("--size", type=int, default=2048)
     args = ap.parse_args()
-    data = bytearray(args.input.read_bytes())
+    try:
+        data = bytearray(args.input.read_bytes())
+    except FileNotFoundError:
+        raise SystemExit(f"source file not found: {args.input}")
     if len(data) < 3 or data[0] != 0x55 or data[1] != 0xAA:
         raise SystemExit("missing 55 AA header")
     blocks = args.size // 512

@@ -25,6 +25,7 @@ IOCTL_OK = "IOCTL OK"
 XTRA_OK = "XTRA OK"
 FILES_OK = "FILES OK"
 EXEC1_OK = "EXEC1 OK"
+EXEC3_OK = "EXEC3 OK"
 AUXPRN_OK = "AUXPRN OK"
 BREAK23_OK = "BREAK23 OK"
 STUB_OK = "STUB OK"
@@ -37,6 +38,8 @@ def test_compat_on_image() -> None:
     for name in (
         "DEMO\\COMPAT.COM",
         "DEMO\\INT21X.COM",
+        "DEMO\\OVL.COM",
+        "DEMO\\OVL.EXE",
         "BIN\\FIND.COM",
         "BIN\\CHOICE.COM",
         "BIN\\MORE.COM",
@@ -90,6 +93,7 @@ def test_compat_e2e() -> None:
                     and XTRA_OK in text
                     and FILES_OK in text
                     and EXEC1_OK in text
+                    and EXEC3_OK in text
                     and AUXPRN_OK in text
                     and BREAK23_OK in text
                     and STUB_OK in text

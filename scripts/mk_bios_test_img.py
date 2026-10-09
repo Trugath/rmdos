@@ -27,7 +27,11 @@ def main() -> None:
     if args.sectors < 1:
         raise SystemExit("--sectors must be >= 1")
 
-    boot = args.boot.read_bytes()
+    # Missing source paths must fail with a concise message, not a traceback.
+    try:
+        boot = args.boot.read_bytes()
+    except FileNotFoundError:
+        raise SystemExit(f"source file not found: {args.boot}")
     if len(boot) != SECTOR:
         raise SystemExit(f"boot must be {SECTOR} bytes, got {len(boot)}")
     if boot[-2:] != b"\x55\xaa":

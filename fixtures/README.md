@@ -12,7 +12,7 @@ Host-side files packed into `os*.img` / `test.img`. Layout:
 | [`wolf3d/`](wolf3d/) | Optional Wolfenstein 3D drop-in → partitioned `hd-wolf3d.img` (gitignored) |
 
 FIND/CHOICE/MORE and the rest of `BIN\` are **rmDOS** tools built from
-`firmware/src/dos/`.
+`firmware/src/main/dos/`.
 
 `boot/*.BAT`, `batch/*.BAT`, and `config/*.SYS` use **CRLF** line endings
 (`COMMAND.COM` only terminates batch lines on CR).
@@ -81,6 +81,7 @@ harness on top of that base:
 
 ```
   DEMO\    HELLO.COM HELLO.EXE COMPAT.COM INT21X.COM ANSITST.COM EMSTST.COM
+           MOUSETST.COM OVL.COM OVL.EXE STAR.COM …
            MOUSETST.COM STAR.COM
   TEST\    SAMPLE.TXT DBG.SCR BIG.TXT
   SHIFT.BAT

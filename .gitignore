@@ -19,6 +19,9 @@ __pycache__/
 /EMM-HOOKED
 /EMS OK
 
+# Local agent harness metadata
+harness/
+
 # Local host toolchains
 tools/host/
 .tools/

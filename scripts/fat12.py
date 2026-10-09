@@ -19,7 +19,9 @@ from scripts.disk import (
 
 RESERVED_SECTORS = 2
 FAT_COUNT = 2
-SECTORS_PER_FAT = 3
+# 4 sectors address >1023 clusters (3-sector FAT tops out at 1024 entries).
+# Required once C86test payload crossed the 1023-data-cluster addressing ceiling.
+SECTORS_PER_FAT = 4
 ROOT_ENTRIES = 112
 ROOT_DIR_SECTORS = 7
 FAT1_START = 2

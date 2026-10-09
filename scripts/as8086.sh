@@ -4,7 +4,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-MACRO_INC="firmware/src/inc/jcc_8086.inc"
+MACRO_INC="firmware/src/main/inc/jcc_8086.inc"
 OUT=""
 SRC=""
 AS_ARGS=()

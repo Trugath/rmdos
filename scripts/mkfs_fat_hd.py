@@ -303,7 +303,11 @@ def main() -> int:
         if "=" not in spec:
             raise SystemExit(f"bad --file spec (want NAME=PATH): {spec}")
         name, path_s = spec.split("=", 1)
-        files.append((name.upper().replace("/", "\\"), Path(path_s).read_bytes()))
+        try:
+            data = Path(path_s).read_bytes()
+        except FileNotFoundError:
+            raise SystemExit(f"source file not found: {path_s}")
+        files.append((name.upper().replace("/", "\\"), data))
 
     if args.dir is not None:
         if not args.dir.is_dir():
