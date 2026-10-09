@@ -302,7 +302,10 @@ post_test_pit:
     mov ax, BDA_SEG
     mov ds, ax
     mov si, [BDA_TIMER_LO]       /* baseline — SI survives INT 16h */
-    mov cx, 0x4000
+    /* Allow a full 18.2 Hz tick at the supported 33 MHz CPU clock.
+     * The former 0x4000 instruction budget expired before 55 ms there.
+     * Keep the wait bounded if the PIT is silent. */
+    mov cx, 0xFFFF
 .ptpit_wait:
     test cl, 0x3F
     jnz .ptpit_poll

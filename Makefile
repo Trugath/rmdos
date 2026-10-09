@@ -129,6 +129,7 @@ WOLFGO_ELF := $(BUILD_DIR)/wolfgo.elf
 WOLFGO_COM := $(BUILD_DIR)/wolfgo.com
 WOLF3D_IMAGE := $(BUILD_DIR)/os-wolf3d.img
 WOLF3D_HD := $(BUILD_DIR)/hd-wolf3d.img
+FE2_MHZ ?= 33
 FE2_DIR := fixtures/fe2
 FE2_EXE := $(FE2_DIR)/FRONTIER.EXE
 FE2_AUTOEXEC := fixtures/boot/AUTOEXEC.FE2.BAT
@@ -749,7 +750,7 @@ run-wolf3d: bios $(WOLF3D_IMAGE) $(WOLF3D_HD)
 		--card "$$adlib_rel" \
 		--image $(CURDIR)/$(WOLF3D_IMAGE) --hd $(CURDIR)/$(WOLF3D_HD)
 
-# 80386 @ 16 MHz + VGA + AdLib + EMS: lean floppy + Frontier on XT HD (requires FRONTIER.EXE).
+# 80386 @ 33 MHz by default (override FE2_MHZ) + VGA + AdLib + EMS: lean floppy + Frontier on XT HD (requires FRONTIER.EXE).
 run-fe2: bios $(FE2_IMAGE) $(FE2_HD)
 	cd emulator/k8086 && ./gradlew :cards:vga:jar :cards:adlib:jar :cards:ems-window:jar :cards:gameport:jar :k8086-emulator:installDist -q
 	@vga=$$(ls -1 emulator/k8086/cards/vga/build/libs/vga-*.jar | tail -n 1); \
@@ -760,8 +761,8 @@ run-fe2: bios $(FE2_IMAGE) $(FE2_HD)
 	ems_rel=$${ems#emulator/k8086/}; \
 	game=$$(ls -1 emulator/k8086/cards/gameport/build/libs/gameport-*.jar | tail -n 1); \
 	game_rel=$${game#emulator/k8086/}; \
-	./scripts/run-k8086.sh --display vga --turbo --floppy-int13-shim --hd-int13-bios \
-		--cpu 80386 --mhz 16 --no-cga --initial-video special \
+	./scripts/run-k8086.sh --display vga --floppy-int13-shim --hd-int13-bios \
+		--cpu 80386 --mhz $(FE2_MHZ) --no-cga --initial-video special \
 		--card "$$vga_rel,window=true" \
 		--card "$$adlib_rel" \
 		--card "$$ems_rel,pages=80" \
