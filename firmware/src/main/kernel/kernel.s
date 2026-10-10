@@ -8,7 +8,11 @@
 .equ DPB_SIZE, 0x21
 /* Classic SFTE / LoL buffer header sizes (used by files.inc / int21.inc). */
 .equ SFT_ENTRY_SIZE, 0x35
-.equ SFT_TABLE_CAP, 64
+/* FE2 uses FILES=20; other images retain the 64-handle capacity. */
+.ifndef DOS_HANDLE_CAP
+.equ DOS_HANDLE_CAP, 64
+.endif
+.equ SFT_TABLE_CAP, DOS_HANDLE_CAP
 .equ DOS_BUF_HDR_SIZE, 16
 .equ DOS_BUF_DATA, 512
 .equ DOS_BUF_SIZE, 528
@@ -640,10 +644,10 @@ default_dta:
     .space 128, 0
 
 handles:
-    .space 1152, 0               /* 64 × 18 */
+    .space (DOS_HANDLE_CAP * 18), 0
 
 handle_owner:
-    .space 128, 0                /* 64 × WORD owning PSP (0 = none/std) */
+    .space (DOS_HANDLE_CAP * 2), 0
 
 max_handles:
     .word 20

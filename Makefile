@@ -448,17 +448,29 @@ $(FE2GO_ELF): $(FE2GO_OBJ) $(LINK_DIR)/com.ld
 $(FE2GO_COM): $(FE2GO_ELF)
 	$(OBJCOPY) -O binary $< $@
 
+# FE2 requires 580 KiB contiguous base memory, including its mouse TSR.
+# Reserve FILES=20 handle slots for this image; other kernels keep 64.
+$(BUILD_DIR)/kernel-fe2.o: $(KERNEL_SRC) $(KERNEL_INCS) | $(BUILD_DIR)
+	$(AS8086) --32 --defsym DOS_HANDLE_CAP=20 -o $@ $(KERNEL_SRC)
+
+$(BUILD_DIR)/kernel-fe2.elf: $(BUILD_DIR)/kernel-fe2.o $(LINK_DIR)/kernel.ld
+	$(LD) -m elf_i386 -T $(LINK_DIR)/kernel.ld -o $@ $<
+
+$(BUILD_DIR)/kernel-fe2.bin: $(BUILD_DIR)/kernel-fe2.elf
+	$(OBJCOPY) -O binary $< $@
+
 # Lean FE2 boot floppy — EMM.SYS + SHELL=FE2GO.COM execs C:\FRONTIER.EXE.
-$(FE2_IMAGE): $(BOOT_BIN) $(KERNEL_BIN) $(COMMAND_COM) $(FE2GO_COM) $(EMM_SYS) $(FE2_CONFIG) $(FE2_AUTOEXEC) scripts/mkfs_fat12.py
-	$(PYTHON) -m scripts.mkfs_fat12 --output $@ --boot $(BOOT_BIN) --kernel $(KERNEL_BIN) \
+$(FE2_IMAGE): $(BOOT_BIN) $(BUILD_DIR)/kernel-fe2.bin $(COMMAND_COM) $(FE2GO_COM) $(MOUSE_COM) $(EMM_SYS) $(FE2_CONFIG) $(FE2_AUTOEXEC) scripts/mkfs_fat12.py
+	$(PYTHON) -m scripts.mkfs_fat12 --output $@ --boot $(BOOT_BIN) --kernel $(BUILD_DIR)/kernel-fe2.bin \
 		--file COMMAND.COM=$(COMMAND_COM) \
 		--file FE2GO.COM=$(FE2GO_COM) \
+		--file MOUSE.COM=$(MOUSE_COM) \
 		--file EMM.SYS=$(EMM_SYS) \
 		--file CONFIG.SYS=$(FE2_CONFIG) \
 		--file AUTOEXEC.BAT=$(FE2_AUTOEXEC)
 
 # XT ~10MB HD with Frontier Elite II on C: (MBR + FAT primary; requires FRONTIER.EXE).
-$(FE2_HD): $(FE2_EXE) scripts/mkfs_fat_hd.py
+$(FE2_HD): $(FE2_EXE) $(wildcard $(FE2_DIR)/*) scripts/mkfs_fat_hd.py
 	$(PYTHON) -m scripts.mkfs_fat_hd --output $@ --dir $(FE2_DIR)
 
 $(BOOT_OBJ): $(BOOT_SRC) | $(BUILD_DIR)

@@ -104,6 +104,7 @@ load_and_run_com:
  * OUT: CF set on failure (com_err set). psp_run / exe_* filled on success.
  */
 exec_load_image:
+    mov byte ptr cs:[com_err], 0
     push ax
     push bx
     push cx
@@ -180,7 +181,13 @@ exec_load_image:
  * Stream CS:img_bytes_lo/hi bytes from com_handle into ES:DI.
  * Advances ES when a segment fills. CF set on short read / I/O error.
  */
+/* MZ loaders accept EOF before the declared image end, as DOS does. */
+stream_mz_to_esdi:
+    mov byte ptr cs:[stream_eof_ok], 1
+    jmp .sfe_enter
 stream_file_to_esdi:
+    mov byte ptr cs:[stream_eof_ok], 0
+.sfe_enter:
     push ax
     push bx
     push cx
@@ -221,7 +228,11 @@ stream_file_to_esdi:
     int 0x21
     jc .sfe_fail
     cmp ax, cx
-    jne .sfe_fail
+    je .sfe_read_full
+    cmp byte ptr cs:[stream_eof_ok], 0
+    jne .sfe_ok
+    jmp .sfe_fail
+.sfe_read_full:
     add di, ax
     pushf
     sub word ptr cs:[img_bytes_lo], ax
@@ -246,6 +257,8 @@ stream_file_to_esdi:
     pop bx
     pop ax
     ret
+stream_eof_ok:
+    .byte 0
 
 /*
  * File size via AH=42 mode 2 into DX:AX; restores position to 0.
@@ -461,12 +474,12 @@ load_setup_exe:
     jnc .lse_got_mem
     mov ax, cs:[si + 0x0A]       /* minalloc */
     add ax, dx
-    jc .lse_fail
+    jc .lse_no_mem
     cmp bx, ax
-    jb .lse_fail
+    jb .lse_no_mem
     mov ah, 0x48
     int 0x21
-    jc .lse_fail
+    jc .lse_no_mem
 .lse_got_mem:
     mov word ptr [psp_run], ax
 
@@ -518,7 +531,7 @@ load_setup_exe:
     add ax, 0x10
     mov es, ax
     xor di, di
-    call stream_file_to_esdi
+    call stream_mz_to_esdi
     jc .lse_fail_free
 
     /* Relocations from exe_hdr */
@@ -569,6 +582,9 @@ load_setup_exe:
     mov es, word ptr cs:[psp_run]
     mov ah, 0x49
     int 0x21
+    jmp .lse_fail
+.lse_no_mem:
+    mov byte ptr cs:[com_err], 8  /* DOS insufficient memory; caller may reclaim and retry */
 .lse_fail:
     stc
 .lse_done:
@@ -1554,7 +1570,7 @@ dos_ah4b:
     jc .a4b_ovl_fail_cl
     mov es, word ptr cs:[ovl_load_seg]
     xor di, di
-    call stream_file_to_esdi
+    call stream_mz_to_esdi
     jc .a4b_ovl_fail_cl
     call overlay_apply_relocs
 .a4b_ovl_close_ok:
@@ -1653,6 +1669,10 @@ dos_ah4b:
 .a4b_fail:
     mov byte ptr cs:[exec_pb_valid], 0
     mov ax, 2
+    cmp byte ptr cs:[com_err], 8
+    jne .a4b_fail_return
+    mov ax, 8
+.a4b_fail_return:
     stc
     jmp int21_iret_cf
 

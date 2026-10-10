@@ -22,6 +22,11 @@ _start:
     push cs
     pop es
 
+    /* Move the stack into the block we retain before releasing the rest. */
+    cli
+    lea sp, [img_end + SCRATCH + 512]
+    sti
+
     /* Shrink to code + scratch + ~512 bytes stack (paragraphs from PSP). */
     lea ax, [img_end + SCRATCH + 512]
     add ax, 15
@@ -31,6 +36,10 @@ _start:
     mov ah, 0x4A
     int 0x21
 
+    /* Load the serial mouse TSR while A: is still the default drive. */
+    call init_epb
+    lea dx, [path_mouse]
+    call do_exec
     /* Default drive C: (2) so Frontier finds overlays next to the EXE. */
     mov ah, 0x0E
     mov dl, 2
@@ -81,8 +90,12 @@ do_exec:
     int 0x21
     push cs
     pop ds
+    push cs
+    pop es
     ret
 
+path_mouse:
+    .asciz "A:\\MOUSE.COM"
 path_root:
     .asciz "C:\\"
 path_fe2:

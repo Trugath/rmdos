@@ -37,6 +37,21 @@ _start:
     cmp bx, 1
     jne .fail_btn
 
+    /* INT 33h motion uses screen coordinates, unlike serial packet Y. */
+    mov ax, 0x000B
+    int 0x33
+    cmp cx, 10
+    jne .fail_pos
+    cmp dx, -5
+    jne .fail_pos
+    /* Reading mickeys consumes them; no phantom motion on the next poll. */
+    mov ax, 0x000B
+    int 0x33
+    test cx, cx
+    jnz .fail_pos
+    test dx, dx
+    jnz .fail_pos
+
     /* release button */
     cli
     mov dx, INJECT

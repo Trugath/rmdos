@@ -89,7 +89,7 @@ mouse_apply_pkt:
     mov di, ax
 
     add word ptr [mic_x], si
-    add word ptr [mic_y], di
+    sub word ptr [mic_y], di     /* INT 33h mickeys: screen Y increases downwards */
 
     mov ax, word ptr [pos_x]
     add ax, si

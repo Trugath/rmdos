@@ -150,6 +150,7 @@ dos_ah09:
 
 /* INT 21h AH=01 — read key with echo */
 dos_ah01:
+.ah01_read:
     call check_break
     push ds
     push cs
@@ -159,6 +160,11 @@ dos_ah01:
     call con_dev_read
     pop ds
     mov al, byte ptr cs:[putch_byte]
+    cmp al, 0x03
+    jne .ah01_character
+    int 0x23                   /* checked console input, including BREAK OFF */
+    jmp .ah01_read
+.ah01_character:
     cmp al, 0x0D
     jne .ah01_echo
     call putch
@@ -211,6 +217,7 @@ dos_ah07:
 
 /* INT 21h AH=08 — input no echo, with Ctrl-C check */
 dos_ah08:
+.ah08_read:
     call check_break
     push ds
     push cs
@@ -220,6 +227,11 @@ dos_ah08:
     call con_dev_read
     pop ds
     mov al, byte ptr cs:[putch_byte]
+    cmp al, 0x03
+    jne .ah08_character
+    int 0x23
+    jmp .ah08_read
+.ah08_character:
     clc
     jmp int21_iret
 

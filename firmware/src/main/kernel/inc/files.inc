@@ -12,7 +12,7 @@
  */
 
 .equ HANDLE_SIZE, 18
-.equ MAX_HANDLES_CAP, 64
+.equ MAX_HANDLES_CAP, DOS_HANDLE_CAP
 .equ H_FILE, 1
 .equ H_CON, 2
 .equ H_NUL, 3
