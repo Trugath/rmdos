@@ -770,7 +770,7 @@ dev_con_hdr_end:
 /* MZ/COM header scratch for streaming EXEC (not a full-file buffer). */
 exe_hdr:
 com_buf:
-    .space 0x800, 0
+    .space EXE_HDR_MAX, 0
 
 fat_buf:
     .space 1024, 0

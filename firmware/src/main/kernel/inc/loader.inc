@@ -10,7 +10,8 @@
  */
 
 .equ PSP_SIZE, 0x0100
-.equ EXE_HDR_MAX, 0x800
+/* X-Wing's MZ header is 320 paragraphs (5120 bytes, 1152 relocs). */
+.equ EXE_HDR_MAX, 0x2000
 .equ COM_LOAD_MAX, 0xFE00
 .equ COM_NEST_MAX, 4
 
@@ -1190,7 +1191,9 @@ build_env_block:
     jnz .beb_path_var
     /* second NUL terminates env */
     stosb
-    /* DOS 3+ appends pathname after double-NUL */
+    /* DOS 3+ : word count, then the executable pathname. */
+    mov ax, 1
+    stosw
     mov ds, word ptr cs:[path_seg]
     mov si, word ptr cs:[path_off]
 .beb_path:
