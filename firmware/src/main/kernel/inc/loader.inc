@@ -10,8 +10,11 @@
  */
 
 .equ PSP_SIZE, 0x0100
-/* X-Wing's MZ header is 320 paragraphs (5120 bytes, 1152 relocs). */
-.equ EXE_HDR_MAX, 0x2000
+/* Resident header scratch. X-Wing's header is 5120 bytes and Formula One
+ * Grand Prix's is 5264. 0x1600 (5632) covers both. 0x2000 kept another
+ * kilobyte resident and left GP.EXE short of conventional memory once
+ * EMM.SYS was loaded. */
+.equ EXE_HDR_MAX, 0x1600
 .equ COM_LOAD_MAX, 0xFE00
 .equ COM_NEST_MAX, 4
 
@@ -587,6 +590,12 @@ load_setup_exe:
 .lse_no_mem:
     mov byte ptr cs:[com_err], 8  /* DOS insufficient memory; caller may reclaim and retry */
 .lse_fail:
+    /* com_err stays 0 only when the image actually ran. A format or stream
+     * failure used to leave it clear, and AH=4Bh then reported success. */
+    cmp byte ptr cs:[com_err], 0
+    jne .lse_fail_cf
+    mov byte ptr cs:[com_err], 0x0B  /* invalid format */
+.lse_fail_cf:
     stc
 .lse_done:
     pop bp
@@ -1671,10 +1680,14 @@ dos_ah4b:
     jmp int21_iret
 .a4b_fail:
     mov byte ptr cs:[exec_pb_valid], 0
-    mov ax, 2
-    cmp byte ptr cs:[com_err], 8
-    jne .a4b_fail_return
-    mov ax, 8
+    mov al, byte ptr cs:[com_err]
+    cmp al, 8
+    je .a4b_err_ax
+    cmp al, 0x0B
+    je .a4b_err_ax
+    mov al, 2
+.a4b_err_ax:
+    xor ah, ah
 .a4b_fail_return:
     stc
     jmp int21_iret_cf

@@ -657,9 +657,11 @@ sector_buf:
 sector_guard:
     .byte 0xA5, 0xA5, 0xA5, 0xA5
 
-/* Dedicated kernel stack (grows down). Kept out of the MCB arena. */
+/* Dedicated kernel stack (grows down). Kept out of the MCB arena.
+ * 2048 bytes is enough for the nested INT 21h path. 4096 stayed resident
+ * and left a 598KB EXE with no room for the mouse driver. */
 kernel_stack:
-    .space 4096, 0
+    .space 2048, 0
 kernel_stack_top:
 
 /*
