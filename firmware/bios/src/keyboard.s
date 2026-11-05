@@ -20,6 +20,17 @@ isr_09:
     mov ds, ax
 
     in al, PORT_PPI_A
+
+    /*
+     * AT keyboard intercept: INT 15h AH=4Fh with AL=scan code and CF=1.
+     * A hook returning CF=0 consumes the key (no translation or buffering);
+     * CF=1 continues with the possibly replaced AL. F1GP keeps its in-race
+     * key-state table this way (its menus read INT 16h instead).
+     */
+    mov ah, 0x4F
+    stc
+    int 0x15
+    pushf
     mov ah, al
 
     in al, PORT_PPI_B
@@ -28,6 +39,9 @@ isr_09:
     out PORT_PPI_B, al
     mov al, bl
     out PORT_PPI_B, al
+
+    popf
+    jnc .k09_eoi
 
     test ah, 0x80
     jnz .k09_break

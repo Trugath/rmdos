@@ -312,6 +312,8 @@ uart_read_status:
  */
 int15_handler:
     sti
+    cmp ah, 0x4F
+    je .i15_kbd_intercept
     cmp ah, 0x86
     je .i15_wait
     cmp ah, 0xC0
@@ -327,6 +329,14 @@ int15_handler:
     /* unsupported */
 .i15_fail:
     mov ah, 0x86
+    push bp
+    mov bp, sp
+    or word ptr [bp + 6], 0x0001
+    pop bp
+    iret
+
+/* AH=4Fh keyboard intercept default: keep AX, CF=1 (process the key). */
+.i15_kbd_intercept:
     push bp
     mov bp, sp
     or word ptr [bp + 6], 0x0001
